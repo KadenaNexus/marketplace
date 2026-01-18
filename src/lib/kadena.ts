@@ -1,4 +1,4 @@
-import { Pact, createClient } from "@kadena/client";
+import { IUnsignedCommand, Pact, createClient, createSignWithEckoWallet } from "@kadena/client";
 
 /* ============================================================
    NETWORK CONFIG
@@ -64,27 +64,17 @@ export async function connectEckoWallet(): Promise<WalletAccount> {
    SIGN + SUBMIT  (ECKO SAFE)
 ============================================================ */
 
-export async function signTransaction(command: any) {
-  const kadena = (window as any).kadena;
+export async function signTransaction(command: IUnsignedCommand) {
+  const wallet = createSignWithEckoWallet();
 
   if (!command?.cmd || !command?.hash) {
     console.error("Invalid command:", command);
     throw new Error("Invalid command passed to wallet");
   }
 
-  const result = await kadena.request({
-    method: "kda_requestSign",
-    data: {
-      networkId: NETWORK_ID,
-      signingCmd: command,
-    },
-  });
-
-  if (result.status !== "success") {
-    throw new Error(result.message || "Wallet signing failed");
-  }
-
-  return result.signedCmd;
+  const result = await wallet(command);
+  console.log(result)
+  return result;
 }
 
 export async function submitTransaction(signedCmd: any): Promise<string> {
@@ -98,6 +88,27 @@ export async function pollTransaction(requestKey: string) {
     chainId: CHAIN_ID,
     networkId: NETWORK_ID,
   });
+}
+
+/**
+ * Build and sign a minimal "hello" test message. Does NOT submit to chain.
+ * Use this to verify Ecko wallet signing works.
+ */
+export async function signHelloMessage(account: string, publicKey: string) {
+  const cleanAccount = account.replace(/^k:/, "");
+  const cmd = Pact.builder
+    .execution('(+ 1 1)')
+    .addSigner(publicKey, (s) => [s("coin.GAS")])
+    .setMeta({
+      chainId: "1",
+      senderAccount: cleanAccount,
+      gasLimit: 250000,
+      gasPrice: 0.00001,
+      ttl: 600,
+    })
+    .setNetworkId("mainnet01")
+    .createTransaction();
+  return signTransaction(cmd);
 }
 
 /* ============================================================
@@ -120,7 +131,7 @@ export function buildCreateOfferTx(
 
   const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.create-offer "${offerId}" "${cleanSeller}" ${amount.toFixed(8)} "${cleanArbiter}")`;
 
-  const command = Pact.builder
+  return Pact.builder
     .execution(pactCode)
     .addSigner(sellerPubKey, (signFor) => [
       signFor("coin.GAS"),
@@ -133,12 +144,7 @@ export function buildCreateOfferTx(
       ttl: 600,
     })
     .setNetworkId(NETWORK_ID)
-    .getCommand(); // ✅ THIS IS THE KEY
-
-
-  console.log(`command: ------------------------- `)
-  console.log(Object.keys(command));
-  return command;
+    .createTransaction();
 }
 
 /* ---------- ACCEPT OFFER ---------- */
@@ -163,7 +169,7 @@ export function buildAcceptOfferTx(
       ttl: 600,
     })
     .setNetworkId(NETWORK_ID)
-    .getCommand();
+    .createTransaction();
 }
 
 /* ---------- DEPOSIT ---------- */
@@ -194,7 +200,7 @@ export function buildDepositTx(
       ttl: 600,
     })
     .setNetworkId(NETWORK_ID)
-    .getCommand();
+    .createTransaction();
 }
 
 /* ---------- MARK PAID ---------- */
@@ -217,7 +223,7 @@ export function buildMarkPaidTx(
       ttl: 600,
     })
     .setNetworkId(NETWORK_ID)
-    .getCommand();
+    .createTransaction();
 }
 
 /* ---------- RELEASE ---------- */
@@ -240,7 +246,7 @@ export function buildReleaseTx(
       ttl: 600,
     })
     .setNetworkId(NETWORK_ID)
-    .getCommand();
+    .createTransaction();
 }
 
 /* ---------- REFUND (ARBITER) ---------- */
@@ -263,7 +269,7 @@ export function buildRefundTx(
       ttl: 600,
     })
     .setNetworkId(NETWORK_ID)
-    .getCommand();
+    .createTransaction();
 }
 
 /* ============================================================

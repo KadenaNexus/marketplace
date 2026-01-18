@@ -64,11 +64,6 @@ export function CreateOfferForm({ onSuccess }: CreateOfferFormProps) {
       console.log("Transaction type:", typeof tx);
       console.log("Transaction keys:", Object.keys(tx || {}));
 
-      // 🔥 HARD ASSERT
-      if (!("cmd" in tx)) {
-        throw new Error("WRONG TRANSACTION BUILDER USED");
-      }
-
       // Sign with wallet
       const signedTx = await signTransaction(tx);
 

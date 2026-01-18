@@ -1,9 +1,26 @@
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useWallet } from "@/hooks/useWallet";
-import { Wallet, LogOut, AlertCircle } from "lucide-react";
+import { signHelloMessage } from "@/lib/kadena";
+import { Wallet, LogOut, AlertCircle, Loader2, PenLine } from "lucide-react";
+import { toast } from "sonner";
 
 export function WalletConnect() {
   const { account, isConnecting, isConnected, isWalletAvailable, error, connect, disconnect } = useWallet();
+  const [isSigning, setIsSigning] = useState(false);
+
+  const handleSignHello = async () => {
+    if (!account) return;
+    setIsSigning(true);
+    try {
+      await signHelloMessage(account.account, account.publicKey);
+      toast.success("Hello signed!", { description: "Ecko wallet signing works." });
+    } catch (e) {
+      toast.error("Sign failed", { description: e instanceof Error ? e.message : "Unknown error" });
+    } finally {
+      setIsSigning(false);
+    }
+  };
 
   const shortenAddress = (address: string) => {
     return `${address.slice(0, 8)}...${address.slice(-6)}`;
@@ -34,6 +51,21 @@ export function WalletConnect() {
             {shortenAddress(account.account)}
           </span>
         </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleSignHello}
+          disabled={isSigning}
+          className="gap-2"
+          title="Sign a test 'hello' message to verify wallet signing"
+        >
+          {isSigning ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <PenLine className="h-4 w-4" />
+          )}
+          Sign Hello
+        </Button>
         <Button 
           variant="outline" 
           size="sm" 
