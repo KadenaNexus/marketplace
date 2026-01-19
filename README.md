@@ -1,73 +1,84 @@
-# Welcome to your Lovable project
+# Kadena P2P Escrow
 
-## Project info
+Non-custodial peer-to-peer escrow dApp on **Kadena** (mainnet01, chain 1). Trades are secured by the `free.p2p-escrow` Pact module; funds are held in the contract until release or refund.
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+## Features
 
-## How can I edit this code?
+- **Create Offer** — Seller creates an offer (ID, amount in KDA). Platform arbiter is set in the contract.
+- **Accept Offer** — Buyer accepts a CREATED offer.
+- **Deposit** — Seller sends KDA to the escrow vault (ACCEPTED → FUNDED).
+- **Mark Paid** — Buyer confirms off-chain payment (FUNDED → PAID).
+- **Release** — Seller or arbiter releases funds to the buyer (PAID → COMPLETED).
+- **Refund** — Arbiter refunds to the seller from FUNDED or PAID.
+- **Close Offer** — Seller closes an offer in CREATED state.
 
-There are several ways of editing your application.
+## Tech Stack
 
-**Use Lovable**
+- **Frontend:** React, TypeScript, Vite
+- **UI:** Tailwind CSS, shadcn/ui, Lucide, Sonner (toast)
+- **Chain:** `@kadena/client` (Pact, send, local, poll)
+- **Wallet:** Ecko Wallet (`kda_connect`, `createSignWithEckoWallet`)
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+## Prerequisites
 
-Changes made via Lovable will be committed automatically to this repo.
+- **Node.js** 18+ and npm (or yarn/bun)
+- **Ecko Wallet** (browser) on Kadena mainnet01, chain 1, with KDA for gas
 
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
+## Run Locally
 
 ```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+git clone <YOUR_REPO_URL>
+cd Kadena-NEXUS
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
+npm install
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+App runs at `http://localhost:8080`. In dev, Chainweb calls go through a Vite proxy (`/chainweb-proxy` → `chainweb.chaddex.com`) to avoid CORS. Override with:
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+```sh
+VITE_CHAINWEB_PROXY_TARGET=https://api.chainweb.com npm run dev
+```
 
-**Use GitHub Codespaces**
+(Prod uses `https://api.chainweb.com` directly.)
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+## Scripts
 
-## What technologies are used for this project?
+| Script        | Description                |
+|---------------|----------------------------|
+| `npm run dev` | Dev server (port 8080)     |
+| `npm run build` | Production build         |
+| `npm run preview` | Preview production build |
+| `npm run lint` | ESLint                    |
 
-This project is built with:
+## Contract Deployment
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+The Pact module `free.p2p-escrow` requires the `escrows` table to exist. Run **in the same deployment transaction** as the module (signed by the deployer):
 
-## How can I deploy this project?
+```pact
+(create-table free.p2p-escrow.escrows)
+```
 
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
+The dApp **Initialize** action will fail with “Module admin is necessary” because only the deployer can create the table. See **DEPLOY.md** (if present) or your deployment tooling for full steps.
 
-## Can I connect a custom domain to my Lovable project?
+## Configuration
 
-Yes, you can!
+- **Network:** `mainnet01`, **Chain:** `1`
+- **Contract:** `free.p2p-escrow` (`CONTRACT_NAMESPACE`, `CONTRACT_MODULE` in `src/lib/kadena.ts`)
+- **Arbiter:** Set in the Pact constant `PLATFORM_ARBITER` before deployment
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+## Project Structure
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+```
+src/
+  lib/kadena.ts     # API host, client, tx builders, read (listEscrowIds, readEscrow), sign, submit, poll
+  components/       # CreateOfferForm, EscrowActions, EscrowStatus, WalletConnect, ui
+  hooks/useWallet.ts
+  pages/Index.tsx
+p2p-escrow.pact     # Pact module
+vite.config.ts      # Proxy for /chainweb-proxy in dev
+```
+
+## License
+
+Private / per-repo. See repository settings.

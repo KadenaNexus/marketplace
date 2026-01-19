@@ -31,7 +31,18 @@ export type EscrowState =
   | "FUNDED"
   | "PAID"
   | "COMPLETED"
-  | "REFUNDED";
+  | "REFUNDED"
+  | "CLOSED";
+
+export interface Escrow {
+  offerId: string;
+  seller: string;
+  buyer: string | null;
+  arbiter: string;
+  amount: number;
+  state: EscrowState;
+  createdAt?: string;
+}
 
 export interface WalletAccount {
   account: string;
@@ -155,22 +166,19 @@ export async function sendTestTransfer(account: string, publicKey: string): Prom
 
 const clean = (a: string) => a.replace(/^k:/, "");
 
-/* ---------- CREATE OFFER ---------- */
+/* ---------- CREATE OFFER (id creator amount; platform arbiter is used) ---------- */
 
 export function buildCreateOfferTx(
   offerId: string,
   amount: number,
   sellerAccount: string,
-  sellerPubKey: string,
-  arbiterAccount: string
+  sellerPubKey: string
 ) {
-  const cleanSeller = sellerAccount.replace(/^k:/, "");
-  const cleanArbiter = arbiterAccount.replace(/^k:/, "");
-
-  const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.create-offer "${offerId}" "${cleanSeller}" ${amount.toFixed(8)} "${cleanArbiter}")`;
+  const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.create-offer "${offerId}" "${sellerAccount}" ${amount.toFixed(8)})`;
 
   return Pact.builder
     .execution(pactCode)
+    .addData("sender", sellerAccount)
     .addSigner(sellerPubKey, (signFor) => [signFor("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
@@ -183,7 +191,7 @@ export function buildCreateOfferTx(
     .createTransaction();
 }
 
-/* ---------- ACCEPT OFFER ---------- */
+/* ---------- ACCEPT OFFER (id only; caller becomes the buyer) ---------- */
 
 export function buildAcceptOfferTx(
   offerId: string,
@@ -191,7 +199,8 @@ export function buildAcceptOfferTx(
   buyerPubKey: string
 ) {
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.accept-offer "${offerId}" "${clean(buyerAccount)}")`)
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.accept-offer "${offerId}")`)
+    .addData("sender", buyerAccount)
     .addSigner(buyerPubKey, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
@@ -216,6 +225,7 @@ export function buildDepositTx(
 
   return Pact.builder
     .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.deposit "${offerId}")`)
+    .addData("sender", sellerAccount)
     .addSigner(sellerPubKey, (s) => [
       s("coin.GAS"),
       s("coin.TRANSFER", seller, "p2p-escrow-vault", { decimal: amount.toFixed(8) }),
@@ -240,6 +250,7 @@ export function buildMarkPaidTx(
 ) {
   return Pact.builder
     .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.mark-paid "${offerId}")`)
+    .addData("sender", buyerAccount)
     .addSigner(buyerPubKey, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
@@ -261,6 +272,7 @@ export function buildReleaseTx(
 ) {
   return Pact.builder
     .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.release "${offerId}")`)
+    .addData("sender", callerAccount)
     .addSigner(callerPubKey, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
@@ -273,7 +285,7 @@ export function buildReleaseTx(
     .createTransaction();
 }
 
-/* ---------- REFUND (ARBITER) ---------- */
+/* ---------- REFUND (ARBITER; from FUNDED or PAID) ---------- */
 
 export function buildRefundTx(
   offerId: string,
@@ -282,6 +294,7 @@ export function buildRefundTx(
 ) {
   return Pact.builder
     .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.refund "${offerId}")`)
+    .addData("sender", arbiterAccount)
     .addSigner(arbiterPubKey, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
@@ -294,16 +307,64 @@ export function buildRefundTx(
     .createTransaction();
 }
 
+/* ---------- INIT (create-table; usually fails with "Module admin" from dApp) ---------- */
+/* Kadena requires create-table in the DEPLOYMENT tx, signed by the deployer. See DEPLOY.md. */
+
+export function buildInitTx(senderAccount: string, senderPubKey: string) {
+  const govCap = `${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.GOVERNANCE`;
+  const createTableCode = `(with-capability (${govCap}) (create-table ${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.escrows))`;
+  return Pact.builder
+    .execution(createTableCode)
+    .addSigner(senderPubKey, (s) => [s("coin.GAS"), s(govCap)])
+    .setMeta({
+      chainId: CHAIN_ID,
+      senderAccount,
+      gasLimit: 25000,
+      gasPrice: 0.00001,
+      ttl: 600,
+    })
+    .setNetworkId(NETWORK_ID)
+    .createTransaction();
+}
+
+/* ---------- CLOSE OFFER (seller only, CREATED state) ---------- */
+
+export function buildCloseOfferTx(
+  offerId: string,
+  sellerAccount: string,
+  sellerPubKey: string
+) {
+  return Pact.builder
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.close-offer "${offerId}")`)
+    .addData("sender", sellerAccount)
+    .addSigner(sellerPubKey, (s) => [s("coin.GAS")])
+    .setMeta({
+      chainId: CHAIN_ID,
+      senderAccount: sellerAccount,
+      gasLimit: 25000,
+      gasPrice: 0.00001,
+      ttl: 600,
+    })
+    .setNetworkId(NETWORK_ID)
+    .createTransaction();
+}
+
 /* ============================================================
    READ-ONLY
 ============================================================ */
 
-export async function readEscrow(offerId: string) {
+export async function readEscrow(offerId: string): Promise<Escrow | null> {
   const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.get-escrow "${offerId}")`;
 
   const command = Pact.builder
     .execution(pactCode)
-    .setMeta({ chainId: CHAIN_ID })
+    .setMeta({
+      chainId: CHAIN_ID,
+      senderAccount: "free",
+      gasLimit: 25000,
+      gasPrice: 0.00001,
+      ttl: 600,
+    })
     .setNetworkId(NETWORK_ID)
     .createTransaction();
 
@@ -318,17 +379,80 @@ export async function readEscrow(offerId: string) {
 
   if (result.result.status !== "success") return null;
 
-  const d: any = result.result.data;
+  const d: unknown = result.result.data;
+  if (d == null || typeof d !== "object") return null;
+  const o = d as Record<string, unknown>;
+  if (typeof o.creator !== "string" || typeof o.arbiter !== "string" || typeof o.state !== "string")
+    return null;
+  const amt = Number(o.amount);
+  if (Number.isNaN(amt)) return null;
 
   return {
     offerId,
-    seller: d.creator,
-    buyer: d.buyer || null,
-    arbiter: d.arbiter,
-    amount: Number(d.amount),
-    state: d.state,
+    seller: o.creator,
+    buyer: (typeof o.buyer === "string" ? o.buyer : null) as string | null,
+    arbiter: o.arbiter,
+    amount: amt,
+    state: o.state as EscrowState,
     createdAt: "",
   };
+}
+
+/** Returns all offer IDs from the contract. */
+export async function listEscrowIds(): Promise<string[]> {
+  const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.list-escrow-ids)`;
+
+  const command = Pact.builder
+    .execution(pactCode)
+    .setMeta({
+      chainId: CHAIN_ID,
+      senderAccount: "free",
+      gasLimit: 100000,
+      gasPrice: 0.00001,
+      ttl: 600,
+    })
+    .setNetworkId(NETWORK_ID)
+    .createTransaction();
+
+  const result = await kadenaClient.local(
+    {
+      cmd: command.cmd,
+      hash: command.hash,
+      sigs: [],
+    },
+    { preflight: false }
+  );
+
+  if (result.result.status !== "success") {
+    const r = result.result as unknown;
+    let errStr = "";
+    const e = (r as Record<string, unknown>)?.error;
+    if (typeof e === "string") errStr = e;
+    else if (e && typeof e === "object") {
+      const o = e as Record<string, unknown>;
+      errStr = String(o.message ?? o.msg ?? o.info ?? o.detail ?? o.type ?? JSON.stringify(o));
+    }
+    if (!errStr) errStr = JSON.stringify(r);
+    if (/Table access failed|table.*was not found|_escrows was not found/i.test(errStr)) {
+      throw new Error("TABLE_NOT_FOUND");
+    }
+    throw new Error(errStr);
+  }
+
+  const raw = result.result.data as unknown;
+  if (Array.isArray(raw)) return raw.filter((x): x is string => typeof x === "string");
+  if (raw != null && typeof raw === "object" && !Array.isArray(raw)) {
+    const vals = Object.values(raw).filter((x): x is string => typeof x === "string");
+    if (vals.length > 0) return vals;
+  }
+  return [];
+}
+
+/** Fetches all escrows by listing IDs then reading each. */
+export async function listAllEscrows(): Promise<Escrow[]> {
+  const ids = await listEscrowIds();
+  const results = await Promise.all(ids.map((id) => readEscrow(id)));
+  return results.filter((e): e is Escrow => e != null);
 }
 
 export async function disconnectEckoWallet(): Promise<void> {

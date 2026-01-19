@@ -8,8 +8,10 @@ import { Shield, Zap, Lock } from "lucide-react";
 
 const Index = () => {
   const [activeTab, setActiveTab] = useState("create");
+  const [refreshManageTrigger, setRefreshManageTrigger] = useState(0);
 
-  const handleOfferCreated = (offerId: string) => {
+  const handleOfferCreated = () => {
+    setRefreshManageTrigger((r) => r + 1);
     setActiveTab("manage");
   };
 
@@ -81,7 +83,7 @@ const Index = () => {
             </TabsContent>
             
             <TabsContent value="manage">
-              <EscrowActions />
+              <EscrowActions refreshTrigger={refreshManageTrigger} />
             </TabsContent>
           </Tabs>
         </div>
@@ -96,11 +98,15 @@ const Index = () => {
             <span className="text-muted-foreground">→</span>
             <span className="px-3 py-1.5 bg-warning/20 text-warning rounded">ACCEPTED</span>
             <span className="text-muted-foreground">→</span>
-            <span className="px-3 py-1.5 bg-primary/20 text-primary rounded">DEPOSITED</span>
+            <span className="px-3 py-1.5 bg-primary/20 text-primary rounded">FUNDED</span>
             <span className="text-muted-foreground">→</span>
-            <span className="px-3 py-1.5 bg-primary/20 text-primary rounded">MARKED_PAID</span>
+            <span className="px-3 py-1.5 bg-primary/20 text-primary rounded">PAID</span>
             <span className="text-muted-foreground">→</span>
-            <span className="px-3 py-1.5 bg-success/20 text-success rounded">RELEASED</span>
+            <span className="px-3 py-1.5 bg-success/20 text-success rounded">COMPLETED</span>
+            <span className="text-muted-foreground mx-1">|</span>
+            <span className="px-3 py-1.5 bg-destructive/20 text-destructive rounded">REFUNDED</span>
+            <span className="text-muted-foreground">/</span>
+            <span className="px-3 py-1.5 bg-muted text-muted-foreground rounded">CLOSED</span>
           </div>
         </div>
       </main>

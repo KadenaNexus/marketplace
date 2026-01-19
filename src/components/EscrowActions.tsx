@@ -1,30 +1,33 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { EscrowStatus } from "./EscrowStatus";
 import { useWallet } from "@/hooks/useWallet";
 import {
-  readEscrow,
+  listAllEscrows,
   buildAcceptOfferTx,
   buildDepositTx,
   buildMarkPaidTx,
   buildReleaseTx,
   buildRefundTx,
+  buildCloseOfferTx,
   signTransaction,
   submitTransaction,
+  pollTransaction,
   type Escrow,
 } from "@/lib/kadena";
 import { 
-  Search, 
+  List,
   Loader2, 
   UserPlus, 
   Lock, 
   DollarSign, 
   Unlock,
   RotateCcw,
-  ExternalLink
+  XCircle,
+  ExternalLink,
+  RefreshCw,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -34,38 +37,42 @@ interface TransactionResult {
   timestamp: Date;
 }
 
-export function EscrowActions() {
+interface EscrowActionsProps {
+  refreshTrigger?: number;
+}
+
+export function EscrowActions({ refreshTrigger = 0 }: EscrowActionsProps) {
   const { account, isConnected } = useWallet();
-  const [offerId, setOfferId] = useState("");
-  const [escrow, setEscrow] = useState<Escrow | null>(null);
+  const [escrows, setEscrows] = useState<Escrow[]>([]);
+  const [selectedOfferId, setSelectedOfferId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [transactions, setTransactions] = useState<TransactionResult[]>([]);
 
-  const handleSearch = async () => {
-    if (!offerId.trim()) {
-      toast.error("Please enter an Offer ID");
-      return;
-    }
+  const selectedEscrow = escrows.find((e) => e.offerId === selectedOfferId) ?? null;
 
+  const loadAll = async () => {
     setIsLoading(true);
     try {
-      const data = await readEscrow(offerId);
-      if (data) {
-        setEscrow(data);
-      } else {
-        toast.error("Escrow not found", {
-          description: "No escrow exists with this Offer ID",
-        });
-        setEscrow(null);
+      const list = await listAllEscrows();
+      setEscrows(list);
+      if (selectedOfferId && !list.some((e) => e.offerId === selectedOfferId)) {
+        setSelectedOfferId(null);
       }
     } catch (error) {
-      toast.error("Failed to fetch escrow data");
+      toast.error("Failed to load offers", {
+        description: error instanceof Error ? error.message : undefined,
+      });
       console.error(error);
+      setEscrows([]);
     } finally {
       setIsLoading(false);
     }
   };
+
+  useEffect(() => {
+    loadAll();
+  }, [refreshTrigger]);
 
   const addTransaction = (action: string, requestKey: string) => {
     setTransactions(prev => [
@@ -90,14 +97,25 @@ export function EscrowActions() {
       const signedTx = await signTransaction(tx);
       const requestKey = await submitTransaction(signedTx);
 
-      toast.success(`${actionName} submitted!`, {
+      const txResult = await pollTransaction(requestKey);
+      const res = txResult?.result;
+      if (res?.status === "failure") {
+        let errMsg = "Transaction failed on-chain";
+        const e = res.error;
+        if (typeof e === "string") errMsg = e;
+        else if (e && typeof e === "object") {
+          const o = e as Record<string, unknown>;
+          errMsg = String(o.message ?? o.msg ?? o.info ?? o.detail ?? errMsg);
+        }
+        throw new Error(errMsg);
+      }
+
+      toast.success(`${actionName} succeeded`, {
         description: `Request Key: ${requestKey.slice(0, 16)}...`,
       });
 
       addTransaction(actionName, requestKey);
-
-      // Refresh escrow data after a delay
-      setTimeout(() => handleSearch(), 3000);
+      loadAll();
     } catch (error) {
       console.error(`${actionName} error:`, error);
       toast.error(`${actionName} failed`, {
@@ -109,89 +127,124 @@ export function EscrowActions() {
   };
 
   const handleAccept = () => {
-    if (!account || !escrow) return;
+    if (!account || !selectedEscrow) return;
     executeAction("Accept Offer", () => 
-      buildAcceptOfferTx(escrow.offerId, account.account, account.publicKey)
+      buildAcceptOfferTx(selectedEscrow.offerId, account.account, account.publicKey)
     );
   };
 
   const handleDeposit = () => {
-    if (!account || !escrow) return;
+    if (!account || !selectedEscrow) return;
     executeAction("Deposit", () => 
-      buildDepositTx(escrow.offerId, escrow.amount, account.account, account.publicKey)
+      buildDepositTx(selectedEscrow.offerId, selectedEscrow.amount, account.account, account.publicKey)
     );
   };
 
   const handleMarkPaid = () => {
-    if (!account || !escrow) return;
+    if (!account || !selectedEscrow) return;
     executeAction("Mark Paid", () => 
-      buildMarkPaidTx(escrow.offerId, account.account, account.publicKey)
+      buildMarkPaidTx(selectedEscrow.offerId, account.account, account.publicKey)
     );
   };
 
   const handleRelease = () => {
-    if (!account || !escrow) return;
+    if (!account || !selectedEscrow) return;
     executeAction("Release", () => 
-      buildReleaseTx(escrow.offerId, account.account, account.publicKey)
+      buildReleaseTx(selectedEscrow.offerId, account.account, account.publicKey)
     );
   };
 
   const handleRefund = () => {
-    if (!account || !escrow) return;
+    if (!account || !selectedEscrow) return;
     executeAction("Refund", () => 
-      buildRefundTx(escrow.offerId, account.account, account.publicKey)
+      buildRefundTx(selectedEscrow.offerId, account.account, account.publicKey)
     );
   };
 
-  const canAccept = escrow?.state === "CREATED" && account?.account !== escrow?.seller;
-  const canDeposit = escrow?.state === "ACCEPTED" && account?.account === escrow?.seller;
-  const canMarkPaid = escrow?.state === "DEPOSITED" && account?.account === escrow?.buyer;
-  const canRelease = escrow?.state === "MARKED_PAID" && 
-    (account?.account === escrow?.seller || account?.account === escrow?.arbiter);
-  const canRefund = escrow?.state === "DEPOSITED" && account?.account === escrow?.arbiter;
+  const handleCloseOffer = () => {
+    if (!account || !selectedEscrow) return;
+    executeAction("Close Offer", () => 
+      buildCloseOfferTx(selectedEscrow.offerId, account.account, account.publicKey)
+    );
+  };
 
-  const isTerminal = escrow?.state === "RELEASED" || escrow?.state === "REFUNDED";
+  const canAccept = selectedEscrow?.state === "CREATED" && account?.account !== selectedEscrow?.seller;
+  const canDeposit = selectedEscrow?.state === "ACCEPTED" && account?.account === selectedEscrow?.seller;
+  const canMarkPaid = selectedEscrow?.state === "FUNDED" && account?.account === selectedEscrow?.buyer;
+  const canRelease = selectedEscrow?.state === "PAID" && 
+    (account?.account === selectedEscrow?.seller || account?.account === selectedEscrow?.arbiter);
+  const canRefund = (selectedEscrow?.state === "FUNDED" || selectedEscrow?.state === "PAID") && account?.account === selectedEscrow?.arbiter;
+  const canCloseOffer = selectedEscrow?.state === "CREATED" && account?.account === selectedEscrow?.seller;
+
+  const isTerminal = selectedEscrow?.state === "COMPLETED" || selectedEscrow?.state === "REFUNDED" || selectedEscrow?.state === "CLOSED";
 
   return (
     <div className="space-y-6">
-      {/* Search Section */}
+      {/* All Offers List */}
       <Card className="escrow-card">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Search className="h-5 w-5 text-primary" />
-            Lookup Escrow
-          </CardTitle>
-          <CardDescription>
-            Enter an Offer ID to view and interact with an escrow
-          </CardDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <List className="h-5 w-5 text-primary" />
+                All Offers
+              </CardTitle>
+              <CardDescription>
+                Select an offer to view details and take action
+              </CardDescription>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" size="sm" onClick={loadAll} disabled={isLoading}>
+                {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                Refresh
+              </Button>
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
-          <div className="flex gap-2">
-            <Input
-              value={offerId}
-              onChange={(e) => setOfferId(e.target.value)}
-              placeholder="Enter Offer ID"
-              className="font-mono"
-              onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-            />
-            <Button onClick={handleSearch} disabled={isLoading}>
-              {isLoading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                "Search"
-              )}
-            </Button>
-          </div>
+          {isLoading && escrows.length === 0 ? (
+            <div className="flex justify-center py-8">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+          ) : escrows.length === 0 ? (
+            <p className="text-center py-8 text-muted-foreground">
+              No offers yet. Create one in the Create Offer tab.
+            </p>
+          ) : (
+            <div className="space-y-2 max-h-[280px] overflow-y-auto">
+              {[...escrows].sort((a, b) => b.offerId.localeCompare(a.offerId)).map((e) => (
+                <button
+                  key={e.offerId}
+                  type="button"
+                  onClick={() => setSelectedOfferId(e.offerId)}
+                  className={`w-full text-left p-3 rounded-lg border transition-colors ${
+                    selectedOfferId === e.offerId
+                      ? "border-primary bg-primary/5"
+                      : "border-border hover:bg-muted/50"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono text-sm truncate">{e.offerId}</span>
+                    <EscrowStatus state={e.state} />
+                  </div>
+                  <div className="flex items-center gap-4 mt-1 text-xs text-muted-foreground">
+                    <span className="font-mono font-medium text-foreground">{e.amount.toFixed(4)} KDA</span>
+                    <span className="truncate">Seller: {e.seller.slice(0, 12)}…</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
 
-      {/* Escrow Details */}
-      {escrow && (
+      {/* Escrow Details (when one is selected) */}
+      {selectedEscrow && (
         <Card className="escrow-card">
           <CardHeader>
             <div className="flex items-center justify-between">
-              <CardTitle className="font-mono text-lg">{escrow.offerId}</CardTitle>
-              <EscrowStatus state={escrow.state} />
+              <CardTitle className="font-mono text-lg">{selectedEscrow.offerId}</CardTitle>
+              <EscrowStatus state={selectedEscrow.state} />
             </div>
           </CardHeader>
           <CardContent className="space-y-6">
@@ -200,28 +253,44 @@ export function EscrowActions() {
               <div>
                 <Label className="text-muted-foreground">Amount</Label>
                 <p className="font-mono text-2xl font-bold text-primary">
-                  {escrow.amount.toFixed(8)} <span className="text-base">KDA</span>
+                  {selectedEscrow.amount.toFixed(8)} <span className="text-base">KDA</span>
                 </p>
               </div>
               <div>
                 <Label className="text-muted-foreground">Seller</Label>
-                <p className="font-mono text-sm break-all">{escrow.seller}</p>
+                <p className="font-mono text-sm break-all">{selectedEscrow.seller}</p>
               </div>
               <div>
                 <Label className="text-muted-foreground">Buyer</Label>
                 <p className="font-mono text-sm break-all">
-                  {escrow.buyer || <span className="text-muted-foreground italic">Not yet accepted</span>}
+                  {selectedEscrow.buyer || <span className="text-muted-foreground italic">Not yet accepted</span>}
                 </p>
               </div>
               <div>
                 <Label className="text-muted-foreground">Arbiter</Label>
-                <p className="font-mono text-sm break-all">{escrow.arbiter}</p>
+                <p className="font-mono text-sm break-all">{selectedEscrow.arbiter}</p>
               </div>
             </div>
 
             {/* Action Buttons */}
             {!isTerminal && isConnected && (
               <div className="flex flex-wrap gap-3 pt-4 border-t border-border">
+                {canCloseOffer && (
+                  <Button 
+                    onClick={handleCloseOffer}
+                    disabled={!!actionLoading}
+                    variant="outline"
+                    className="gap-2"
+                  >
+                    {actionLoading === "Close Offer" ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <XCircle className="h-4 w-4" />
+                    )}
+                    Close Offer
+                  </Button>
+                )}
+
                 {canAccept && (
                   <Button 
                     onClick={handleAccept}
@@ -248,7 +317,7 @@ export function EscrowActions() {
                     ) : (
                       <Lock className="h-4 w-4" />
                     )}
-                    Deposit {escrow.amount} KDA
+                    Deposit {selectedEscrow.amount.toFixed(4)} KDA
                   </Button>
                 )}
 

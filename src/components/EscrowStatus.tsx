@@ -29,23 +29,28 @@ const stateConfig: Record<EscrowState, {
     icon: UserCheck, 
     className: "status-pending" 
   },
-  DEPOSITED: { 
-    label: "Deposited", 
+  FUNDED: { 
+    label: "Funded", 
     icon: Lock, 
     className: "status-active" 
   },
-  MARKED_PAID: { 
-    label: "Marked Paid", 
+  PAID: { 
+    label: "Paid", 
     icon: DollarSign, 
     className: "status-active" 
   },
-  RELEASED: { 
-    label: "Released", 
+  COMPLETED: { 
+    label: "Completed", 
     icon: CheckCircle, 
     className: "status-completed" 
   },
   REFUNDED: { 
     label: "Refunded", 
+    icon: XCircle, 
+    className: "status-cancelled" 
+  },
+  CLOSED: { 
+    label: "Closed", 
     icon: XCircle, 
     className: "status-cancelled" 
   },

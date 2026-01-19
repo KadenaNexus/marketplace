@@ -8,7 +8,7 @@ import {
   buildCreateOfferTx, 
   signTransaction, 
   submitTransaction,
-  CHAIN_ID 
+  pollTransaction,
 } from "@/lib/kadena";
 import { Plus, Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -21,7 +21,6 @@ export function CreateOfferForm({ onSuccess }: CreateOfferFormProps) {
   const { account, isConnected } = useWallet();
   const [offerId, setOfferId] = useState("");
   const [amount, setAmount] = useState("");
-  const [arbiter, setArbiter] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
   const generateOfferId = () => {
@@ -37,8 +36,8 @@ export function CreateOfferForm({ onSuccess }: CreateOfferFormProps) {
       return;
     }
 
-    if (!offerId || !amount || !arbiter) {
-      toast.error("Please fill in all fields");
+    if (!offerId || !amount) {
+      toast.error("Please fill in offer ID and amount");
       return;
     }
 
@@ -51,13 +50,12 @@ export function CreateOfferForm({ onSuccess }: CreateOfferFormProps) {
     setIsLoading(true);
 
     try {
-      // Build the transaction
+      // Build the transaction (platform arbiter is fixed in the contract)
       const tx = buildCreateOfferTx(
         offerId,
         amountNum,
         account.account,
-        account.publicKey,
-        arbiter
+        account.publicKey
       );
 
       console.log("Built transaction:", tx);
@@ -69,6 +67,20 @@ export function CreateOfferForm({ onSuccess }: CreateOfferFormProps) {
 
       // Submit to chain
       const requestKey = await submitTransaction(signedTx);
+
+      // Wait for tx to be included in a block and check on-chain result
+      const txResult = await pollTransaction(requestKey);
+      const res = txResult?.result;
+      if (res?.status === "failure") {
+        let errMsg = "Transaction failed on-chain";
+        const e = res.error;
+        if (typeof e === "string") errMsg = e;
+        else if (e && typeof e === "object") {
+          const o = e as Record<string, unknown>;
+          errMsg = String(o.message ?? o.msg ?? o.info ?? o.detail ?? errMsg);
+        }
+        throw new Error(errMsg);
+      }
 
       toast.success("Offer created!", {
         description: `Request Key: ${requestKey.slice(0, 16)}...`,
@@ -136,19 +148,14 @@ export function CreateOfferForm({ onSuccess }: CreateOfferFormProps) {
             />
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="arbiter">Arbiter Account</Label>
-            <Input
-              id="arbiter"
-              value={arbiter}
-              onChange={(e) => setArbiter(e.target.value)}
-              placeholder="k:..."
-              className="font-mono text-sm"
-            />
-            <p className="text-xs text-muted-foreground">
-              Arbiter can release or refund if there's a dispute
-            </p>
-          </div>
+          <p className="text-xs text-muted-foreground">
+            Platform arbiter is set in the contract and can release or refund in disputes.
+          </p>
+          <p className="text-xs text-amber-600 dark:text-amber-500">
+            If Create Offer fails with &quot;table not found&quot;, the escrows table was not created. The deployer must run{" "}
+            <code className="rounded bg-muted px-0.5">(create-table free.p2p-escrow.escrows)</code> in the deployment tx. See{" "}
+            <code>DEPLOY.md</code>.
+          </p>
 
           <Button 
             type="submit" 
