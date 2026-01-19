@@ -7,8 +7,13 @@ import { IUnsignedCommand, Pact, createClient, createSignWithEckoWallet } from "
 export const NETWORK_ID = "mainnet01";
 export const CHAIN_ID = "1";
 
+// Chaddex blocks CORS from browser. In dev we use a Vite proxy; in prod we use the official API.
+const API_CHAINWEB_PACT = `https://api.chainweb.com/chainweb/0.0/${NETWORK_ID}/chain/${CHAIN_ID}/pact`;
+
 export const API_HOST =
-  `https://chainweb.chaddex.com/chainweb/0.0/${NETWORK_ID}/chain/${CHAIN_ID}/pact`;
+  import.meta.env.DEV && typeof window !== "undefined"
+    ? `${window.location.origin}/chainweb-proxy`
+    : API_CHAINWEB_PACT;
 
 export const CONTRACT_NAMESPACE = "free";
 export const CONTRACT_MODULE = "p2p-escrow";
@@ -72,14 +77,33 @@ export async function signTransaction(command: IUnsignedCommand) {
     throw new Error("Invalid command passed to wallet");
   }
 
-  const result = await wallet(command);
-  console.log(result)
-  return result;
+  return wallet(command);
 }
 
 export async function submitTransaction(signedCmd: any): Promise<string> {
-  const res = await kadenaClient.submit(signedCmd);
-  return res.requestKey;
+  const cmd = signedCmd?.signedCmd ?? signedCmd;
+  const body = { cmds: Array.isArray(cmd) ? cmd : [cmd] };
+  const url = `${API_HOST}/api/v1/send`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    let msg = text || res.statusText;
+    try {
+      const j = JSON.parse(text) as { error?: string; message?: string };
+      msg = j.error ?? j.message ?? msg;
+    } catch {
+      /* use text as-is */
+    }
+    throw new Error(`Send failed (${res.status}): ${msg}`);
+  }
+  const data = JSON.parse(text) as { requestKeys?: string[] };
+  const keys = data?.requestKeys;
+  if (!keys?.length) throw new Error("No requestKeys in send response");
+  return keys[0];
 }
 
 export async function pollTransaction(requestKey: string) {
@@ -90,25 +114,35 @@ export async function pollTransaction(requestKey: string) {
   });
 }
 
+/** Recipient for the "Test transfer 10 KDA" flow. */
+const TEST_TRANSFER_RECIPIENT = "k:665976b8f985c0119c3afa74115fde19f71309cc85428a7104dc2648252b593e";
+
 /**
- * Build and sign a minimal "hello" test message. Does NOT submit to chain.
- * Use this to verify Ecko wallet signing works.
+ * Sign and submit a 10 KDA transfer to the test address. Use to verify the node and signing work.
+ * @returns requestKey
  */
-export async function signHelloMessage(account: string, publicKey: string) {
-  const cleanAccount = account.replace(/^k:/, "");
-  const cmd = Pact.builder
-    .execution('(+ 1 1)')
-    .addSigner(publicKey, (s) => [s("coin.GAS")])
+export async function sendTestTransfer(account: string, publicKey: string): Promise<string> {
+  const amountCap = { decimal: "10" };
+  // meta.sender = gas payer: must match coin-table key (try full k:account; some nodes key by it)
+  // If you see "No value found in table coin_coin-table": account has no KDA on mainnet01 chain 1 — fund it first.
+  const tx = Pact.builder
+    .execution(`(coin.transfer "${account}" "${TEST_TRANSFER_RECIPIENT}" 10.0)`)
+    .addSigner(publicKey, (s) => [
+      s("coin.GAS"),
+      s("coin.TRANSFER", account, TEST_TRANSFER_RECIPIENT, amountCap),
+    ])
     .setMeta({
-      chainId: "1",
-      senderAccount: cleanAccount,
-      gasLimit: 250000,
+      chainId: CHAIN_ID,
+      senderAccount: account,
+      gasLimit: 2500,
       gasPrice: 0.00001,
       ttl: 600,
     })
-    .setNetworkId("mainnet01")
+    .setNetworkId(NETWORK_ID)
     .createTransaction();
-  return signTransaction(cmd);
+
+  const signed = await signTransaction(tx);
+  return submitTransaction(signed);
 }
 
 /* ============================================================
@@ -139,8 +173,8 @@ export function buildCreateOfferTx(
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: cleanSeller,
-      gasLimit: 2500,
-      gasPrice: 0.00000001,
+      gasLimit: 250000,
+      gasPrice: 0.00001,
       ttl: 600,
     })
     .setNetworkId(NETWORK_ID)
@@ -164,8 +198,8 @@ export function buildAcceptOfferTx(
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: clean(buyerAccount),
-      gasLimit: 2500,
-      gasPrice: 0.00000001,
+      gasLimit: 250000,
+      gasPrice: 0.00001,
       ttl: 600,
     })
     .setNetworkId(NETWORK_ID)
@@ -195,8 +229,8 @@ export function buildDepositTx(
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: seller,
-      gasLimit: 5000,
-      gasPrice: 0.00000001,
+      gasLimit: 50000,
+      gasPrice: 0.00001,
       ttl: 600,
     })
     .setNetworkId(NETWORK_ID)
@@ -218,8 +252,8 @@ export function buildMarkPaidTx(
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: clean(buyerAccount),
-      gasLimit: 2500,
-      gasPrice: 0.00000001,
+      gasLimit: 250000,
+      gasPrice: 0.00001,
       ttl: 600,
     })
     .setNetworkId(NETWORK_ID)
@@ -241,8 +275,8 @@ export function buildReleaseTx(
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: clean(callerAccount),
-      gasLimit: 5000,
-      gasPrice: 0.00000001,
+      gasLimit: 50000,
+      gasPrice: 0.00001,
       ttl: 600,
     })
     .setNetworkId(NETWORK_ID)
@@ -264,8 +298,8 @@ export function buildRefundTx(
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: clean(arbiterAccount),
-      gasLimit: 5000,
-      gasPrice: 0.00000001,
+      gasLimit: 50000,
+      gasPrice: 0.00001,
       ttl: 600,
     })
     .setNetworkId(NETWORK_ID)

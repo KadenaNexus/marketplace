@@ -1,24 +1,24 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useWallet } from "@/hooks/useWallet";
-import { signHelloMessage } from "@/lib/kadena";
-import { Wallet, LogOut, AlertCircle, Loader2, PenLine } from "lucide-react";
+import { sendTestTransfer } from "@/lib/kadena";
+import { Wallet, LogOut, AlertCircle, Loader2, Send } from "lucide-react";
 import { toast } from "sonner";
 
 export function WalletConnect() {
   const { account, isConnecting, isConnected, isWalletAvailable, error, connect, disconnect } = useWallet();
-  const [isSigning, setIsSigning] = useState(false);
+  const [isSending, setIsSending] = useState(false);
 
-  const handleSignHello = async () => {
+  const handleTestTransfer = async () => {
     if (!account) return;
-    setIsSigning(true);
+    setIsSending(true);
     try {
-      await signHelloMessage(account.account, account.publicKey);
-      toast.success("Hello signed!", { description: "Ecko wallet signing works." });
+      const requestKey = await sendTestTransfer(account.account, account.publicKey);
+      toast.success("10 KDA sent!", { description: `Request key: ${requestKey.slice(0, 16)}...` });
     } catch (e) {
-      toast.error("Sign failed", { description: e instanceof Error ? e.message : "Unknown error" });
+      toast.error("Transfer failed", { description: e instanceof Error ? e.message : "Unknown error" });
     } finally {
-      setIsSigning(false);
+      setIsSending(false);
     }
   };
 
@@ -54,17 +54,17 @@ export function WalletConnect() {
         <Button
           variant="outline"
           size="sm"
-          onClick={handleSignHello}
-          disabled={isSigning}
+          onClick={handleTestTransfer}
+          disabled={isSending}
           className="gap-2"
-          title="Sign a test 'hello' message to verify wallet signing"
+          title="Send 10 KDA to test address to verify node and signing"
         >
-          {isSigning ? (
+          {isSending ? (
             <Loader2 className="h-4 w-4 animate-spin" />
           ) : (
-            <PenLine className="h-4 w-4" />
+            <Send className="h-4 w-4" />
           )}
-          Sign Hello
+          Test 10 KDA
         </Button>
         <Button 
           variant="outline" 
