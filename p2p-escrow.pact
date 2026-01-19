@@ -51,6 +51,8 @@
 
   ;; ------------------------------------------------------------
   ;; Deposit (seller locks KDA in vault)
+  ;; Uses transfer-create so the vault is created on first deposit.
+  ;; Message must contain "vault-guard" keyset (e.g. keys:[], pred:"keys-all").
   ;; ------------------------------------------------------------
   (defun deposit (id)
     (with-read escrows id
@@ -59,7 +61,7 @@
       , "state" := s }
       (enforce (= s "ACCEPTED") "Invalid state")
       (enforce (= c (read-msg "sender")) "Only creator")
-      (coin.transfer c VAULT_ACCOUNT a)
+      (coin.transfer-create c VAULT_ACCOUNT (read-keyset "vault-guard") a)
       (update escrows id { "state": "FUNDED" })))
 
   ;; ------------------------------------------------------------

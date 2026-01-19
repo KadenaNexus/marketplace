@@ -164,8 +164,6 @@ export async function sendTestTransfer(account: string, publicKey: string): Prom
    TRANSACTION BUILDERS (ALL OF THEM)
 ============================================================ */
 
-const clean = (a: string) => a.replace(/^k:/, "");
-
 /* ---------- CREATE OFFER (id creator amount; platform arbiter is used) ---------- */
 
 export function buildCreateOfferTx(
@@ -214,21 +212,28 @@ export function buildAcceptOfferTx(
 }
 
 /* ---------- DEPOSIT ---------- */
+/* creatorFromEscrow: must match escrow.creator. Contract uses coin.transfer-create so the vault
+   is created on first deposit. vault-guard: keyset with keys:[] so no one can spend from vault
+   except via the contract (release/refund) which use a signed (coin.TRANSFER VAULT_ACCOUNT ...). */
+
+const VAULT_GUARD = { keys: [] as string[], pred: "keys-all" as const };
 
 export function buildDepositTx(
   offerId: string,
   amount: number,
   sellerAccount: string,
-  sellerPubKey: string
+  sellerPubKey: string,
+  creatorFromEscrow: string
 ) {
-  const seller = clean(sellerAccount);
-
+  const amountDecimal = { decimal: amount.toFixed(8) };
   return Pact.builder
     .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.deposit "${offerId}")`)
     .addData("sender", sellerAccount)
+    .addData("vault-guard", VAULT_GUARD)
     .addSigner(sellerPubKey, (s) => [
       s("coin.GAS"),
-      s("coin.TRANSFER", seller, "p2p-escrow-vault", { decimal: amount.toFixed(8) }),
+      s("coin.TRANSFER", creatorFromEscrow, "p2p-escrow-vault", amountDecimal),
+      s("coin.TRANSFER-CREATE", creatorFromEscrow, "p2p-escrow-vault", VAULT_GUARD, amountDecimal),
     ])
     .setMeta({
       chainId: CHAIN_ID,
@@ -263,17 +268,23 @@ export function buildMarkPaidTx(
     .createTransaction();
 }
 
-/* ---------- RELEASE ---------- */
+/* ---------- RELEASE (seller or arbiter; contract does coin.transfer VAULT_ACCOUNT buyer amt) ---------- */
 
 export function buildReleaseTx(
   offerId: string,
   callerAccount: string,
-  callerPubKey: string
+  callerPubKey: string,
+  buyerFromEscrow: string,
+  amountFromEscrow: number
 ) {
+  const amt = { decimal: amountFromEscrow.toFixed(8) };
   return Pact.builder
     .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.release "${offerId}")`)
     .addData("sender", callerAccount)
-    .addSigner(callerPubKey, (s) => [s("coin.GAS")])
+    .addSigner(callerPubKey, (s) => [
+      s("coin.GAS"),
+      s("coin.TRANSFER", "p2p-escrow-vault", buyerFromEscrow, amt),
+    ])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: callerAccount,
@@ -285,17 +296,23 @@ export function buildReleaseTx(
     .createTransaction();
 }
 
-/* ---------- REFUND (ARBITER; from FUNDED or PAID) ---------- */
+/* ---------- REFUND (ARBITER; from FUNDED or PAID; contract does coin.transfer VAULT_ACCOUNT seller amt) ---------- */
 
 export function buildRefundTx(
   offerId: string,
   arbiterAccount: string,
-  arbiterPubKey: string
+  arbiterPubKey: string,
+  sellerFromEscrow: string,
+  amountFromEscrow: number
 ) {
+  const amt = { decimal: amountFromEscrow.toFixed(8) };
   return Pact.builder
     .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.refund "${offerId}")`)
     .addData("sender", arbiterAccount)
-    .addSigner(arbiterPubKey, (s) => [s("coin.GAS")])
+    .addSigner(arbiterPubKey, (s) => [
+      s("coin.GAS"),
+      s("coin.TRANSFER", "p2p-escrow-vault", sellerFromEscrow, amt),
+    ])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: arbiterAccount,

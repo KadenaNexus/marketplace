@@ -136,7 +136,7 @@ export function EscrowActions({ refreshTrigger = 0 }: EscrowActionsProps) {
   const handleDeposit = () => {
     if (!account || !selectedEscrow) return;
     executeAction("Deposit", () => 
-      buildDepositTx(selectedEscrow.offerId, selectedEscrow.amount, account.account, account.publicKey)
+      buildDepositTx(selectedEscrow.offerId, selectedEscrow.amount, account.account, account.publicKey, selectedEscrow.seller)
     );
   };
 
@@ -150,14 +150,14 @@ export function EscrowActions({ refreshTrigger = 0 }: EscrowActionsProps) {
   const handleRelease = () => {
     if (!account || !selectedEscrow) return;
     executeAction("Release", () => 
-      buildReleaseTx(selectedEscrow.offerId, account.account, account.publicKey)
+      buildReleaseTx(selectedEscrow.offerId, account.account, account.publicKey, selectedEscrow.buyer!, selectedEscrow.amount)
     );
   };
 
   const handleRefund = () => {
     if (!account || !selectedEscrow) return;
     executeAction("Refund", () => 
-      buildRefundTx(selectedEscrow.offerId, account.account, account.publicKey)
+      buildRefundTx(selectedEscrow.offerId, account.account, account.publicKey, selectedEscrow.seller, selectedEscrow.amount)
     );
   };
 
