@@ -56,7 +56,7 @@ export function WalletConnect() {
           size="sm"
           onClick={handleTestTransfer}
           disabled={isSending}
-          className="gap-2"
+          className="gap-2 hidden"
           title="Send 10 KDA to test address to verify node and signing"
         >
           {isSending ? (

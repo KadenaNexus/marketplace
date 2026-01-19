@@ -37,10 +37,10 @@ npm run dev
 App runs at `http://localhost:8080`. In dev, Chainweb calls go through a Vite proxy (`/chainweb-proxy` → `chainweb.chaddex.com`) to avoid CORS. Override with:
 
 ```sh
-VITE_CHAINWEB_PROXY_TARGET=https://api.chainweb.com npm run dev
+VITE_CHAINWEB_PROXY_TARGET=https://chainweb.chaddex.com npm run dev
 ```
 
-(Prod uses `https://api.chainweb.com` directly.)
+(Prod uses `https://chainweb.chaddex.com` directly.)
 
 ## Scripts
 

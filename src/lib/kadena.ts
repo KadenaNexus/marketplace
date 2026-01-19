@@ -8,7 +8,7 @@ export const NETWORK_ID = "mainnet01";
 export const CHAIN_ID = "1";
 
 // Chaddex blocks CORS from browser. In dev we use a Vite proxy; in prod we use the official API.
-const API_CHAINWEB_PACT = `https://api.chainweb.com/chainweb/0.0/${NETWORK_ID}/chain/${CHAIN_ID}/pact`;
+const API_CHAINWEB_PACT = `https://chainweb.chaddex.com/chainweb/0.0/${NETWORK_ID}/chain/${CHAIN_ID}/pact`;
 
 export const API_HOST =
   import.meta.env.DEV && typeof window !== "undefined"

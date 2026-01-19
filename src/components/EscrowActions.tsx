@@ -403,7 +403,7 @@ export function EscrowActions({ refreshTrigger = 0 }: EscrowActionsProps) {
                     <p className="tx-hash">{tx.requestKey}</p>
                   </div>
                   <a
-                    href={`https://explorer.chainweb.com/mainnet/tx/${tx.requestKey}`}
+                    href={`https://denascan.com/transactions/${tx.requestKey}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-primary hover:underline"
