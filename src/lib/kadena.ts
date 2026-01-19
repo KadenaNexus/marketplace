@@ -15,6 +15,7 @@ export const API_HOST =
     ? `${window.location.origin}/chainweb-proxy`
     : API_CHAINWEB_PACT;
 
+// Must match deployment: (describe-module "{ns}.{mod}") or deployment logs.
 export const CONTRACT_NAMESPACE = "free";
 export const CONTRACT_MODULE = "p2p-escrow";
 
@@ -93,10 +94,13 @@ export async function submitTransaction(signedCmd: any): Promise<string> {
   if (!res.ok) {
     let msg = text || res.statusText;
     try {
-      const j = JSON.parse(text) as { error?: string; message?: string };
-      msg = j.error ?? j.message ?? msg;
+      const j = JSON.parse(text) as { error?: string; message?: string; detail?: string; msg?: string };
+      msg = j.error ?? j.message ?? j.detail ?? j.msg ?? msg;
     } catch {
       /* use text as-is */
+    }
+    if (res.status >= 500) {
+      console.error("[submitTransaction] 5xx response body:", text.slice(0, 3000));
     }
     throw new Error(`Send failed (${res.status}): ${msg}`);
   }
@@ -167,13 +171,11 @@ export function buildCreateOfferTx(
 
   return Pact.builder
     .execution(pactCode)
-    .addSigner(sellerPubKey, (signFor) => [
-      signFor("coin.GAS"),
-    ])
+    .addSigner(sellerPubKey, (signFor) => [signFor("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
-      senderAccount: cleanSeller,
-      gasLimit: 250000,
+      senderAccount: sellerAccount,
+      gasLimit: 25000,
       gasPrice: 0.00001,
       ttl: 600,
     })
@@ -189,16 +191,12 @@ export function buildAcceptOfferTx(
   buyerPubKey: string
 ) {
   return Pact.builder
-    .execution(
-      `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.accept-offer
-        "${offerId}"
-        "${clean(buyerAccount)}")`
-    )
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.accept-offer "${offerId}" "${clean(buyerAccount)}")`)
     .addSigner(buyerPubKey, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
-      senderAccount: clean(buyerAccount),
-      gasLimit: 250000,
+      senderAccount: buyerAccount,
+      gasLimit: 25000,
       gasPrice: 0.00001,
       ttl: 600,
     })
@@ -217,19 +215,15 @@ export function buildDepositTx(
   const seller = clean(sellerAccount);
 
   return Pact.builder
-    .execution(
-      `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.deposit "${offerId}")`
-    )
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.deposit "${offerId}")`)
     .addSigner(sellerPubKey, (s) => [
       s("coin.GAS"),
-      s("coin.TRANSFER", seller, "p2p-escrow-vault", {
-        decimal: amount.toFixed(8),
-      }),
+      s("coin.TRANSFER", seller, "p2p-escrow-vault", { decimal: amount.toFixed(8) }),
     ])
     .setMeta({
       chainId: CHAIN_ID,
-      senderAccount: seller,
-      gasLimit: 50000,
+      senderAccount: sellerAccount,
+      gasLimit: 25000,
       gasPrice: 0.00001,
       ttl: 600,
     })
@@ -245,14 +239,12 @@ export function buildMarkPaidTx(
   buyerPubKey: string
 ) {
   return Pact.builder
-    .execution(
-      `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.mark-paid "${offerId}")`
-    )
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.mark-paid "${offerId}")`)
     .addSigner(buyerPubKey, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
-      senderAccount: clean(buyerAccount),
-      gasLimit: 250000,
+      senderAccount: buyerAccount,
+      gasLimit: 25000,
       gasPrice: 0.00001,
       ttl: 600,
     })
@@ -268,14 +260,12 @@ export function buildReleaseTx(
   callerPubKey: string
 ) {
   return Pact.builder
-    .execution(
-      `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.release "${offerId}")`
-    )
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.release "${offerId}")`)
     .addSigner(callerPubKey, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
-      senderAccount: clean(callerAccount),
-      gasLimit: 50000,
+      senderAccount: callerAccount,
+      gasLimit: 25000,
       gasPrice: 0.00001,
       ttl: 600,
     })
@@ -291,14 +281,12 @@ export function buildRefundTx(
   arbiterPubKey: string
 ) {
   return Pact.builder
-    .execution(
-      `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.refund "${offerId}")`
-    )
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.refund "${offerId}")`)
     .addSigner(arbiterPubKey, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
-      senderAccount: clean(arbiterAccount),
-      gasLimit: 50000,
+      senderAccount: arbiterAccount,
+      gasLimit: 25000,
       gasPrice: 0.00001,
       ttl: 600,
     })
