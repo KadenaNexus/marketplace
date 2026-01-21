@@ -9,9 +9,18 @@ lerna-debug.log*
 
 node_modules
 dist
-server/uploads
 dist-ssr
 *.local
+
+# Uploaded profile images
+server/uploads/
+server/uploads/**
+# Explicit image file patterns in uploads directory
+server/uploads/profiles/*.jpg
+server/uploads/profiles/*.jpeg
+server/uploads/profiles/*.png
+server/uploads/profiles/*.gif
+server/uploads/profiles/*.webp
 
 # Environment variables
 .env

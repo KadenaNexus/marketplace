@@ -20,6 +20,7 @@ import {
   pollTransaction,
   type Escrow,
 } from "@/lib/kadena";
+import type { OfferFilters } from "./OfferFilters";
 import { 
   List,
   Loader2, 
@@ -42,15 +43,68 @@ interface TransactionResult {
 
 interface EscrowActionsProps {
   refreshTrigger?: number;
+  filters?: OfferFilters;
+  role?: "buyer" | "seller";
 }
 
-export function EscrowActions({ refreshTrigger = 0 }: EscrowActionsProps) {
+export function EscrowActions({ refreshTrigger = 0, filters, role = "seller" }: EscrowActionsProps) {
   const { account, isConnected } = useWallet();
-  const [escrows, setEscrows] = useState<Escrow[]>([]);
+  const [allEscrows, setAllEscrows] = useState<Escrow[]>([]);
   const [selectedOfferId, setSelectedOfferId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [transactions, setTransactions] = useState<TransactionResult[]>([]);
+
+  // Filter escrows based on filters and role
+  const escrows = useMemo(() => {
+    let filtered = [...allEscrows];
+
+    // Role-based filtering
+    if (role === "buyer") {
+      // Buyers see sell offers (CREATED state) or offers they've accepted
+      filtered = filtered.filter(
+        (e) => e.state === "CREATED" || (e.buyer && e.buyer === account?.account)
+      );
+    } else {
+      // Sellers see their own offers or offers they've created
+      filtered = filtered.filter((e) => e.seller === account?.account);
+    }
+
+    // Apply filters
+    if (filters) {
+      if (filters.state !== "ALL") {
+        filtered = filtered.filter((e) => e.state === filters.state);
+      }
+
+      if (filters.minAmount) {
+        const min = parseFloat(filters.minAmount);
+        if (!isNaN(min)) {
+          filtered = filtered.filter((e) => e.amount >= min);
+        }
+      }
+
+      if (filters.maxAmount) {
+        const max = parseFloat(filters.maxAmount);
+        if (!isNaN(max)) {
+          filtered = filtered.filter((e) => e.amount <= max);
+        }
+      }
+
+      if (filters.seller) {
+        const sellerLower = filters.seller.toLowerCase();
+        filtered = filtered.filter((e) => e.seller.toLowerCase().includes(sellerLower));
+      }
+
+      if (filters.buyer) {
+        const buyerLower = filters.buyer.toLowerCase();
+        filtered = filtered.filter(
+          (e) => e.buyer && e.buyer.toLowerCase().includes(buyerLower)
+        );
+      }
+    }
+
+    return filtered;
+  }, [allEscrows, filters, role, account?.account]);
 
   const selectedEscrow = escrows.find((e) => e.offerId === selectedOfferId) ?? null;
 
@@ -74,7 +128,7 @@ export function EscrowActions({ refreshTrigger = 0 }: EscrowActionsProps) {
     setIsLoading(true);
     try {
       const list = await listAllEscrows();
-      setEscrows(list);
+      setAllEscrows(list);
       if (selectedOfferId && !list.some((e) => e.offerId === selectedOfferId)) {
         setSelectedOfferId(null);
       }
@@ -83,7 +137,7 @@ export function EscrowActions({ refreshTrigger = 0 }: EscrowActionsProps) {
         description: error instanceof Error ? error.message : undefined,
       });
       console.error(error);
-      setEscrows([]);
+      setAllEscrows([]);
     } finally {
       setIsLoading(false);
     }
@@ -206,10 +260,12 @@ export function EscrowActions({ refreshTrigger = 0 }: EscrowActionsProps) {
             <div>
               <CardTitle className="flex items-center gap-2">
                 <List className="h-5 w-5 text-primary" />
-                All Offers
+                {role === "buyer" ? "Sell Offers" : "My Offers"}
               </CardTitle>
               <CardDescription>
-                Select an offer to view details and take action
+                {role === "buyer" 
+                  ? "Browse available sell offers and select one to accept"
+                  : "Select an offer to view details and take action"}
               </CardDescription>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -227,7 +283,9 @@ export function EscrowActions({ refreshTrigger = 0 }: EscrowActionsProps) {
             </div>
           ) : escrows.length === 0 ? (
             <p className="text-center py-8 text-muted-foreground">
-              No offers yet. Create one in the Create Offer tab.
+              {role === "buyer" 
+                ? "No sell offers available. Try adjusting your filters."
+                : "No offers yet. Create one in the Create Offer tab."}
             </p>
           ) : (
             <div className="space-y-2 max-h-[280px] overflow-y-auto">

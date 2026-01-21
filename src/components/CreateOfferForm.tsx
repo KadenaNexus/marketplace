@@ -15,9 +15,10 @@ import { toast } from "sonner";
 
 interface CreateOfferFormProps {
   onSuccess?: (offerId: string, txHash: string) => void;
+  role?: "buyer" | "seller";
 }
 
-export function CreateOfferForm({ onSuccess }: CreateOfferFormProps) {
+export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormProps) {
   const { account, isConnected } = useWallet();
   const [offerId, setOfferId] = useState("");
   const [amount, setAmount] = useState("");
@@ -106,10 +107,12 @@ export function CreateOfferForm({ onSuccess }: CreateOfferFormProps) {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Plus className="h-5 w-5 text-primary" />
-          Create Offer
+          {role === "buyer" ? "Create Buy Offer" : "Create Sell Offer"}
         </CardTitle>
         <CardDescription>
-          Create a new P2P escrow offer as the seller
+          {role === "buyer" 
+            ? "Create a new buy offer. Note: The contract currently supports seller-created offers. This will create a sell offer that you can accept."
+            : "Create a new P2P escrow offer as the seller"}
         </CardDescription>
       </CardHeader>
       <CardContent>
