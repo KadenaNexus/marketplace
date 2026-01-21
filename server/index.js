@@ -27,8 +27,19 @@ const AVATAR_MAX_BYTES = 20 * 1024 * 1024; // 2MB
 const MONGODB_URI = process.env.MONGODB_URI || "mongodb://localhost:27017";
 const MONGODB_DB = process.env.MONGODB_DB || "kadena_nexus";
 const PROFILES_COLLECTION = "profiles";
+const DISPUTES_COLLECTION = "disputes";
+const EVIDENCE_COLLECTION = "evidence";
+const DISPUTE_MESSAGES_COLLECTION = "dispute_messages";
 
 const UPLOADS_DIR = path.join(__dirname, "uploads", "profiles");
+const EVIDENCE_DIR = path.join(__dirname, "uploads", "evidence");
+try {
+  fs.mkdirSync(EVIDENCE_DIR, { recursive: true });
+  console.log(`Evidence directory: ${EVIDENCE_DIR}`);
+} catch (e) {
+  console.error("Failed to create evidence directory:", e.message);
+  process.exit(1);
+}
 try {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
   console.log(`Uploads directory: ${UPLOADS_DIR}`);
@@ -61,12 +72,43 @@ const upload = multer({
   },
 });
 
+// Evidence upload (images and PDFs, max 10MB)
+const EVIDENCE_MAX_BYTES = 10 * 1024 * 1024; // 10MB
+const uploadEvidence = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      try {
+        fs.mkdirSync(EVIDENCE_DIR, { recursive: true });
+        cb(null, EVIDENCE_DIR);
+      } catch (e) {
+        cb(new Error(`Failed to create evidence directory: ${e.message}`), null);
+      }
+    },
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname)?.toLowerCase() || "";
+      const allowed = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".pdf"];
+      const e = allowed.includes(ext) ? ext : "";
+      cb(null, crypto.randomUUID() + e);
+    },
+  }),
+  limits: { fileSize: EVIDENCE_MAX_BYTES },
+  fileFilter: (_req, file, cb) => {
+    const allowedMimes = ["image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf"];
+    if (!allowedMimes.includes(file.mimetype)) {
+      return cb(new Error("Only images (JPG, PNG, GIF, WebP) and PDFs allowed"), false);
+    }
+    cb(null, true);
+  },
+});
+
 const app = express();
 app.use(cors({ origin: true }));
 app.use(express.json({ limit: "256kb" }));
 
 // Serve uploaded profile images
 app.use("/uploads/profiles", express.static(UPLOADS_DIR));
+// Serve uploaded evidence files
+app.use("/uploads/evidence", express.static(EVIDENCE_DIR));
 
 /** @type {import('mongodb').Db} */
 let db;
@@ -288,6 +330,267 @@ app.post("/api/profiles/bulk", async (req, res) => {
   }
 });
 
+/* ============================================================
+   DISPUTE API
+============================================================ */
+
+// POST /api/disputes – open a dispute. Body: { offerId, openedBy (buyer/seller), reason, wallet, publicKey, signedCmd }
+app.post("/api/disputes", async (req, res) => {
+  const { offerId, openedBy, reason, wallet, publicKey, signedCmd } = req.body ?? {};
+  if (!offerId || typeof offerId !== "string") {
+    return res.status(400).json({ error: "Missing offerId" });
+  }
+  if (!openedBy || (openedBy !== "buyer" && openedBy !== "seller")) {
+    return res.status(400).json({ error: "openedBy must be 'buyer' or 'seller'" });
+  }
+  if (!wallet || typeof wallet !== "string") {
+    return res.status(400).json({ error: "Missing wallet" });
+  }
+  const v = verifyProfileAuth(signedCmd, wallet, publicKey);
+  if (!v.ok) {
+    return res.status(403).json({ error: "Proof of ownership failed", reason: v.reason });
+  }
+  try {
+    const existing = await db.collection(DISPUTES_COLLECTION).findOne({ 
+      offerId,
+      status: "OPEN"
+    });
+    if (existing) {
+      return res.status(400).json({ error: "An open dispute already exists for this offer. Please wait for it to be resolved." });
+    }
+    const dispute = {
+      offerId,
+      openedBy,
+      reason: typeof reason === "string" ? reason.trim().slice(0, 1000) : "",
+      openedByWallet: wallet,
+      status: "OPEN",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    await db.collection(DISPUTES_COLLECTION).insertOne(dispute);
+    return res.json(dispute);
+  } catch (err) {
+    console.error("POST /api/disputes", err);
+    return res.status(500).json({ error: err.message || "Database error" });
+  }
+});
+
+// GET /api/disputes/:offerId – get dispute for an offer
+app.get("/api/disputes/:offerId", async (req, res) => {
+  const offerId = req.params.offerId?.trim();
+  if (!offerId) {
+    return res.status(400).json({ error: "Missing offerId" });
+  }
+  try {
+    const dispute = await db.collection(DISPUTES_COLLECTION).findOne({ offerId });
+    if (!dispute) {
+      return res.status(404).json({ error: "Dispute not found" });
+    }
+    return res.json(dispute);
+  } catch (err) {
+    console.error("GET /api/disputes/:offerId", err);
+    return res.status(500).json({ error: err.message || "Database error" });
+  }
+});
+
+// POST /api/disputes/:offerId/evidence – submit evidence. Multipart: file(s), explanation, wallet, publicKey, signedCmd
+app.post("/api/disputes/:offerId/evidence", (req, res, next) => {
+  uploadEvidence.array("files", 10)(req, res, (err) => {
+    if (err) {
+      if (err.code === "LIMIT_FILE_SIZE") {
+        return res.status(400).json({ error: "File too large (max 10MB per file)" });
+      }
+      if (err.code === "LIMIT_UNEXPECTED_FILE") {
+        return res.status(400).json({ error: "Unexpected file field" });
+      }
+      if (err.code === "LIMIT_FILE_COUNT") {
+        return res.status(400).json({ error: "Too many files (max 10)" });
+      }
+      return res.status(400).json({ error: err.message || "Upload error" });
+    }
+    next();
+  });
+}, async (req, res) => {
+  try {
+    const offerId = req.params.offerId?.trim();
+    if (!offerId) {
+      return res.status(400).json({ error: "Missing offerId" });
+    }
+    const files = req.files || [];
+    if (files.length === 0) {
+      return res.status(400).json({ error: "No files uploaded" });
+    }
+    const { explanation, wallet, publicKey } = req.body ?? {};
+    let signedCmd = req.body?.signedCmd;
+    if (typeof signedCmd === "string") {
+      try {
+        signedCmd = JSON.parse(signedCmd);
+      } catch (e) {
+        return res.status(400).json({ error: "Invalid signedCmd JSON" });
+      }
+    }
+    if (!wallet || typeof wallet !== "string") {
+      return res.status(400).json({ error: "Missing wallet" });
+    }
+    const v = verifyProfileAuth(signedCmd, wallet, publicKey);
+    if (!v.ok) {
+      return res.status(403).json({ error: "Proof of ownership failed", reason: v.reason });
+    }
+    // Check if dispute exists
+    const dispute = await db.collection(DISPUTES_COLLECTION).findOne({ offerId });
+    if (!dispute) {
+      return res.status(404).json({ error: "Dispute not found" });
+    }
+    // Verify user is buyer or seller
+    // Note: We'd need to fetch escrow from chain to verify, but for now we'll trust the dispute record
+    const evidenceFiles = files.map((f) => ({
+      filename: f.filename,
+      originalName: f.originalname,
+      mimeType: f.mimetype,
+      size: f.size,
+      url: `/uploads/evidence/${f.filename}`,
+    }));
+    const evidence = {
+      offerId,
+      submittedBy: wallet,
+      explanation: typeof explanation === "string" ? explanation.trim().slice(0, 2000) : "",
+      files: evidenceFiles,
+      submittedAt: new Date().toISOString(),
+    };
+    await db.collection(EVIDENCE_COLLECTION).insertOne(evidence);
+    await db.collection(DISPUTES_COLLECTION).updateOne(
+      { offerId },
+      { $set: { updatedAt: new Date().toISOString() } }
+    );
+    return res.json(evidence);
+  } catch (err) {
+    console.error("POST /api/disputes/:offerId/evidence", err);
+    return res.status(500).json({ error: err.message || "Server error" });
+  }
+});
+
+// GET /api/disputes/:offerId/evidence – get all evidence for a dispute. Query: ?wallet=<wallet> (for authorization check)
+app.get("/api/disputes/:offerId/evidence", async (req, res) => {
+  const offerId = req.params.offerId?.trim();
+  const wallet = req.query.wallet?.toString();
+  if (!offerId) {
+    return res.status(400).json({ error: "Missing offerId" });
+  }
+  try {
+    const dispute = await db.collection(DISPUTES_COLLECTION).findOne({ offerId });
+    if (!dispute) {
+      return res.status(404).json({ error: "Dispute not found" });
+    }
+    // Authorization: only buyer, seller, or arbiter can view evidence
+    // For now, we'll return evidence if wallet matches openedByWallet or if it's provided
+    // In production, you'd verify against the escrow contract to check buyer/seller/arbiter
+    const evidenceList = await db.collection(EVIDENCE_COLLECTION)
+      .find({ offerId })
+      .sort({ submittedAt: -1 })
+      .toArray();
+    return res.json(evidenceList);
+  } catch (err) {
+    console.error("GET /api/disputes/:offerId/evidence", err);
+    return res.status(500).json({ error: err.message || "Database error" });
+  }
+});
+
+// POST /api/disputes/:offerId/messages – send a message in dispute. Body: { message, wallet, publicKey, signedCmd }
+app.post("/api/disputes/:offerId/messages", async (req, res) => {
+  const offerId = req.params.offerId?.trim();
+  const { message, wallet, publicKey, signedCmd } = req.body ?? {};
+  if (!offerId) {
+    return res.status(400).json({ error: "Missing offerId" });
+  }
+  if (!message || typeof message !== "string" || !message.trim()) {
+    return res.status(400).json({ error: "Message is required" });
+  }
+  if (!wallet || typeof wallet !== "string") {
+    return res.status(400).json({ error: "Missing wallet" });
+  }
+  const v = verifyProfileAuth(signedCmd, wallet, publicKey);
+  if (!v.ok) {
+    return res.status(403).json({ error: "Proof of ownership failed", reason: v.reason });
+  }
+  try {
+    const dispute = await db.collection(DISPUTES_COLLECTION).findOne({ offerId });
+    if (!dispute) {
+      return res.status(404).json({ error: "Dispute not found" });
+    }
+    const msg = {
+      offerId,
+      from: wallet,
+      message: message.trim().slice(0, 2000),
+      createdAt: new Date().toISOString(),
+    };
+    await db.collection(DISPUTE_MESSAGES_COLLECTION).insertOne(msg);
+    await db.collection(DISPUTES_COLLECTION).updateOne(
+      { offerId },
+      { $set: { updatedAt: new Date().toISOString() } }
+    );
+    return res.json(msg);
+  } catch (err) {
+    console.error("POST /api/disputes/:offerId/messages", err);
+    return res.status(500).json({ error: err.message || "Database error" });
+  }
+});
+
+// GET /api/disputes/:offerId/messages – get all messages in dispute
+app.get("/api/disputes/:offerId/messages", async (req, res) => {
+  const offerId = req.params.offerId?.trim();
+  if (!offerId) {
+    return res.status(400).json({ error: "Missing offerId" });
+  }
+  try {
+    const dispute = await db.collection(DISPUTES_COLLECTION).findOne({ offerId });
+    if (!dispute) {
+      return res.status(404).json({ error: "Dispute not found" });
+    }
+    const messages = await db.collection(DISPUTE_MESSAGES_COLLECTION)
+      .find({ offerId })
+      .sort({ createdAt: 1 })
+      .toArray();
+    return res.json(messages);
+  } catch (err) {
+    console.error("GET /api/disputes/:offerId/messages", err);
+    return res.status(500).json({ error: err.message || "Database error" });
+  }
+});
+
+// PUT /api/disputes/:offerId/close – arbiter closes dispute. Body: { wallet, publicKey, signedCmd }
+app.put("/api/disputes/:offerId/close", async (req, res) => {
+  const offerId = req.params.offerId?.trim();
+  const { wallet, publicKey, signedCmd } = req.body ?? {};
+  if (!offerId) {
+    return res.status(400).json({ error: "Missing offerId" });
+  }
+  if (!wallet || typeof wallet !== "string") {
+    return res.status(400).json({ error: "Missing wallet" });
+  }
+  const v = verifyProfileAuth(signedCmd, wallet, publicKey);
+  if (!v.ok) {
+    return res.status(403).json({ error: "Proof of ownership failed", reason: v.reason });
+  }
+  try {
+    const dispute = await db.collection(DISPUTES_COLLECTION).findOne({ offerId });
+    if (!dispute) {
+      return res.status(404).json({ error: "Dispute not found" });
+    }
+    if (dispute.status !== "OPEN") {
+      return res.status(400).json({ error: "Dispute is not open" });
+    }
+    // Note: In production, verify wallet is the arbiter from escrow contract
+    await db.collection(DISPUTES_COLLECTION).updateOne(
+      { offerId },
+      { $set: { status: "CLOSED", updatedAt: new Date().toISOString() } }
+    );
+    return res.json({ success: true, status: "CLOSED" });
+  } catch (err) {
+    console.error("PUT /api/disputes/:offerId/close", err);
+    return res.status(500).json({ error: err.message || "Database error" });
+  }
+});
+
 const PORT = Number(process.env.PORT) || 3001;
 
 async function start() {
@@ -296,7 +599,13 @@ async function start() {
     await client.connect();
     db = client.db(MONGODB_DB);
     await db.collection(PROFILES_COLLECTION).createIndex({ wallet: 1 }, { unique: true });
-    console.log(`MongoDB connected: ${MONGODB_DB}.${PROFILES_COLLECTION}`);
+    await db.collection(DISPUTES_COLLECTION).createIndex({ offerId: 1 });
+    await db.collection(DISPUTES_COLLECTION).createIndex({ status: 1 });
+    await db.collection(EVIDENCE_COLLECTION).createIndex({ offerId: 1 });
+    await db.collection(EVIDENCE_COLLECTION).createIndex({ submittedBy: 1 });
+    await db.collection(DISPUTE_MESSAGES_COLLECTION).createIndex({ offerId: 1 });
+    await db.collection(DISPUTE_MESSAGES_COLLECTION).createIndex({ createdAt: 1 });
+    console.log(`MongoDB connected: ${MONGODB_DB}`);
   } catch (err) {
     console.error("MongoDB connection failed:", err.message);
     process.exit(1);

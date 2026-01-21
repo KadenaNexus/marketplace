@@ -23,7 +23,7 @@ export default defineConfig(({ mode }) => ({
         target: process.env.VITE_PROFILE_API || "http://localhost:3001",
         changeOrigin: true,
       },
-      // Uploaded profile images
+      // Uploaded files (profiles and evidence)
       "/uploads": {
         target: process.env.VITE_PROFILE_API || "http://localhost:3001",
         changeOrigin: true,

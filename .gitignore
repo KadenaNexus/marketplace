@@ -12,7 +12,7 @@ dist
 dist-ssr
 *.local
 
-# Uploaded profile images
+# Uploaded files
 server/uploads/
 server/uploads/**
 # Explicit image file patterns in uploads directory
@@ -21,6 +21,8 @@ server/uploads/profiles/*.jpeg
 server/uploads/profiles/*.png
 server/uploads/profiles/*.gif
 server/uploads/profiles/*.webp
+# Evidence files (images and PDFs)
+server/uploads/evidence/*
 
 # Environment variables
 .env

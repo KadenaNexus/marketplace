@@ -6,7 +6,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { EscrowStatus } from "./EscrowStatus";
 import { ProfileSummaryView } from "./ProfileSummary";
 import { OfferCard } from "./OfferCard";
+import { DisputeView } from "./DisputeView";
+import { OpenDisputeDialog } from "./OpenDisputeDialog";
+import { getDispute } from "@/lib/disputeApi";
 import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useWallet } from "@/hooks/useWallet";
 import { fetchProfilesBulk } from "@/lib/profileApi";
 import {
@@ -34,6 +38,8 @@ import {
   XCircle,
   ExternalLink,
   RefreshCw,
+  AlertTriangle,
+  FileText,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -57,6 +63,8 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
   const [isLoading, setIsLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [transactions, setTransactions] = useState<TransactionResult[]>([]);
+  const [showDisputeDialog, setShowDisputeDialog] = useState(false);
+  const [disputeTab, setDisputeTab] = useState("details");
 
   // Filter escrows based on filters and role
   const escrows = useMemo(() => {
@@ -168,6 +176,13 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
     queryKey: ["profiles-bulk", allWallets.join(",")],
     queryFn: () => fetchProfilesBulk(allWallets),
     enabled: allWallets.length > 0,
+  });
+
+  // Check if there's an open dispute for the selected escrow
+  const { data: existingDispute } = useQuery({
+    queryKey: ["dispute-check", selectedEscrow?.offerId],
+    queryFn: () => selectedEscrow ? getDispute(selectedEscrow.offerId) : null,
+    enabled: !!selectedEscrow,
   });
 
   const loadAll = async () => {
@@ -294,6 +309,10 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
     (account?.account === selectedEscrow?.seller || account?.account === selectedEscrow?.arbiter);
   const canRefund = (selectedEscrow?.state === "FUNDED" || selectedEscrow?.state === "PAID") && account?.account === selectedEscrow?.arbiter;
   const canCloseOffer = selectedEscrow?.state === "CREATED" && account?.account === selectedEscrow?.seller;
+  const canOpenDispute = selectedEscrow?.buyer && 
+    (account?.account === selectedEscrow?.buyer || account?.account === selectedEscrow?.seller) &&
+    (selectedEscrow?.state === "FUNDED" || selectedEscrow?.state === "PAID") &&
+    (!existingDispute || existingDispute.status !== "OPEN");
 
   const isTerminal = selectedEscrow?.state === "COMPLETED" || selectedEscrow?.state === "REFUNDED" || selectedEscrow?.state === "CLOSED";
 
@@ -368,6 +387,16 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
             </div>
           </CardHeader>
           <CardContent className="space-y-6">
+            <Tabs value={disputeTab} onValueChange={setDisputeTab}>
+              <TabsList>
+                <TabsTrigger value="details">Details</TabsTrigger>
+                <TabsTrigger value="dispute" className="gap-2">
+                  <AlertTriangle className="h-4 w-4" />
+                  Dispute
+                </TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="details" className="space-y-6 mt-4">
             {/* Details Grid */}
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
@@ -532,6 +561,18 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
                     Refund to Seller
                   </Button>
                 )}
+
+                {canOpenDispute && (
+                  <Button 
+                    onClick={() => setShowDisputeDialog(true)}
+                    disabled={!!actionLoading}
+                    variant="outline"
+                    className="gap-2 border-destructive text-destructive hover:bg-destructive hover:text-destructive-foreground"
+                  >
+                    <AlertTriangle className="h-4 w-4" />
+                    Open Dispute
+                  </Button>
+                )}
               </div>
             )}
 
@@ -546,8 +587,30 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
                 Connect your wallet to interact with this escrow
               </div>
             )}
+              </TabsContent>
+
+              <TabsContent value="dispute" className="mt-4">
+                <DisputeView 
+                  escrow={selectedEscrow} 
+                  onClose={() => setDisputeTab("details")}
+                />
+              </TabsContent>
+            </Tabs>
           </CardContent>
         </Card>
+      )}
+
+      {/* Open Dispute Dialog */}
+      {selectedEscrow && (
+        <OpenDisputeDialog
+          open={showDisputeDialog}
+          onOpenChange={setShowDisputeDialog}
+          escrow={selectedEscrow}
+          onSuccess={() => {
+            setDisputeTab("dispute");
+            loadAll();
+          }}
+        />
       )}
 
       {/* Transaction History */}
