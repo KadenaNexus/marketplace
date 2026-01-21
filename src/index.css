@@ -124,3 +124,32 @@
     @apply font-mono text-sm;
   }
 }
+
+/* Themed native scrollbars - Kadena dark crypto UI */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(220 15% 25%) hsl(220 15% 12%);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: hsl(220 15% 12%);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(220 15% 25%);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(220 15% 35%);
+}
+
+::-webkit-scrollbar-thumb:active {
+  background: hsl(160 84% 45% / 0.7);
+}
