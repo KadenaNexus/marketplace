@@ -1,9 +1,12 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { EscrowStatus } from "./EscrowStatus";
+import { ProfileSummaryView } from "./ProfileSummary";
 import { useWallet } from "@/hooks/useWallet";
+import { fetchProfilesBulk } from "@/lib/profileApi";
 import {
   listAllEscrows,
   buildAcceptOfferTx,
@@ -50,6 +53,22 @@ export function EscrowActions({ refreshTrigger = 0 }: EscrowActionsProps) {
   const [transactions, setTransactions] = useState<TransactionResult[]>([]);
 
   const selectedEscrow = escrows.find((e) => e.offerId === selectedOfferId) ?? null;
+
+  const allWallets = useMemo(() => {
+    const set = new Set<string>();
+    escrows.forEach((e) => {
+      set.add(e.seller);
+      if (e.buyer) set.add(e.buyer);
+      set.add(e.arbiter);
+    });
+    return Array.from(set);
+  }, [escrows]);
+
+  const { data: profileMap = {} } = useQuery({
+    queryKey: ["profiles-bulk", allWallets.join(",")],
+    queryFn: () => fetchProfilesBulk(allWallets),
+    enabled: allWallets.length > 0,
+  });
 
   const loadAll = async () => {
     setIsLoading(true);
@@ -229,7 +248,10 @@ export function EscrowActions({ refreshTrigger = 0 }: EscrowActionsProps) {
                   </div>
                   <div className="flex items-center gap-4 mt-1 text-xs text-muted-foreground">
                     <span className="font-mono font-medium text-foreground">{e.amount.toFixed(4)} KDA</span>
-                    <span className="truncate">Seller: {e.seller.slice(0, 12)}…</span>
+                    <div className="flex items-center gap-1 min-w-0">
+                      <span className="shrink-0">Seller:</span>
+                      <ProfileSummaryView wallet={e.seller} summary={profileMap[e.seller]} size="sm" />
+                    </div>
                   </div>
                 </button>
               ))}
@@ -258,17 +280,19 @@ export function EscrowActions({ refreshTrigger = 0 }: EscrowActionsProps) {
               </div>
               <div>
                 <Label className="text-muted-foreground">Seller</Label>
-                <p className="font-mono text-sm break-all">{selectedEscrow.seller}</p>
+                <ProfileSummaryView wallet={selectedEscrow.seller} summary={profileMap[selectedEscrow.seller]} />
               </div>
               <div>
                 <Label className="text-muted-foreground">Buyer</Label>
-                <p className="font-mono text-sm break-all">
-                  {selectedEscrow.buyer || <span className="text-muted-foreground italic">Not yet accepted</span>}
-                </p>
+                {selectedEscrow.buyer ? (
+                  <ProfileSummaryView wallet={selectedEscrow.buyer} summary={profileMap[selectedEscrow.buyer]} />
+                ) : (
+                  <span className="text-muted-foreground italic text-sm">Not yet accepted</span>
+                )}
               </div>
               <div>
                 <Label className="text-muted-foreground">Arbiter</Label>
-                <p className="font-mono text-sm break-all">{selectedEscrow.arbiter}</p>
+                <ProfileSummaryView wallet={selectedEscrow.arbiter} summary={profileMap[selectedEscrow.arbiter]} />
               </div>
             </div>
 

@@ -1,14 +1,26 @@
+import { Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { WalletConnect } from "@/components/WalletConnect";
 import { CreateOfferForm } from "@/components/CreateOfferForm";
 import { EscrowActions } from "@/components/EscrowActions";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useWallet } from "@/hooks/useWallet";
+import { fetchProfile } from "@/lib/profileApi";
 import { CHAIN_ID, NETWORK_ID } from "@/lib/kadena";
 import { Shield, Zap, Lock } from "lucide-react";
 
 const Index = () => {
+  const { account, isConnected } = useWallet();
   const [activeTab, setActiveTab] = useState("create");
   const [refreshManageTrigger, setRefreshManageTrigger] = useState(0);
+
+  const { data: profile } = useQuery({
+    queryKey: ["profile", account?.account],
+    queryFn: () => fetchProfile(account!.account),
+    enabled: !!account && isConnected,
+  });
 
   const handleOfferCreated = () => {
     setRefreshManageTrigger((r) => r + 1);
@@ -31,7 +43,23 @@ const Index = () => {
               </p>
             </div>
           </div>
-          <WalletConnect />
+          <div className="flex items-center gap-4">
+            {isConnected && account && (
+              <Link
+                to={`/u/${encodeURIComponent(account.account)}`}
+                className="hover:opacity-80 transition-opacity"
+                title="View profile"
+              >
+                <Avatar className="h-8 w-8">
+                  <AvatarImage src={profile?.avatar || "/default-avatar.svg"} alt="" />
+                  <AvatarFallback className="text-xs bg-muted">
+                    {profile?.username?.slice(0, 2).toUpperCase() || account.account.slice(0, 2).toUpperCase()}
+                  </AvatarFallback>
+                </Avatar>
+              </Link>
+            )}
+            <WalletConnect />
+          </div>
         </div>
       </header>
 

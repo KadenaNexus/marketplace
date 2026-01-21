@@ -509,3 +509,33 @@ export async function getAccountInfo() {
     return null;
   }
 }
+
+/* ============================================================
+   PROFILE – WALLET OWNERSHIP PROOF (SIGNED MESSAGE)
+   Builds a non-submitted pact command; user signs to prove control.
+   Backend verifies signature and data["profile-auth"] before allowing create/update.
+============================================================ */
+
+const PROFILE_AUTH_PURPOSE = "Kadena P2P Escrow Profile";
+
+/** Builds an ownership-proof command. Do NOT submit; only sign and send signedCmd to the profile API. */
+export function buildProfileAuthTx(wallet: string, publicKey: string) {
+  const nonce = Date.now();
+  return Pact.builder
+    .execution("(identity true)")
+    .addData("profile-auth", {
+      purpose: PROFILE_AUTH_PURPOSE,
+      wallet,
+      nonce,
+    })
+    .addSigner(publicKey, (s) => [s("coin.GAS")])
+    .setMeta({
+      chainId: CHAIN_ID,
+      senderAccount: wallet,
+      gasLimit: 5000,
+      gasPrice: 0.00001,
+      ttl: 600,
+    })
+    .setNetworkId(NETWORK_ID)
+    .createTransaction();
+}

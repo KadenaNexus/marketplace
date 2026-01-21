@@ -18,6 +18,16 @@ export default defineConfig(({ mode }) => ({
         rewrite: (path) =>
           path.replace(/^\/chainweb-proxy/, "/chainweb/0.0/mainnet01/chain/1/pact"),
       },
+      // Profile API: run "npm run dev:server" and proxy /api to it
+      "/api": {
+        target: process.env.VITE_PROFILE_API || "http://localhost:3001",
+        changeOrigin: true,
+      },
+      // Uploaded profile images
+      "/uploads": {
+        target: process.env.VITE_PROFILE_API || "http://localhost:3001",
+        changeOrigin: true,
+      },
     },
   },
   plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
