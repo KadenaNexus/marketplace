@@ -5,6 +5,8 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { EscrowStatus } from "./EscrowStatus";
 import { ProfileSummaryView } from "./ProfileSummary";
+import { OfferCard } from "./OfferCard";
+import { Badge } from "@/components/ui/badge";
 import { useWallet } from "@/hooks/useWallet";
 import { fetchProfilesBulk } from "@/lib/profileApi";
 import {
@@ -45,9 +47,10 @@ interface EscrowActionsProps {
   refreshTrigger?: number;
   filters?: OfferFilters;
   role?: "buyer" | "seller";
+  viewMode?: "all" | "my"; // "all" shows all offers, "my" shows only user's offers
 }
 
-export function EscrowActions({ refreshTrigger = 0, filters, role = "seller" }: EscrowActionsProps) {
+export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", viewMode = "all" }: EscrowActionsProps) {
   const { account, isConnected } = useWallet();
   const [allEscrows, setAllEscrows] = useState<Escrow[]>([]);
   const [selectedOfferId, setSelectedOfferId] = useState<string | null>(null);
@@ -59,21 +62,29 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller" }: 
   const escrows = useMemo(() => {
     let filtered = [...allEscrows];
 
-    // Role-based filtering
-    if (role === "buyer") {
-      // Buyers see sell offers (CREATED state) or offers they've accepted
-      filtered = filtered.filter(
-        (e) => e.state === "CREATED" || (e.buyer && e.buyer === account?.account)
-      );
-    } else {
-      // Sellers see their own offers or offers they've created
+    // View mode and role-based filtering
+    if (viewMode === "my") {
+      // Show only offers created by the current user
       filtered = filtered.filter((e) => e.seller === account?.account);
+    } else {
+      // Show all offers based on role
+      if (role === "buyer") {
+        // Buyers see all sell offers (any state)
+        filtered = filtered.filter((e) => e.side === "SELL");
+      } else {
+        // Sellers see all buy offers (any state)
+        filtered = filtered.filter((e) => e.side === "BUY");
+      }
     }
 
     // Apply filters
     if (filters) {
       if (filters.state !== "ALL") {
         filtered = filtered.filter((e) => e.state === filters.state);
+      }
+
+      if (filters.side !== "ALL") {
+        filtered = filtered.filter((e) => e.side === filters.side);
       }
 
       if (filters.minAmount) {
@@ -90,6 +101,32 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller" }: 
         }
       }
 
+      if (filters.minPrice) {
+        const min = parseFloat(filters.minPrice);
+        if (!isNaN(min)) {
+          filtered = filtered.filter((e) => e.price >= min);
+        }
+      }
+
+      if (filters.maxPrice) {
+        const max = parseFloat(filters.maxPrice);
+        if (!isNaN(max)) {
+          filtered = filtered.filter((e) => e.price <= max);
+        }
+      }
+
+      if (filters.paymentMethod) {
+        const methodLower = filters.paymentMethod.toLowerCase();
+        filtered = filtered.filter((e) => {
+          try {
+            const methods = JSON.parse(e.paymentMethod || "[]");
+            return methods.some((m: string) => m.toLowerCase().includes(methodLower));
+          } catch {
+            return e.paymentMethod.toLowerCase().includes(methodLower);
+          }
+        });
+      }
+
       if (filters.seller) {
         const sellerLower = filters.seller.toLowerCase();
         filtered = filtered.filter((e) => e.seller.toLowerCase().includes(sellerLower));
@@ -102,6 +139,15 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller" }: 
         );
       }
     }
+
+    // Sort by price (ascending for buyers, descending for sellers)
+    filtered.sort((a, b) => {
+      if (role === "buyer") {
+        return a.price - b.price; // Buyers want lowest price
+      } else {
+        return b.price - a.price; // Sellers want highest price
+      }
+    });
 
     return filtered;
   }, [allEscrows, filters, role, account?.account]);
@@ -260,12 +306,18 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller" }: 
             <div>
               <CardTitle className="flex items-center gap-2">
                 <List className="h-5 w-5 text-primary" />
-                {role === "buyer" ? "Sell Offers" : "My Offers"}
+                {viewMode === "my" 
+                  ? "My Offers" 
+                  : role === "buyer" 
+                    ? "All Sell Offers" 
+                    : "All Buy Offers"}
               </CardTitle>
               <CardDescription>
-                {role === "buyer" 
-                  ? "Browse available sell offers and select one to accept"
-                  : "Select an offer to view details and take action"}
+                {viewMode === "my"
+                  ? "Manage all offers you've created"
+                  : role === "buyer" 
+                    ? "Browse available sell offers to accept"
+                    : "Browse available buy offers to accept"}
               </CardDescription>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -283,35 +335,23 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller" }: 
             </div>
           ) : escrows.length === 0 ? (
             <p className="text-center py-8 text-muted-foreground">
-              {role === "buyer" 
-                ? "No sell offers available. Try adjusting your filters."
-                : "No offers yet. Create one in the Create Offer tab."}
+              {viewMode === "my"
+                ? "You haven't created any offers yet. Create your first offer in the Create Offer tab."
+                : role === "buyer" 
+                  ? "No sell offers found. Try adjusting your filters or create a new offer."
+                  : "No buy offers found. Try adjusting your filters or create a new offer."}
             </p>
           ) : (
-            <div className="space-y-2 max-h-[280px] overflow-y-auto">
-              {[...escrows].sort((a, b) => b.offerId.localeCompare(a.offerId)).map((e) => (
-                <button
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {escrows.map((e) => (
+                <OfferCard
                   key={e.offerId}
-                  type="button"
-                  onClick={() => setSelectedOfferId(e.offerId)}
-                  className={`w-full text-left p-3 rounded-lg border transition-colors ${
-                    selectedOfferId === e.offerId
-                      ? "border-primary bg-primary/5"
-                      : "border-border hover:bg-muted/50"
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-mono text-sm truncate">{e.offerId}</span>
-                    <EscrowStatus state={e.state} />
-                  </div>
-                  <div className="flex items-center gap-4 mt-1 text-xs text-muted-foreground">
-                    <span className="font-mono font-medium text-foreground">{e.amount.toFixed(4)} KDA</span>
-                    <div className="flex items-center gap-1 min-w-0">
-                      <span className="shrink-0">Seller:</span>
-                      <ProfileSummaryView wallet={e.seller} summary={profileMap[e.seller]} size="sm" />
-                    </div>
-                  </div>
-                </button>
+                  escrow={e}
+                  profileMap={profileMap}
+                  onSelect={setSelectedOfferId}
+                  role={role}
+                  isSelected={selectedOfferId === e.offerId}
+                />
               ))}
             </div>
           )}
@@ -331,10 +371,53 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller" }: 
             {/* Details Grid */}
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
-                <Label className="text-muted-foreground">Amount</Label>
+                <Label className="text-muted-foreground">Side</Label>
+                <p className="font-semibold text-lg">
+                  {selectedEscrow.side === "SELL" ? "Selling" : "Buying"} KDA
+                </p>
+              </div>
+              <div>
+                <Label className="text-muted-foreground">Price</Label>
                 <p className="font-mono text-2xl font-bold text-primary">
+                  {selectedEscrow.fiatCurrency === "USD" ? "$" : selectedEscrow.fiatCurrency === "EUR" ? "€" : selectedEscrow.fiatCurrency}
+                  {selectedEscrow.price.toFixed(2)} <span className="text-base">per KDA</span>
+                </p>
+              </div>
+              <div>
+                <Label className="text-muted-foreground">Available Amount</Label>
+                <p className="font-mono text-xl font-bold">
                   {selectedEscrow.amount.toFixed(8)} <span className="text-base">KDA</span>
                 </p>
+              </div>
+              <div>
+                <Label className="text-muted-foreground">Total Value</Label>
+                <p className="font-mono text-xl font-bold">
+                  {selectedEscrow.fiatCurrency === "USD" ? "$" : selectedEscrow.fiatCurrency === "EUR" ? "€" : selectedEscrow.fiatCurrency}
+                  {(selectedEscrow.amount * selectedEscrow.price).toFixed(2)}
+                </p>
+              </div>
+              <div>
+                <Label className="text-muted-foreground">Transaction Limits</Label>
+                <p className="text-sm">
+                  Min: <span className="font-mono">{selectedEscrow.minAmount.toFixed(4)}</span> KDA
+                  <br />
+                  Max: <span className="font-mono">{selectedEscrow.maxAmount.toFixed(4)}</span> KDA
+                </p>
+              </div>
+              <div>
+                <Label className="text-muted-foreground">Payment Methods</Label>
+                <div className="flex flex-wrap gap-2 mt-1">
+                  {(() => {
+                    try {
+                      const methods = JSON.parse(selectedEscrow.paymentMethod || "[]");
+                      return methods.map((m: string, idx: number) => (
+                        <Badge key={idx} variant="outline">{m}</Badge>
+                      ));
+                    } catch {
+                      return <Badge variant="outline">{selectedEscrow.paymentMethod || "N/A"}</Badge>;
+                    }
+                  })()}
+                </div>
               </div>
               <div>
                 <Label className="text-muted-foreground">Seller</Label>

@@ -42,6 +42,13 @@ export interface Escrow {
   amount: number;
   state: EscrowState;
   createdAt?: string;
+  // Binance P2P style fields
+  side: "BUY" | "SELL";
+  price: number;
+  minAmount: number;
+  maxAmount: number;
+  paymentMethod: string; // JSON string array
+  fiatCurrency: string;
 }
 
 export interface WalletAccount {
@@ -164,15 +171,21 @@ export async function sendTestTransfer(account: string, publicKey: string): Prom
    TRANSACTION BUILDERS (ALL OF THEM)
 ============================================================ */
 
-/* ---------- CREATE OFFER (id creator amount; platform arbiter is used) ---------- */
+/* ---------- CREATE OFFER (Binance P2P style with side, price, limits, payment method) ---------- */
 
 export function buildCreateOfferTx(
   offerId: string,
   amount: number,
   sellerAccount: string,
-  sellerPubKey: string
+  sellerPubKey: string,
+  side: "BUY" | "SELL",
+  price: number,
+  minAmount: number,
+  maxAmount: number,
+  paymentMethod: string, // JSON string array
+  fiatCurrency: string
 ) {
-  const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.create-offer "${offerId}" "${sellerAccount}" ${amount.toFixed(8)})`;
+  const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.create-offer "${offerId}" "${sellerAccount}" ${amount.toFixed(8)} "${side}" ${price.toFixed(8)} ${minAmount.toFixed(8)} ${maxAmount.toFixed(8)} "${paymentMethod}" "${fiatCurrency}")`;
 
   return Pact.builder
     .execution(pactCode)
@@ -404,6 +417,14 @@ export async function readEscrow(offerId: string): Promise<Escrow | null> {
   const amt = Number(o.amount);
   if (Number.isNaN(amt)) return null;
 
+  // Parse new Binance P2P fields (with defaults for backward compatibility)
+  const side = (typeof o.side === "string" && (o.side === "BUY" || o.side === "SELL")) ? o.side as "BUY" | "SELL" : "SELL";
+  const price = typeof o.price === "number" ? o.price : (typeof o.price === "string" ? Number(o.price) : 0);
+  const minAmount = typeof o.minAmount === "number" ? o.minAmount : (typeof o.minAmount === "string" ? Number(o.minAmount) : amt);
+  const maxAmount = typeof o.maxAmount === "number" ? o.maxAmount : (typeof o.maxAmount === "string" ? Number(o.maxAmount) : amt);
+  const paymentMethod = typeof o.paymentMethod === "string" ? o.paymentMethod : "[]";
+  const fiatCurrency = typeof o.fiatCurrency === "string" ? o.fiatCurrency : "USD";
+
   return {
     offerId,
     seller: o.creator,
@@ -412,6 +433,12 @@ export async function readEscrow(offerId: string): Promise<Escrow | null> {
     amount: amt,
     state: o.state as EscrowState,
     createdAt: "",
+    side,
+    price,
+    minAmount,
+    maxAmount,
+    paymentMethod,
+    fiatCurrency,
   };
 }
 

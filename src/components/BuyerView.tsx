@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CreateOfferForm } from "@/components/CreateOfferForm";
 import { EscrowActions } from "@/components/EscrowActions";
@@ -13,8 +13,12 @@ export function BuyerView({ refreshTrigger = 0 }: BuyerViewProps) {
   const [activeTab, setActiveTab] = useState("browse");
   const [filters, setFilters] = useState<OfferFilters>({
     state: "ALL",
+    side: "ALL",
     minAmount: "",
     maxAmount: "",
+    minPrice: "",
+    maxPrice: "",
+    paymentMethod: "",
     seller: "",
     buyer: "",
   });
@@ -38,30 +42,45 @@ export function BuyerView({ refreshTrigger = 0 }: BuyerViewProps) {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-2">
-          <TabsTrigger value="browse" className="gap-2">
-            Browse Sell Offers
-          </TabsTrigger>
+        <TabsList className="grid w-full grid-cols-3">
+          <TabsTrigger value="browse">All Sell Offers</TabsTrigger>
+          <TabsTrigger value="my">My Offers</TabsTrigger>
           <TabsTrigger value="create" className="gap-2">
             <Plus className="h-4 w-4" />
-            Create Buy Offer
+            Create Offer
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="browse" className="space-y-4">
-          <OfferFiltersComponent 
-            filters={filters} 
-            onFiltersChange={setFilters}
-            role="buyer"
-          />
+        {/* Shared Filters - shown for browse and my tabs */}
+        {(activeTab === "browse" || activeTab === "my") && (
+          <div className="mt-4">
+            <OfferFiltersComponent 
+              filters={filters} 
+              onFiltersChange={setFilters}
+              role="buyer"
+            />
+          </div>
+        )}
+
+        <TabsContent value="browse" className="space-y-4 mt-4">
           <EscrowActions 
             refreshTrigger={refreshTrigger}
             filters={filters}
             role="buyer"
+            viewMode="all"
           />
         </TabsContent>
 
-        <TabsContent value="create">
+        <TabsContent value="my" className="space-y-4 mt-4">
+          <EscrowActions 
+            refreshTrigger={refreshTrigger}
+            filters={filters}
+            role="buyer"
+            viewMode="my"
+          />
+        </TabsContent>
+
+        <TabsContent value="create" className="mt-4">
           <CreateOfferForm 
             onSuccess={handleOfferCreated}
             role="buyer"

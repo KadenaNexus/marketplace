@@ -14,7 +14,13 @@
     buyer:string
     arbiter:string
     amount:decimal
-    state:string)
+    state:string
+    side:string
+    price:decimal
+    minAmount:decimal
+    maxAmount:decimal
+    paymentMethod:string
+    fiatCurrency:string)
 
   (deftable escrows:{escrow})
 
@@ -23,9 +29,14 @@
   ;; Use the "Initialize" button in Manage Escrow, or add that to your deployment tx.
 
   ;; ------------------------------------------------------------
-  ;; Create offer (seller creates; platform arbiter is used)
+  ;; Create offer (Binance P2P style: side, price, limits, payment method)
+  ;; side: "BUY" or "SELL"
+  ;; price: price per KDA in fiat currency
+  ;; minAmount/maxAmount: transaction limits in KDA
+  ;; paymentMethod: JSON string array of payment methods (e.g. ["USDT","USDC"])
+  ;; fiatCurrency: fiat currency code (e.g. "USD", "EUR")
   ;; ------------------------------------------------------------
-  (defun create-offer (id creator amount)
+  (defun create-offer (id creator amount side price minAmount maxAmount paymentMethod fiatCurrency)
     (enforce (= (read-msg "sender") creator) "Creator must be the transaction sender")
     (enforce
       (not (try false (read escrows id)))
@@ -33,12 +44,26 @@
     (enforce (> amount 0.0) "Amount must be > 0")
     (enforce (> (length creator) 0) "Creator required")
     (enforce (!= creator PLATFORM_ARBITER) "Creator and arbiter must be different")
+    (enforce (or (= side "BUY") (= side "SELL")) "Side must be BUY or SELL")
+    (enforce (> price 0.0) "Price must be > 0")
+    (enforce (> minAmount 0.0) "Min amount must be > 0")
+    (enforce (>= maxAmount minAmount) "Max amount must be >= min amount")
+    (enforce (>= amount minAmount) "Amount must be >= min amount")
+    (enforce (<= amount maxAmount) "Amount must be <= max amount")
+    (enforce (> (length paymentMethod) 0) "Payment method required")
+    (enforce (> (length fiatCurrency) 0) "Fiat currency required")
     (insert escrows id
       { "creator": creator
       , "buyer": ""
       , "arbiter": PLATFORM_ARBITER
       , "amount": amount
-      , "state": "CREATED" }))
+      , "state": "CREATED"
+      , "side": side
+      , "price": price
+      , "minAmount": minAmount
+      , "maxAmount": maxAmount
+      , "paymentMethod": paymentMethod
+      , "fiatCurrency": fiatCurrency }))
 
   ;; ------------------------------------------------------------
   ;; Accept offer (buyer chooses an offer; caller becomes the buyer)

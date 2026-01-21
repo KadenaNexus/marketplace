@@ -3,6 +3,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useWallet } from "@/hooks/useWallet";
 import { 
   buildCreateOfferTx, 
@@ -10,8 +12,11 @@ import {
   submitTransaction,
   pollTransaction,
 } from "@/lib/kadena";
-import { Plus, Loader2 } from "lucide-react";
+import { Plus, Loader2, ShoppingCart, Store } from "lucide-react";
 import { toast } from "sonner";
+
+const PAYMENT_METHODS = ["USDT", "USDC", "BUSD", "Bank Transfer", "PayPal", "Wise", "Revolut", "Cash App"];
+const FIAT_CURRENCIES = ["USD", "EUR", "GBP", "CAD", "AUD"];
 
 interface CreateOfferFormProps {
   onSuccess?: (offerId: string, txHash: string) => void;
@@ -21,12 +26,25 @@ interface CreateOfferFormProps {
 export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormProps) {
   const { account, isConnected } = useWallet();
   const [offerId, setOfferId] = useState("");
-  const [amount, setAmount] = useState("");
+  const [side, setSide] = useState<"BUY" | "SELL">(role === "buyer" ? "BUY" : "SELL");
+  const [price, setPrice] = useState("");
+  const [minAmount, setMinAmount] = useState("");
+  const [maxAmount, setMaxAmount] = useState("");
+  const [paymentMethods, setPaymentMethods] = useState<string[]>([]);
+  const [fiatCurrency, setFiatCurrency] = useState("USD");
   const [isLoading, setIsLoading] = useState(false);
 
   const generateOfferId = () => {
     const id = `offer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     setOfferId(id);
+  };
+
+  const handlePaymentMethodToggle = (method: string, checked: boolean) => {
+    if (checked) {
+      setPaymentMethods([...paymentMethods, method]);
+    } else {
+      setPaymentMethods(paymentMethods.filter(m => m !== method));
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -37,26 +55,59 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
       return;
     }
 
-    if (!offerId || !amount) {
-      toast.error("Please fill in offer ID and amount");
+    if (!offerId || !price || !minAmount || !maxAmount) {
+      toast.error("Please fill in all required fields");
       return;
     }
 
-    const amountNum = parseFloat(amount);
-    if (isNaN(amountNum) || amountNum <= 0) {
-      toast.error("Please enter a valid amount");
+    if (paymentMethods.length === 0) {
+      toast.error("Please select at least one payment method");
       return;
     }
+
+    const priceNum = parseFloat(price);
+    const minAmountNum = parseFloat(minAmount);
+    const maxAmountNum = parseFloat(maxAmount);
+
+    if (isNaN(priceNum) || priceNum <= 0) {
+      toast.error("Please enter a valid price");
+      return;
+    }
+
+    if (isNaN(minAmountNum) || minAmountNum <= 0) {
+      toast.error("Please enter a valid minimum amount");
+      return;
+    }
+
+    if (isNaN(maxAmountNum) || maxAmountNum <= 0) {
+      toast.error("Please enter a valid maximum amount");
+      return;
+    }
+
+    if (maxAmountNum < minAmountNum) {
+      toast.error("Maximum amount must be greater than or equal to minimum amount");
+      return;
+    }
+
+    // Use maxAmount as the available amount
+    const amountNum = maxAmountNum;
 
     setIsLoading(true);
 
     try {
-      // Build the transaction (platform arbiter is fixed in the contract)
+      // Build the transaction with all Binance P2P fields
+      const paymentMethodJson = JSON.stringify(paymentMethods);
       const tx = buildCreateOfferTx(
         offerId,
         amountNum,
         account.account,
-        account.publicKey
+        account.publicKey,
+        side,
+        priceNum,
+        minAmountNum,
+        maxAmountNum,
+        paymentMethodJson,
+        fiatCurrency
       );
 
       console.log("Built transaction:", tx);
@@ -91,7 +142,10 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
       
       // Reset form
       setOfferId("");
-      setAmount("");
+      setPrice("");
+      setMinAmount("");
+      setMaxAmount("");
+      setPaymentMethods([]);
     } catch (error) {
       console.error("Create offer error:", error);
       toast.error("Failed to create offer", {
@@ -117,6 +171,32 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Side Selection */}
+          <div className="space-y-2">
+            <Label>Trade Side</Label>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant={side === "SELL" ? "default" : "outline"}
+                className="flex-1 gap-2"
+                onClick={() => setSide("SELL")}
+              >
+                <Store className="h-4 w-4" />
+                Sell KDA
+              </Button>
+              <Button
+                type="button"
+                variant={side === "BUY" ? "default" : "outline"}
+                className="flex-1 gap-2"
+                onClick={() => setSide("BUY")}
+              >
+                <ShoppingCart className="h-4 w-4" />
+                Buy KDA
+              </Button>
+            </div>
+          </div>
+
+          {/* Offer ID */}
           <div className="space-y-2">
             <Label htmlFor="offerId">Offer ID</Label>
             <div className="flex gap-2">
@@ -137,18 +217,89 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
             </div>
           </div>
 
+          {/* Price */}
           <div className="space-y-2">
-            <Label htmlFor="amount">Amount (KDA)</Label>
+            <Label htmlFor="price">Price per KDA ({fiatCurrency})</Label>
             <Input
-              id="amount"
+              id="price"
               type="number"
-              step="0.00000001"
+              step="0.01"
               min="0"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
+              value={price}
+              onChange={(e) => setPrice(e.target.value)}
               placeholder="0.00"
               className="font-mono"
             />
+          </div>
+
+          {/* Min/Max Limits */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="minAmount">Min Transaction (KDA)</Label>
+              <Input
+                id="minAmount"
+                type="number"
+                step="0.00000001"
+                min="0"
+                value={minAmount}
+                onChange={(e) => setMinAmount(e.target.value)}
+                placeholder="0.00"
+                className="font-mono"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="maxAmount">Max Transaction (KDA)</Label>
+              <Input
+                id="maxAmount"
+                type="number"
+                step="0.00000001"
+                min="0"
+                value={maxAmount}
+                onChange={(e) => setMaxAmount(e.target.value)}
+                placeholder="0.00"
+                className="font-mono"
+              />
+            </div>
+          </div>
+
+          {/* Fiat Currency */}
+          <div className="space-y-2">
+            <Label htmlFor="fiatCurrency">Fiat Currency</Label>
+            <Select value={fiatCurrency} onValueChange={setFiatCurrency}>
+              <SelectTrigger id="fiatCurrency">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {FIAT_CURRENCIES.map((curr) => (
+                  <SelectItem key={curr} value={curr}>{curr}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Payment Methods */}
+          <div className="space-y-2">
+            <Label>Payment Methods</Label>
+            <div className="grid grid-cols-2 gap-3 p-4 border rounded-lg">
+              {PAYMENT_METHODS.map((method) => (
+                <div key={method} className="flex items-center space-x-2">
+                  <Checkbox
+                    id={`payment-${method}`}
+                    checked={paymentMethods.includes(method)}
+                    onCheckedChange={(checked) => handlePaymentMethodToggle(method, checked as boolean)}
+                  />
+                  <Label
+                    htmlFor={`payment-${method}`}
+                    className="text-sm font-normal cursor-pointer"
+                  >
+                    {method}
+                  </Label>
+                </div>
+              ))}
+            </div>
+            {paymentMethods.length === 0 && (
+              <p className="text-xs text-destructive">Select at least one payment method</p>
+            )}
           </div>
 
           <p className="text-xs text-muted-foreground">
