@@ -12,6 +12,7 @@ import { fetchProfile } from "@/lib/profileApi";
 import { CHAIN_ID, NETWORK_ID } from "@/lib/kadena";
 import { ShieldCheck, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 type UserRole = "buyer" | "seller" | null;
 
@@ -55,6 +56,7 @@ const Index = () => {
             </div>
           </div>
           <div className="flex items-center gap-4">
+            <ThemeToggle />
             {isConnected && account && (
               <Link
                 to={`/u/${encodeURIComponent(account.account)}`}
