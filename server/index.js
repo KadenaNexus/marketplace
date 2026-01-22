@@ -1,21 +1,24 @@
 /**
  * Profile API – wallet-linked profiles with signed proof of ownership.
- * Stores profiles in MongoDB. Offers/escrows stay on-chain (Pact); no contract DB for profiles.
+ * Stores profiles in PostgreSQL. Offers/escrows stay on-chain (Pact); no contract DB for profiles.
  * Run: npm run dev:server (default port 3001).
  * In dev, Vite proxies /api to this server.
  *
- * Env: MONGODB_URI (default mongodb://localhost:27017), MONGODB_DB (default kadena_nexus)
+ * Env: DATABASE_URL (default postgresql://localhost:5432/kadena_nexus)
  */
 
+import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import path from "path";
 import fs from "fs";
 import crypto from "crypto";
 import { fileURLToPath } from "url";
-import { MongoClient } from "mongodb";
+import pg from "pg";
 import multer from "multer";
 import { hash, base64UrlDecodeArr, hexToBin, verifySig } from "@kadena/cryptography-utils";
+
+const { Pool } = pg;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -24,12 +27,17 @@ const PROFILE_AUTH_PURPOSE = "Kadena P2P Escrow Profile";
 const NONCE_TOLERANCE_MS = 5 * 60 * 1000; // 5 minutes
 const AVATAR_MAX_BYTES = 20 * 1024 * 1024; // 2MB
 
-const MONGODB_URI = process.env.MONGODB_URI || "mongodb://localhost:27017";
-const MONGODB_DB = process.env.MONGODB_DB || "kadena_nexus";
-const PROFILES_COLLECTION = "profiles";
-const DISPUTES_COLLECTION = "disputes";
-const EVIDENCE_COLLECTION = "evidence";
-const DISPUTE_MESSAGES_COLLECTION = "dispute_messages";
+// PostgreSQL configuration from environment variables
+// Can use either DATABASE_URL (full connection string) or individual components
+const DB_HOST = process.env.DB_HOST || "localhost";
+const DB_PORT = process.env.DB_PORT || "5432";
+const DB_USER = process.env.DB_USER || "postgres";
+const DB_PASSWORD = process.env.DB_PASSWORD || "postgres";
+const DB_NAME = process.env.DB_NAME || "kadena_nexus";
+
+// Build connection string from components if DATABASE_URL is not provided
+const DATABASE_URL = process.env.DATABASE_URL || 
+  `postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}`;
 
 const UPLOADS_DIR = path.join(__dirname, "uploads", "profiles");
 const EVIDENCE_DIR = path.join(__dirname, "uploads", "evidence");
@@ -110,8 +118,8 @@ app.use("/uploads/profiles", express.static(UPLOADS_DIR));
 // Serve uploaded evidence files
 app.use("/uploads/evidence", express.static(EVIDENCE_DIR));
 
-/** @type {import('mongodb').Db} */
-let db;
+/** @type {pg.Pool} */
+let pool;
 
 /**
  * Verify that signedCmd was signed by the key for `wallet` and includes
@@ -255,8 +263,15 @@ app.get("/api/profiles/:wallet", async (req, res) => {
     return res.status(400).json({ error: "Missing wallet" });
   }
   try {
-    const p = await db.collection(PROFILES_COLLECTION).findOne({ wallet });
-    return res.json(p ? { username: p.username, avatar: p.avatar, bio: p.bio, wallet: p.wallet, updatedAt: p.updatedAt } : null);
+    const result = await pool.query("SELECT wallet, username, avatar, bio, updated_at FROM profiles WHERE wallet = $1", [wallet]);
+    const p = result.rows[0];
+    return res.json(p ? { 
+      username: p.username, 
+      avatar: p.avatar, 
+      bio: p.bio, 
+      wallet: p.wallet, 
+      updatedAt: p.updated_at 
+    } : null);
   } catch (err) {
     console.error("GET /api/profiles/:wallet", err);
     return res.status(500).json({ error: err.message || "Database error" });
@@ -287,7 +302,10 @@ app.put("/api/profiles", async (req, res) => {
   };
 
   try {
-    const existing = await db.collection(PROFILES_COLLECTION).findOne({ wallet });
+    // Check for existing profile to handle old avatar deletion
+    const existingResult = await pool.query("SELECT avatar FROM profiles WHERE wallet = $1", [wallet]);
+    const existing = existingResult.rows[0];
+    
     if (existing?.avatar && existing.avatar.startsWith("/uploads/profiles/") && existing.avatar !== av) {
       const oldPath = path.join(UPLOADS_DIR, path.basename(existing.avatar));
       try {
@@ -296,11 +314,16 @@ app.put("/api/profiles", async (req, res) => {
         console.warn("Could not delete old avatar file:", oldPath, e.message);
       }
     }
-    await db.collection(PROFILES_COLLECTION).updateOne(
-      { wallet },
-      { $set: profile },
-      { upsert: true }
+    
+    // Upsert profile
+    await pool.query(
+      `INSERT INTO profiles (wallet, username, avatar, bio, updated_at)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (wallet) 
+       DO UPDATE SET username = $2, avatar = $3, bio = $4, updated_at = $5`,
+      [wallet, profile.username, profile.avatar, profile.bio, profile.updatedAt]
     );
+    
     return res.json(profile);
   } catch (err) {
     console.error("PUT /api/profiles", err);
@@ -317,10 +340,12 @@ app.post("/api/profiles/bulk", async (req, res) => {
   const list = wallets.filter((w) => typeof w === "string").map((w) => w.trim()).filter(Boolean);
   if (list.length === 0) return res.json({});
   try {
-    const cursor = db.collection(PROFILES_COLLECTION).find({ wallet: { $in: list } });
-    const rows = await cursor.toArray();
+    const result = await pool.query(
+      "SELECT wallet, username, avatar FROM profiles WHERE wallet = ANY($1)",
+      [list]
+    );
     const out = {};
-    for (const p of rows) {
+    for (const p of result.rows) {
       out[p.wallet] = { username: p.username, avatar: p.avatar, wallet: p.wallet };
     }
     return res.json(out);
@@ -351,24 +376,32 @@ app.post("/api/disputes", async (req, res) => {
     return res.status(403).json({ error: "Proof of ownership failed", reason: v.reason });
   }
   try {
-    const existing = await db.collection(DISPUTES_COLLECTION).findOne({ 
-      offerId,
-      status: "OPEN"
-    });
-    if (existing) {
+    const existingResult = await pool.query(
+      "SELECT id FROM disputes WHERE offer_id = $1 AND status = $2",
+      [offerId, "OPEN"]
+    );
+    if (existingResult.rows.length > 0) {
       return res.status(400).json({ error: "An open dispute already exists for this offer. Please wait for it to be resolved." });
     }
-    const dispute = {
-      offerId,
-      openedBy,
-      reason: typeof reason === "string" ? reason.trim().slice(0, 1000) : "",
-      openedByWallet: wallet,
-      status: "OPEN",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    await db.collection(DISPUTES_COLLECTION).insertOne(dispute);
-    return res.json(dispute);
+    
+    const now = new Date().toISOString();
+    const result = await pool.query(
+      `INSERT INTO disputes (offer_id, opened_by, reason, opened_by_wallet, status, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id, offer_id, opened_by, reason, opened_by_wallet, status, created_at, updated_at`,
+      [offerId, openedBy, typeof reason === "string" ? reason.trim().slice(0, 1000) : "", wallet, "OPEN", now, now]
+    );
+    
+    const dispute = result.rows[0];
+    return res.json({
+      offerId: dispute.offer_id,
+      openedBy: dispute.opened_by,
+      reason: dispute.reason,
+      openedByWallet: dispute.opened_by_wallet,
+      status: dispute.status,
+      createdAt: dispute.created_at,
+      updatedAt: dispute.updated_at,
+    });
   } catch (err) {
     console.error("POST /api/disputes", err);
     return res.status(500).json({ error: err.message || "Database error" });
@@ -382,11 +415,23 @@ app.get("/api/disputes/:offerId", async (req, res) => {
     return res.status(400).json({ error: "Missing offerId" });
   }
   try {
-    const dispute = await db.collection(DISPUTES_COLLECTION).findOne({ offerId });
-    if (!dispute) {
+    const result = await pool.query(
+      "SELECT id, offer_id, opened_by, reason, opened_by_wallet, status, created_at, updated_at FROM disputes WHERE offer_id = $1",
+      [offerId]
+    );
+    if (result.rows.length === 0) {
       return res.status(404).json({ error: "Dispute not found" });
     }
-    return res.json(dispute);
+    const dispute = result.rows[0];
+    return res.json({
+      offerId: dispute.offer_id,
+      openedBy: dispute.opened_by,
+      reason: dispute.reason,
+      openedByWallet: dispute.opened_by_wallet,
+      status: dispute.status,
+      createdAt: dispute.created_at,
+      updatedAt: dispute.updated_at,
+    });
   } catch (err) {
     console.error("GET /api/disputes/:offerId", err);
     return res.status(500).json({ error: err.message || "Database error" });
@@ -437,8 +482,8 @@ app.post("/api/disputes/:offerId/evidence", (req, res, next) => {
       return res.status(403).json({ error: "Proof of ownership failed", reason: v.reason });
     }
     // Check if dispute exists
-    const dispute = await db.collection(DISPUTES_COLLECTION).findOne({ offerId });
-    if (!dispute) {
+    const disputeResult = await pool.query("SELECT id FROM disputes WHERE offer_id = $1", [offerId]);
+    if (disputeResult.rows.length === 0) {
       return res.status(404).json({ error: "Dispute not found" });
     }
     // Verify user is buyer or seller
@@ -450,19 +495,33 @@ app.post("/api/disputes/:offerId/evidence", (req, res, next) => {
       size: f.size,
       url: `/uploads/evidence/${f.filename}`,
     }));
-    const evidence = {
-      offerId,
-      submittedBy: wallet,
-      explanation: typeof explanation === "string" ? explanation.trim().slice(0, 2000) : "",
-      files: evidenceFiles,
-      submittedAt: new Date().toISOString(),
-    };
-    await db.collection(EVIDENCE_COLLECTION).insertOne(evidence);
-    await db.collection(DISPUTES_COLLECTION).updateOne(
-      { offerId },
-      { $set: { updatedAt: new Date().toISOString() } }
+    
+    const result = await pool.query(
+      `INSERT INTO evidence (offer_id, submitted_by, explanation, files, submitted_at)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, offer_id, submitted_by, explanation, files, submitted_at`,
+      [
+        offerId,
+        wallet,
+        typeof explanation === "string" ? explanation.trim().slice(0, 2000) : "",
+        JSON.stringify(evidenceFiles),
+        new Date().toISOString(),
+      ]
     );
-    return res.json(evidence);
+    
+    await pool.query(
+      "UPDATE disputes SET updated_at = $1 WHERE offer_id = $2",
+      [new Date().toISOString(), offerId]
+    );
+    
+    const evidence = result.rows[0];
+    return res.json({
+      offerId: evidence.offer_id,
+      submittedBy: evidence.submitted_by,
+      explanation: evidence.explanation,
+      files: evidence.files,
+      submittedAt: evidence.submitted_at,
+    });
   } catch (err) {
     console.error("POST /api/disputes/:offerId/evidence", err);
     return res.status(500).json({ error: err.message || "Server error" });
@@ -477,17 +536,24 @@ app.get("/api/disputes/:offerId/evidence", async (req, res) => {
     return res.status(400).json({ error: "Missing offerId" });
   }
   try {
-    const dispute = await db.collection(DISPUTES_COLLECTION).findOne({ offerId });
-    if (!dispute) {
+    const disputeResult = await pool.query("SELECT id FROM disputes WHERE offer_id = $1", [offerId]);
+    if (disputeResult.rows.length === 0) {
       return res.status(404).json({ error: "Dispute not found" });
     }
     // Authorization: only buyer, seller, or arbiter can view evidence
     // For now, we'll return evidence if wallet matches openedByWallet or if it's provided
     // In production, you'd verify against the escrow contract to check buyer/seller/arbiter
-    const evidenceList = await db.collection(EVIDENCE_COLLECTION)
-      .find({ offerId })
-      .sort({ submittedAt: -1 })
-      .toArray();
+    const result = await pool.query(
+      "SELECT id, offer_id, submitted_by, explanation, files, submitted_at FROM evidence WHERE offer_id = $1 ORDER BY submitted_at DESC",
+      [offerId]
+    );
+    const evidenceList = result.rows.map(row => ({
+      offerId: row.offer_id,
+      submittedBy: row.submitted_by,
+      explanation: row.explanation,
+      files: row.files,
+      submittedAt: row.submitted_at,
+    }));
     return res.json(evidenceList);
   } catch (err) {
     console.error("GET /api/disputes/:offerId/evidence", err);
@@ -513,22 +579,30 @@ app.post("/api/disputes/:offerId/messages", async (req, res) => {
     return res.status(403).json({ error: "Proof of ownership failed", reason: v.reason });
   }
   try {
-    const dispute = await db.collection(DISPUTES_COLLECTION).findOne({ offerId });
-    if (!dispute) {
+    const disputeResult = await pool.query("SELECT id FROM disputes WHERE offer_id = $1", [offerId]);
+    if (disputeResult.rows.length === 0) {
       return res.status(404).json({ error: "Dispute not found" });
     }
-    const msg = {
-      offerId,
-      from: wallet,
-      message: message.trim().slice(0, 2000),
-      createdAt: new Date().toISOString(),
-    };
-    await db.collection(DISPUTE_MESSAGES_COLLECTION).insertOne(msg);
-    await db.collection(DISPUTES_COLLECTION).updateOne(
-      { offerId },
-      { $set: { updatedAt: new Date().toISOString() } }
+    
+    const result = await pool.query(
+      `INSERT INTO dispute_messages (offer_id, from_wallet, message, created_at)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id, offer_id, from_wallet, message, created_at`,
+      [offerId, wallet, message.trim().slice(0, 2000), new Date().toISOString()]
     );
-    return res.json(msg);
+    
+    await pool.query(
+      "UPDATE disputes SET updated_at = $1 WHERE offer_id = $2",
+      [new Date().toISOString(), offerId]
+    );
+    
+    const msg = result.rows[0];
+    return res.json({
+      offerId: msg.offer_id,
+      from: msg.from_wallet,
+      message: msg.message,
+      createdAt: msg.created_at,
+    });
   } catch (err) {
     console.error("POST /api/disputes/:offerId/messages", err);
     return res.status(500).json({ error: err.message || "Database error" });
@@ -542,14 +616,23 @@ app.get("/api/disputes/:offerId/messages", async (req, res) => {
     return res.status(400).json({ error: "Missing offerId" });
   }
   try {
-    const dispute = await db.collection(DISPUTES_COLLECTION).findOne({ offerId });
-    if (!dispute) {
+    const disputeResult = await pool.query("SELECT id FROM disputes WHERE offer_id = $1", [offerId]);
+    if (disputeResult.rows.length === 0) {
       return res.status(404).json({ error: "Dispute not found" });
     }
-    const messages = await db.collection(DISPUTE_MESSAGES_COLLECTION)
-      .find({ offerId })
-      .sort({ createdAt: 1 })
-      .toArray();
+    
+    const result = await pool.query(
+      "SELECT id, offer_id, from_wallet, message, created_at FROM dispute_messages WHERE offer_id = $1 ORDER BY created_at ASC",
+      [offerId]
+    );
+    
+    const messages = result.rows.map(row => ({
+      offerId: row.offer_id,
+      from: row.from_wallet,
+      message: row.message,
+      createdAt: row.created_at,
+    }));
+    
     return res.json(messages);
   } catch (err) {
     console.error("GET /api/disputes/:offerId/messages", err);
@@ -572,17 +655,18 @@ app.put("/api/disputes/:offerId/close", async (req, res) => {
     return res.status(403).json({ error: "Proof of ownership failed", reason: v.reason });
   }
   try {
-    const dispute = await db.collection(DISPUTES_COLLECTION).findOne({ offerId });
-    if (!dispute) {
+    const disputeResult = await pool.query("SELECT status FROM disputes WHERE offer_id = $1", [offerId]);
+    if (disputeResult.rows.length === 0) {
       return res.status(404).json({ error: "Dispute not found" });
     }
+    const dispute = disputeResult.rows[0];
     if (dispute.status !== "OPEN") {
       return res.status(400).json({ error: "Dispute is not open" });
     }
     // Note: In production, verify wallet is the arbiter from escrow contract
-    await db.collection(DISPUTES_COLLECTION).updateOne(
-      { offerId },
-      { $set: { status: "CLOSED", updatedAt: new Date().toISOString() } }
+    await pool.query(
+      "UPDATE disputes SET status = $1, updated_at = $2 WHERE offer_id = $3",
+      ["CLOSED", new Date().toISOString(), offerId]
     );
     return res.json({ success: true, status: "CLOSED" });
   } catch (err) {
@@ -593,21 +677,130 @@ app.put("/api/disputes/:offerId/close", async (req, res) => {
 
 const PORT = Number(process.env.PORT) || 3001;
 
+async function initializeSchema() {
+  const schemaPath = path.join(__dirname, "schema.sql");
+  if (!fs.existsSync(schemaPath)) {
+    console.error(`Schema file not found: ${schemaPath}`);
+    throw new Error("Schema file not found");
+  }
+  
+  const schemaSQL = fs.readFileSync(schemaPath, "utf-8");
+  
+  // Better SQL parsing: handle multi-line statements and comments
+  let currentStatement = "";
+  const statements = [];
+  
+  const lines = schemaSQL.split("\n");
+  for (let line of lines) {
+    // Remove inline comments (-- comments)
+    const commentIndex = line.indexOf("--");
+    if (commentIndex >= 0) {
+      line = line.substring(0, commentIndex);
+    }
+    
+    line = line.trim();
+    
+    // Skip empty lines
+    if (line.length === 0) continue;
+    
+    // Add line to current statement
+    currentStatement += (currentStatement ? " " : "") + line;
+    
+    // If line ends with semicolon, it's the end of a statement
+    if (line.endsWith(";")) {
+      const statement = currentStatement.trim();
+      if (statement.length > 1) { // More than just ";"
+        statements.push(statement);
+      }
+      currentStatement = "";
+    }
+  }
+  
+  // Execute each statement
+  console.log(`Executing ${statements.length} schema statements...`);
+  for (let i = 0; i < statements.length; i++) {
+    const statement = statements[i];
+    if (statement.length === 0) continue;
+    
+    try {
+      await pool.query(statement);
+      const statementType = statement.split(" ")[0].toUpperCase();
+      console.log(`  ✓ Executed: ${statementType}...`);
+    } catch (err) {
+      // Ignore "already exists" errors for tables/indexes
+      const isAlreadyExists = err.message.includes("already exists") || err.code === "42P07";
+      if (isAlreadyExists) {
+        const statementType = statement.split(" ")[0].toUpperCase();
+        console.log(`  ⊙ Already exists: ${statementType}...`);
+      } else {
+        console.error(`  ✗ Schema initialization error on statement ${i + 1}:`, err.message);
+        console.error("  Failed statement:", statement.substring(0, 150));
+        // Don't throw - continue with other statements
+        console.warn("  Continuing with remaining statements...");
+      }
+    }
+  }
+  console.log("Database schema initialized successfully");
+}
+
 async function start() {
   try {
-    const client = new MongoClient(MONGODB_URI);
-    await client.connect();
-    db = client.db(MONGODB_DB);
-    await db.collection(PROFILES_COLLECTION).createIndex({ wallet: 1 }, { unique: true });
-    await db.collection(DISPUTES_COLLECTION).createIndex({ offerId: 1 });
-    await db.collection(DISPUTES_COLLECTION).createIndex({ status: 1 });
-    await db.collection(EVIDENCE_COLLECTION).createIndex({ offerId: 1 });
-    await db.collection(EVIDENCE_COLLECTION).createIndex({ submittedBy: 1 });
-    await db.collection(DISPUTE_MESSAGES_COLLECTION).createIndex({ offerId: 1 });
-    await db.collection(DISPUTE_MESSAGES_COLLECTION).createIndex({ createdAt: 1 });
-    console.log(`MongoDB connected: ${MONGODB_DB}`);
+    // Parse connection string to extract database name
+    const url = new URL(DATABASE_URL);
+    const dbName = url.pathname.slice(1) || "kadena_nexus";
+    
+    // Connect to default 'postgres' database first to create our database if needed
+    const adminUrl = DATABASE_URL.replace(`/${dbName}`, "/postgres");
+    const adminPool = new Pool({ connectionString: adminUrl });
+    
+    try {
+      // Check if database exists
+      const result = await adminPool.query(
+        "SELECT 1 FROM pg_database WHERE datname = $1",
+        [dbName]
+      );
+      
+      if (result.rows.length === 0) {
+        // Database doesn't exist, create it
+        console.log(`Creating database: ${dbName}`);
+        await adminPool.query(`CREATE DATABASE ${dbName}`);
+        console.log(`Database ${dbName} created successfully`);
+      }
+    } catch (createErr) {
+      // If we can't create (might not have permissions), continue anyway
+      console.warn("Could not create database automatically:", createErr.message);
+      console.warn("Please create it manually: CREATE DATABASE " + dbName + ";");
+    } finally {
+      await adminPool.end();
+    }
+    
+    // Now connect to our database
+    pool = new Pool({
+      connectionString: DATABASE_URL,
+    });
+    
+    // Test connection
+    await pool.query("SELECT 1");
+    
+    // Initialize schema
+    console.log("Initializing database schema...");
+    await initializeSchema();
+    
+    // Mask password in log output for security
+    const safeUrl = DATABASE_URL.replace(/:[^:@]+@/, ":****@");
+    console.log(`PostgreSQL connected: ${safeUrl}`);
   } catch (err) {
-    console.error("MongoDB connection failed:", err.message);
+    console.error("PostgreSQL connection failed:");
+    console.error("Error:", err.message || err);
+    if (err.code) {
+      console.error("Error code:", err.code);
+    }
+    console.error("\nPlease ensure:");
+    console.error("1. PostgreSQL is running");
+    console.error("2. User has permission to create databases (or create manually: CREATE DATABASE kadena_nexus;)");
+    console.error("3. DATABASE_URL is correct");
+    console.error("   - Format: postgresql://user:password@host:port/database");
+    console.error("   - Current: " + DATABASE_URL.replace(/:[^:@]+@/, ":****@"));
     process.exit(1);
   }
 
@@ -615,5 +808,20 @@ async function start() {
     console.log(`Profile API listening on http://localhost:${PORT}`);
   });
 }
+
+// Graceful shutdown
+process.on("SIGINT", async () => {
+  if (pool) {
+    await pool.end();
+  }
+  process.exit(0);
+});
+
+process.on("SIGTERM", async () => {
+  if (pool) {
+    await pool.end();
+  }
+  process.exit(0);
+});
 
 start();

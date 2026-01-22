@@ -10,7 +10,7 @@ import { useState } from "react";
 import { useWallet } from "@/hooks/useWallet";
 import { fetchProfile } from "@/lib/profileApi";
 import { CHAIN_ID, NETWORK_ID } from "@/lib/kadena";
-import { Lock, LogOut } from "lucide-react";
+import { ShieldCheck, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 type UserRole = "buyer" | "seller" | null;
@@ -45,7 +45,7 @@ const Index = () => {
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="h-10 w-10 rounded-lg bg-primary/20 flex items-center justify-center">
-              <Lock className="h-5 w-5 text-primary" />
+              <ShieldCheck className="h-5 w-5 text-primary" />
             </div>
             <div>
               <h1 className="font-bold text-lg">Kadena P2P Escrow</h1>

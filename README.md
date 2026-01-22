@@ -35,15 +35,47 @@ npm install
 npm run dev
 ```
 
-For **profile** features (create/edit, summaries), also run the profile API in another terminal. Profiles are stored in **MongoDB** (off-chain); offers/escrows stay on-chain only.
+For **profile** features (create/edit, summaries), also run the profile API in another terminal. Profiles are stored in **PostgreSQL** (off-chain); offers/escrows stay on-chain only.
 
+### PostgreSQL Setup
+
+**Option 1: Local PostgreSQL Installation**
+1. Install PostgreSQL from https://www.postgresql.org/download/
+2. Create database and run schema:
+   ```sh
+   psql -U postgres -c "CREATE DATABASE kadena_nexus;"
+   psql -U postgres -d kadena_nexus -f server/schema.sql
+   ```
+
+**Option 2: Docker (Recommended for Development)**
 ```sh
-# Ensure MongoDB is running (e.g. local or Atlas). Then:
-MONGODB_URI=mongodb://localhost:27017 npm run dev:server
+# Start PostgreSQL in Docker
+docker run --name kadena-postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=kadena_nexus -p 5432:5432 -d postgres
+
+# Run schema
+docker exec -i kadena-postgres psql -U postgres -d kadena_nexus < server/schema.sql
 ```
 
-- `MONGODB_URI` — default `mongodb://localhost:27017`
-- `MONGODB_DB` — default `kadena_nexus` (database name)
+**Option 3: Cloud PostgreSQL (Production)**
+Use services like:
+- Supabase (free tier available)
+- AWS RDS
+- Google Cloud SQL
+- Azure Database for PostgreSQL
+
+### Start the Server
+
+```sh
+# With default connection (localhost)
+npm run dev:server
+
+# Or with custom connection string
+DATABASE_URL=postgresql://user:password@host:port/kadena_nexus npm run dev:server
+```
+
+- `DATABASE_URL` — PostgreSQL connection string (default: `postgresql://localhost:5432/kadena_nexus`)
+  - Format: `postgresql://[user[:password]@][host][:port][/database]`
+  - Example: `postgresql://postgres:postgres@localhost:5432/kadena_nexus`
 
 This starts the profile API on port 3001. The Vite dev server proxies `/api` to it.
 
@@ -80,7 +112,7 @@ The dApp **Initialize** action will fail with “Module admin is necessary” be
 - **Network:** `mainnet01`, **Chain:** `1`
 - **Contract:** `free.p2p-escrow` (`CONTRACT_NAMESPACE`, `CONTRACT_MODULE` in `src/lib/kadena.ts`)
 - **Arbiter:** Set in the Pact constant `PLATFORM_ARBITER` before deployment
-- **MongoDB (profiles only):** `MONGODB_URI`, `MONGODB_DB` — offers/escrows are **not** in MongoDB; they stay on-chain (Pact)
+- **PostgreSQL (profiles only):** `DATABASE_URL` — offers/escrows are **not** in PostgreSQL; they stay on-chain (Pact)
 
 ## Project Structure
 
@@ -92,7 +124,8 @@ src/
   hooks/useWallet.ts
   pages/Index.tsx, Profile.tsx
 server/
-  index.js            # Profile API: GET/PUT /api/profiles, POST /api/profiles/bulk; MongoDB (profiles only); verifies signed proof
+  index.js            # Profile API: GET/PUT /api/profiles, POST /api/profiles/bulk; PostgreSQL (profiles only); verifies signed proof
+  schema.sql          # PostgreSQL database schema initialization
 p2p-escrow.pact       # Pact module
 vite.config.ts        # Proxy for /chainweb-proxy and /api in dev
 ```
