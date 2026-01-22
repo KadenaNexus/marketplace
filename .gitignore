@@ -39,3 +39,4 @@ server/uploads/evidence/*
 *.njsproj
 *.sln
 *.sw?
+.vercel

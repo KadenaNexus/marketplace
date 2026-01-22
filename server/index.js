@@ -677,6 +677,9 @@ app.put("/api/disputes/:offerId/close", async (req, res) => {
 
 const PORT = Number(process.env.PORT) || 3001;
 
+// Check if running in Vercel serverless environment
+const isVercel = process.env.VERCEL === "1";
+
 async function initializeSchema() {
   const schemaPath = path.join(__dirname, "schema.sql");
   if (!fs.existsSync(schemaPath)) {
@@ -801,27 +804,59 @@ async function start() {
     console.error("3. DATABASE_URL is correct");
     console.error("   - Format: postgresql://user:password@host:port/database");
     console.error("   - Current: " + DATABASE_URL.replace(/:[^:@]+@/, ":****@"));
-    process.exit(1);
+    if (!isVercel) {
+      process.exit(1);
+    }
   }
 
-  app.listen(PORT, () => {
-    console.log(`Profile API listening on http://localhost:${PORT}`);
-  });
+  if (!isVercel) {
+    app.listen(PORT, () => {
+      console.log(`Profile API listening on http://localhost:${PORT}`);
+    });
+  }
 }
 
-// Graceful shutdown
-process.on("SIGINT", async () => {
-  if (pool) {
-    await pool.end();
+// Initialize database connection for serverless (lazy initialization)
+let dbInitialized = false;
+async function ensureDbInitialized() {
+  if (dbInitialized) return;
+  try {
+    if (!pool) {
+      pool = new Pool({
+        connectionString: DATABASE_URL,
+      });
+    }
+    await pool.query("SELECT 1");
+    if (!dbInitialized) {
+      await initializeSchema();
+      dbInitialized = true;
+    }
+  } catch (err) {
+    console.error("Database initialization error:", err.message);
   }
-  process.exit(0);
-});
+}
 
-process.on("SIGTERM", async () => {
-  if (pool) {
-    await pool.end();
-  }
-  process.exit(0);
-});
+// Graceful shutdown (only for traditional server)
+if (!isVercel) {
+  process.on("SIGINT", async () => {
+    if (pool) {
+      await pool.end();
+    }
+    process.exit(0);
+  });
 
-start();
+  process.on("SIGTERM", async () => {
+    if (pool) {
+      await pool.end();
+    }
+    process.exit(0);
+  });
+
+  start();
+} else {
+  // In Vercel, initialize DB on first request
+  ensureDbInitialized();
+}
+
+// Export app for Vercel serverless functions
+export default app;
