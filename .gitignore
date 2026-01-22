@@ -40,3 +40,4 @@ server/uploads/evidence/*
 *.sln
 *.sw?
 .vercel
+.env*.local

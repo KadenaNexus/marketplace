@@ -12,24 +12,23 @@ export default async function handler(req, res) {
     await app.ensureDbInitialized();
   }
   
-  // Reconstruct the API path from Vercel's catch-all route
-  // When using [...path].js, Vercel passes path segments in req.query.path
-  let apiPath = '/api';
+  // Get the path from Vercel's catch-all parameter
+  // For api/[...path].js, when accessing /api/profiles
+  // req.query.path will be ['profiles'] or 'profiles'
+  let pathSegments = [];
   
-  if (req.query && req.query.path) {
-    // req.query.path is an array of path segments
-    const pathSegments = Array.isArray(req.query.path) 
-      ? req.query.path 
-      : typeof req.query.path === 'string' 
-        ? req.query.path.split('/').filter(Boolean)
-        : [];
-    
-    if (pathSegments.length > 0) {
-      apiPath = '/api/' + pathSegments.join('/');
+  if (req.query && req.query.path !== undefined) {
+    if (Array.isArray(req.query.path)) {
+      pathSegments = req.query.path;
+    } else if (typeof req.query.path === 'string') {
+      pathSegments = req.query.path.split('/').filter(Boolean);
     }
   }
   
-  // Preserve query string (excluding the path parameter)
+  // Reconstruct the full API path
+  const apiPath = '/api' + (pathSegments.length > 0 ? '/' + pathSegments.join('/') : '');
+  
+  // Preserve other query parameters (excluding 'path')
   const queryParams = new URLSearchParams();
   for (const [key, value] of Object.entries(req.query || {})) {
     if (key !== 'path') {
@@ -43,8 +42,15 @@ export default async function handler(req, res) {
   const queryString = queryParams.toString() ? '?' + queryParams.toString() : '';
   
   // Update req.url and req.originalUrl for Express routing
-  req.url = apiPath + queryString;
-  req.originalUrl = req.url;
+  const fullPath = apiPath + queryString;
+  req.url = fullPath;
+  req.originalUrl = fullPath;
+  
+  // Debug logging
+  console.log('[API Handler] Method:', req.method);
+  console.log('[API Handler] Original req.url:', req.url);
+  console.log('[API Handler] req.query.path:', req.query?.path);
+  console.log('[API Handler] Reconstructed path:', fullPath);
   
   // Pass request to Express app
   return app(req, res);
