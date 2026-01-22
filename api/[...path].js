@@ -23,31 +23,38 @@ export default async function handler(req, res) {
   }
   
   // Get the path from Vercel's catch-all parameter
-  // For api/[...path].js, when accessing /api/profiles
-  // req.query.path will be ['profiles'] or 'profiles'
-  let pathSegments = [];
+  // For api/[...path].js, when accessing /api/profiles/k:wallet
+  // req.query.path will be ['profiles', 'k:wallet'] or 'profiles/k:wallet'
+  let apiPath = '/api';
   
   if (req.query && req.query.path !== undefined) {
     if (Array.isArray(req.query.path)) {
-      pathSegments = req.query.path;
+      // Array of path segments - join them, preserving colons and special chars
+      const decodedSegments = req.query.path.map(segment => 
+        decodeURIComponent(String(segment))
+      );
+      apiPath = '/api/' + decodedSegments.join('/');
     } else if (typeof req.query.path === 'string') {
-      pathSegments = req.query.path.split('/').filter(Boolean);
+      // String path - decode it and use as-is
+      const decodedPath = decodeURIComponent(req.query.path);
+      apiPath = '/api/' + decodedPath;
     }
   } else {
     // Fallback: try to get from req.url or req.path
     // Vercel might pass the path differently
     const urlPath = req.url || req.path || '';
     if (urlPath.startsWith('/api/')) {
-      pathSegments = urlPath.replace('/api/', '').split('/').filter(Boolean);
+      // Decode the URL-encoded path
+      const decoded = decodeURIComponent(urlPath.split('?')[0]);
+      apiPath = decoded;
     } else if (urlPath.startsWith('/')) {
-      pathSegments = urlPath.substring(1).split('/').filter(Boolean);
+      // Decode and add /api prefix
+      const decoded = decodeURIComponent(urlPath.split('?')[0]);
+      apiPath = '/api' + decoded;
     }
   }
   
-  console.log('[API Handler] pathSegments:', JSON.stringify(pathSegments));
-  
-  // Reconstruct the full API path
-  const apiPath = '/api' + (pathSegments.length > 0 ? '/' + pathSegments.join('/') : '');
+  console.log('[API Handler] pathSegments/reconstructed:', apiPath);
   
   // Preserve other query parameters (excluding 'path')
   const queryParams = new URLSearchParams();
@@ -63,9 +70,15 @@ export default async function handler(req, res) {
   const queryString = queryParams.toString() ? '?' + queryParams.toString() : '';
   
   // Update req.url and req.originalUrl for Express routing
+  // Make sure the path is properly decoded
   const fullPath = apiPath + queryString;
   req.url = fullPath;
   req.originalUrl = fullPath;
+  
+  // Also update req.path if it exists
+  if (req.path !== undefined) {
+    req.path = apiPath;
+  }
   
   console.log('[API Handler] Reconstructed apiPath:', apiPath);
   console.log('[API Handler] Final req.url:', fullPath);
