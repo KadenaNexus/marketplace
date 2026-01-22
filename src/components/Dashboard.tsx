@@ -1,6 +1,6 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { WalletConnect } from "@/components/WalletConnect";
-import { Shield, Zap, Lock, ArrowRight, CheckCircle2, Users, TrendingUp, Globe } from "lucide-react";
+import { Shield, Zap, Lock, ArrowRight, CheckCircle2, Users, TrendingUp, Globe, X } from "lucide-react";
 
 export function Dashboard() {
   return (
@@ -22,6 +22,140 @@ export function Dashboard() {
           Your funds are controlled by contract logic, not private keys.
         </p>
       </div>
+
+      {/* Why We're Better Than CEX & Binance P2P */}
+      <Card className="border-2 border-primary/50 bg-gradient-to-br from-primary/5 via-transparent to-transparent">
+        <CardHeader className="text-center pb-6">
+          <CardTitle className="text-3xl md:text-4xl mb-3">
+            Why We're Better Than CEX & Binance P2P
+          </CardTitle>
+          <CardDescription className="text-lg">
+            True decentralization vs. centralized control
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr className="border-b-2 border-border">
+                  <th className="text-left p-4 font-semibold text-lg">Feature</th>
+                  <th className="text-center p-4 font-semibold text-lg bg-primary/10">Kadena P2P Escrow</th>
+                  <th className="text-center p-4 font-semibold text-lg bg-destructive/10">Binance P2P</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="border-b border-border hover:bg-muted/50 transition-colors">
+                  <td className="p-4 font-medium">Custody Model</td>
+                  <td className="p-4 text-center">
+                    <CheckCircle2 className="h-6 w-6 text-primary mx-auto" />
+                    <span className="text-sm text-muted-foreground block mt-1">Smart-contract escrow</span>
+                  </td>
+                  <td className="p-4 text-center">
+                    <X className="h-6 w-6 text-destructive mx-auto" />
+                    <span className="text-sm text-muted-foreground block mt-1">Binance-controlled escrow</span>
+                  </td>
+                </tr>
+                <tr className="border-b border-border hover:bg-muted/50 transition-colors">
+                  <td className="p-4 font-medium">KYC</td>
+                  <td className="p-4 text-center">
+                    <CheckCircle2 className="h-6 w-6 text-primary mx-auto" />
+                    <span className="text-sm text-muted-foreground block mt-1">Not required</span>
+                  </td>
+                  <td className="p-4 text-center">
+                    <X className="h-6 w-6 text-destructive mx-auto" />
+                    <span className="text-sm text-muted-foreground block mt-1">Required</span>
+                  </td>
+                </tr>
+                <tr className="border-b border-border hover:bg-muted/50 transition-colors">
+                  <td className="p-4 font-medium">Trading Fees</td>
+                  <td className="p-4 text-center">
+                    <CheckCircle2 className="h-6 w-6 text-primary mx-auto" />
+                    <span className="text-sm text-muted-foreground block mt-1">Zero</span>
+                  </td>
+                  <td className="p-4 text-center">
+                    <X className="h-6 w-6 text-destructive mx-auto" />
+                    <span className="text-sm text-muted-foreground block mt-1">Hidden spreads & fees</span>
+                  </td>
+                </tr>
+                <tr className="border-b border-border hover:bg-muted/50 transition-colors">
+                  <td className="p-4 font-medium">Withdrawal Fees</td>
+                  <td className="p-4 text-center">
+                    <CheckCircle2 className="h-6 w-6 text-primary mx-auto" />
+                    <span className="text-sm text-muted-foreground block mt-1">Zero</span>
+                  </td>
+                  <td className="p-4 text-center">
+                    <X className="h-6 w-6 text-destructive mx-auto" />
+                    <span className="text-sm text-muted-foreground block mt-1">Yes</span>
+                  </td>
+                </tr>
+                <tr className="border-b border-border hover:bg-muted/50 transition-colors">
+                  <td className="p-4 font-medium">Price Flexibility</td>
+                  <td className="p-4 text-center">
+                    <CheckCircle2 className="h-6 w-6 text-primary mx-auto" />
+                    <span className="text-sm text-muted-foreground block mt-1">Above & below market</span>
+                  </td>
+                  <td className="p-4 text-center">
+                    <X className="h-6 w-6 text-destructive mx-auto" />
+                    <span className="text-sm text-muted-foreground block mt-1">Limited</span>
+                  </td>
+                </tr>
+                <tr className="border-b border-border hover:bg-muted/50 transition-colors">
+                  <td className="p-4 font-medium">Censorship Risk</td>
+                  <td className="p-4 text-center">
+                    <CheckCircle2 className="h-6 w-6 text-primary mx-auto" />
+                    <span className="text-sm text-muted-foreground block mt-1">None</span>
+                  </td>
+                  <td className="p-4 text-center">
+                    <X className="h-6 w-6 text-destructive mx-auto" />
+                    <span className="text-sm text-muted-foreground block mt-1">High</span>
+                  </td>
+                </tr>
+                <tr className="border-b border-border hover:bg-muted/50 transition-colors">
+                  <td className="p-4 font-medium">Account Suspension</td>
+                  <td className="p-4 text-center">
+                    <CheckCircle2 className="h-6 w-6 text-primary mx-auto" />
+                    <span className="text-sm text-muted-foreground block mt-1">Impossible</span>
+                  </td>
+                  <td className="p-4 text-center">
+                    <X className="h-6 w-6 text-destructive mx-auto" />
+                    <span className="text-sm text-muted-foreground block mt-1">Common</span>
+                  </td>
+                </tr>
+                <tr className="border-b border-border hover:bg-muted/50 transition-colors">
+                  <td className="p-4 font-medium">Transparency</td>
+                  <td className="p-4 text-center">
+                    <CheckCircle2 className="h-6 w-6 text-primary mx-auto" />
+                    <span className="text-sm text-muted-foreground block mt-1">Fully on-chain</span>
+                  </td>
+                  <td className="p-4 text-center">
+                    <X className="h-6 w-6 text-destructive mx-auto" />
+                    <span className="text-sm text-muted-foreground block mt-1">Platform-controlled</span>
+                  </td>
+                </tr>
+                <tr className="border-b-2 border-border hover:bg-muted/50 transition-colors">
+                  <td className="p-4 font-medium">Jurisdiction Risk</td>
+                  <td className="p-4 text-center">
+                    <CheckCircle2 className="h-6 w-6 text-primary mx-auto" />
+                    <span className="text-sm text-muted-foreground block mt-1">None</span>
+                  </td>
+                  <td className="p-4 text-center">
+                    <X className="h-6 w-6 text-destructive mx-auto" />
+                    <span className="text-sm text-muted-foreground block mt-1">Subject to regulation</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div className="mt-6 p-6 bg-muted/50 rounded-lg border border-border">
+            <p className="text-center text-muted-foreground mb-2">
+              Binance P2P still relies on centralized trust.
+            </p>
+            <p className="text-center text-lg font-bold text-primary">
+              Kadena P2P Escrow is permissionless, trustless, and unstoppable.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Features Grid */}
       <div className="grid md:grid-cols-3 gap-6">
