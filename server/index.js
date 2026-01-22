@@ -836,6 +836,9 @@ async function ensureDbInitialized() {
   }
 }
 
+// Export ensureDbInitialized for serverless functions
+app.ensureDbInitialized = ensureDbInitialized;
+
 // Graceful shutdown (only for traditional server)
 if (!isVercel) {
   process.on("SIGINT", async () => {

@@ -5,19 +5,23 @@
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "/api/server"
+      "destination": "/api/index?path=$1"
     },
     {
       "source": "/uploads/(.*)",
-      "destination": "/api/server"
+      "destination": "/api/uploads/$1"
     },
     {
-      "source": "/(.*)",
+      "source": "/((?!api|uploads).*)",
       "destination": "/index.html"
     }
   ],
   "functions": {
-    "api/server.js": {
+    "api/index.js": {
+      "maxDuration": 30,
+      "memory": 1024
+    },
+    "api/[...path].js": {
       "maxDuration": 30,
       "memory": 1024
     }
