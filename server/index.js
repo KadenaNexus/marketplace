@@ -25,7 +25,7 @@ const __dirname = path.dirname(__filename);
 
 const PROFILE_AUTH_PURPOSE = "Kadena P2P Escrow Profile";
 const NONCE_TOLERANCE_MS = 5 * 60 * 1000; // 5 minutes
-const AVATAR_MAX_BYTES = 20 * 1024 * 1024; // 2MB
+const AVATAR_MAX_BYTES = 20 * 1024 * 1024; // 20MB
 
 // PostgreSQL configuration from environment variables
 // Can use either DATABASE_URL (full connection string) or individual components
