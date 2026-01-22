@@ -7,6 +7,16 @@ import app from "../server/index.js";
 
 // Vercel serverless function handler
 export default async function handler(req, res) {
+  // Debug logging first to see what we receive
+  console.log('[API Handler] ====== START ======');
+  console.log('[API Handler] Method:', req.method);
+  console.log('[API Handler] Original req.url:', req.url);
+  console.log('[API Handler] req.path:', req.path);
+  console.log('[API Handler] req.query:', JSON.stringify(req.query));
+  console.log('[API Handler] req.query.path:', req.query?.path);
+  console.log('[API Handler] req.query.path type:', typeof req.query?.path);
+  console.log('[API Handler] req.query.path isArray:', Array.isArray(req.query?.path));
+  
   // Ensure database is initialized
   if (typeof app.ensureDbInitialized === 'function') {
     await app.ensureDbInitialized();
@@ -23,7 +33,18 @@ export default async function handler(req, res) {
     } else if (typeof req.query.path === 'string') {
       pathSegments = req.query.path.split('/').filter(Boolean);
     }
+  } else {
+    // Fallback: try to get from req.url or req.path
+    // Vercel might pass the path differently
+    const urlPath = req.url || req.path || '';
+    if (urlPath.startsWith('/api/')) {
+      pathSegments = urlPath.replace('/api/', '').split('/').filter(Boolean);
+    } else if (urlPath.startsWith('/')) {
+      pathSegments = urlPath.substring(1).split('/').filter(Boolean);
+    }
   }
+  
+  console.log('[API Handler] pathSegments:', JSON.stringify(pathSegments));
   
   // Reconstruct the full API path
   const apiPath = '/api' + (pathSegments.length > 0 ? '/' + pathSegments.join('/') : '');
@@ -46,11 +67,9 @@ export default async function handler(req, res) {
   req.url = fullPath;
   req.originalUrl = fullPath;
   
-  // Debug logging
-  console.log('[API Handler] Method:', req.method);
-  console.log('[API Handler] Original req.url:', req.url);
-  console.log('[API Handler] req.query.path:', req.query?.path);
-  console.log('[API Handler] Reconstructed path:', fullPath);
+  console.log('[API Handler] Reconstructed apiPath:', apiPath);
+  console.log('[API Handler] Final req.url:', fullPath);
+  console.log('[API Handler] ====== END ======');
   
   // Pass request to Express app
   return app(req, res);
