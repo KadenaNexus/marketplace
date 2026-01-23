@@ -6,12 +6,15 @@ export interface Profile {
   bio: string | null;
   wallet: string;
   updatedAt: string;
+  lastSeen?: string;
+  isOnline?: boolean;
 }
 
 export interface ProfileSummary {
   username: string | null;
   avatar: string | null;
   wallet: string;
+  isOnline?: boolean;
 }
 
 export async function fetchProfile(wallet: string): Promise<Profile | null> {

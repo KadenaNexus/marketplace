@@ -7,7 +7,8 @@ CREATE TABLE IF NOT EXISTS profiles (
     username VARCHAR(64),
     avatar VARCHAR(512),
     bio VARCHAR(500),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    last_seen TIMESTAMP WITH TIME ZONE
 );
 
 -- Create unique index on wallet (already primary key, but explicit for clarity)
@@ -55,3 +56,14 @@ CREATE TABLE IF NOT EXISTS dispute_messages (
 -- Indexes for dispute messages
 CREATE INDEX IF NOT EXISTS idx_dispute_messages_offer_id ON dispute_messages(offer_id);
 CREATE INDEX IF NOT EXISTS idx_dispute_messages_created_at ON dispute_messages(created_at);
+
+-- Add last_seen column to profiles if it doesn't exist (for existing databases)
+DO $$ 
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'profiles' AND column_name = 'last_seen'
+    ) THEN
+        ALTER TABLE profiles ADD COLUMN last_seen TIMESTAMP WITH TIME ZONE;
+    END IF;
+END $$;

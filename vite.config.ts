@@ -23,6 +23,12 @@ export default defineConfig(({ mode }) => ({
         target: process.env.VITE_PROFILE_API || "http://localhost:3001",
         changeOrigin: true,
       },
+      // WebSocket proxy for Socket.IO
+      "/socket.io": {
+        target: process.env.VITE_PROFILE_API || "http://localhost:3001",
+        changeOrigin: true,
+        ws: true,
+      },
       // Uploaded files (profiles and evidence)
       "/uploads": {
         target: process.env.VITE_PROFILE_API || "http://localhost:3001",

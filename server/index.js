@@ -17,6 +17,8 @@ import { fileURLToPath } from "url";
 import pg from "pg";
 import multer from "multer";
 import { hash, base64UrlDecodeArr, hexToBin, verifySig } from "@kadena/cryptography-utils";
+import { createServer } from "http";
+import { Server } from "socket.io";
 
 const { Pool } = pg;
 
@@ -120,6 +122,125 @@ app.use("/uploads/evidence", express.static(EVIDENCE_DIR));
 
 /** @type {pg.Pool} */
 let pool;
+
+// WebSocket server for online status tracking
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+  cors: {
+    origin: true,
+    methods: ["GET", "POST"],
+  },
+});
+
+// Track online users: Map<wallet, { socketId, lastSeen }>
+const onlineUsers = new Map();
+
+// Cleanup interval: mark users offline if no heartbeat for 60 seconds
+const HEARTBEAT_TIMEOUT = 60 * 1000; // 60 seconds
+setInterval(() => {
+  const now = Date.now();
+  for (const [wallet, data] of onlineUsers.entries()) {
+    if (now - data.lastSeen > HEARTBEAT_TIMEOUT) {
+      onlineUsers.delete(wallet);
+      io.emit("user-offline", { wallet });
+    }
+  }
+}, 30000); // Check every 30 seconds
+
+io.on("connection", (socket) => {
+  console.log(`Socket connected: ${socket.id}`);
+
+  // User identifies themselves with their wallet
+  socket.on("identify", async ({ wallet }) => {
+    if (!wallet || typeof wallet !== "string") {
+      socket.emit("error", { message: "Invalid wallet" });
+      return;
+    }
+
+    // Remove old socket if user reconnects
+    const existing = onlineUsers.get(wallet);
+    if (existing && existing.socketId !== socket.id) {
+      // Disconnect old socket
+      io.to(existing.socketId).disconnectSockets();
+    }
+
+    // Mark user as online
+    onlineUsers.set(wallet, {
+      socketId: socket.id,
+      lastSeen: Date.now(),
+    });
+
+    socket.data.wallet = wallet;
+    console.log(`User online: ${wallet}`);
+
+    // Update last_seen in database (if column exists)
+    try {
+      if (pool) {
+        await pool.query(
+          "UPDATE profiles SET last_seen = CURRENT_TIMESTAMP WHERE wallet = $1",
+          [wallet]
+        );
+      }
+    } catch (err) {
+      // Ignore if column doesn't exist yet (migration will add it)
+      if (!err.message?.includes("does not exist")) {
+        console.error("Failed to update last_seen:", err.message);
+      }
+    }
+
+    // Notify all clients that this user is online
+    socket.broadcast.emit("user-online", { wallet });
+  });
+
+  // Heartbeat to keep connection alive
+  socket.on("heartbeat", ({ wallet }) => {
+    if (wallet && socket.data.wallet === wallet) {
+      const userData = onlineUsers.get(wallet);
+      if (userData) {
+        userData.lastSeen = Date.now();
+        // Update database last_seen periodically (every 5 heartbeats ~ 5 minutes)
+        if (Math.random() < 0.2 && pool) {
+          pool.query(
+            "UPDATE profiles SET last_seen = CURRENT_TIMESTAMP WHERE wallet = $1",
+            [wallet]
+          ).catch((err) => {
+            // Ignore if column doesn't exist yet
+            if (!err.message?.includes("does not exist")) {
+              console.error("Failed to update last_seen:", err.message);
+            }
+          });
+        }
+      }
+    }
+  });
+
+  // Handle explicit logout
+  socket.on("logout", ({ wallet }) => {
+    if (!wallet || typeof wallet !== "string") return;
+    
+    const userData = onlineUsers.get(wallet);
+    if (userData && userData.socketId === socket.id) {
+      onlineUsers.delete(wallet);
+      console.log(`User logged out: ${wallet}`);
+      socket.broadcast.emit("user-offline", { wallet });
+      // Also emit to the disconnecting client so they see their own status change
+      socket.emit("user-offline", { wallet });
+    }
+  });
+
+  // Handle disconnection (network/socket disconnect)
+  socket.on("disconnect", () => {
+    const wallet = socket.data.wallet;
+    if (wallet) {
+      const userData = onlineUsers.get(wallet);
+      if (userData && userData.socketId === socket.id) {
+        onlineUsers.delete(wallet);
+        console.log(`User offline (disconnected): ${wallet}`);
+        socket.broadcast.emit("user-offline", { wallet });
+      }
+    }
+  });
+});
 
 /**
  * Verify that signedCmd was signed by the key for `wallet` and includes
@@ -263,15 +384,29 @@ app.get("/api/profiles/:wallet", async (req, res) => {
     return res.status(400).json({ error: "Missing wallet" });
   }
   try {
-    const result = await pool.query("SELECT wallet, username, avatar, bio, updated_at FROM profiles WHERE wallet = $1", [wallet]);
+    // Try to select with last_seen, fallback to without if column doesn't exist
+    let result;
+    try {
+      result = await pool.query("SELECT wallet, username, avatar, bio, updated_at, last_seen FROM profiles WHERE wallet = $1", [wallet]);
+    } catch (err) {
+      if (err.message?.includes("does not exist")) {
+        // Column doesn't exist yet, select without it
+        result = await pool.query("SELECT wallet, username, avatar, bio, updated_at FROM profiles WHERE wallet = $1", [wallet]);
+      } else {
+        throw err;
+      }
+    }
     const p = result.rows[0];
+    const isOnline = onlineUsers.has(wallet);
     return res.json(p ? { 
       username: p.username, 
       avatar: p.avatar, 
       bio: p.bio, 
       wallet: p.wallet, 
-      updatedAt: p.updated_at 
-    } : null);
+      updatedAt: p.updated_at,
+      lastSeen: p.last_seen || null,
+      isOnline
+    } : { wallet, isOnline });
   } catch (err) {
     console.error("GET /api/profiles/:wallet", err);
     return res.status(500).json({ error: err.message || "Database error" });
@@ -346,13 +481,49 @@ app.post("/api/profiles/bulk", async (req, res) => {
     );
     const out = {};
     for (const p of result.rows) {
-      out[p.wallet] = { username: p.username, avatar: p.avatar, wallet: p.wallet };
+      const isOnline = onlineUsers.has(p.wallet);
+      out[p.wallet] = { 
+        username: p.username, 
+        avatar: p.avatar, 
+        wallet: p.wallet,
+        isOnline 
+      };
+    }
+    // Also include online status for wallets not in profiles
+    for (const wallet of list) {
+      if (!out[wallet] && onlineUsers.has(wallet)) {
+        out[wallet] = { wallet, isOnline: true };
+      }
     }
     return res.json(out);
   } catch (err) {
     console.error("POST /api/profiles/bulk", err);
     return res.status(500).json({ error: err.message || "Database error" });
   }
+});
+
+// GET /api/profiles/:wallet/status – get online status of a user
+app.get("/api/profiles/:wallet/status", async (req, res) => {
+  const wallet = req.params.wallet?.trim();
+  if (!wallet) {
+    return res.status(400).json({ error: "Missing wallet" });
+  }
+  const isOnline = onlineUsers.has(wallet);
+  return res.json({ wallet, isOnline });
+});
+
+// POST /api/profiles/status/bulk – body: { wallets: string[] }; returns { [wallet]: { isOnline: boolean } }
+app.post("/api/profiles/status/bulk", async (req, res) => {
+  const { wallets } = req.body ?? {};
+  if (!Array.isArray(wallets)) {
+    return res.status(400).json({ error: "wallets must be an array" });
+  }
+  const list = wallets.filter((w) => typeof w === "string").map((w) => w.trim()).filter(Boolean);
+  const out = {};
+  for (const wallet of list) {
+    out[wallet] = { isOnline: onlineUsers.has(wallet) };
+  }
+  return res.json(out);
 });
 
 /* ============================================================
@@ -743,6 +914,26 @@ async function initializeSchema() {
       }
     }
   }
+  
+  // Ensure last_seen column exists (migration for existing databases)
+  try {
+    const columnCheck = await pool.query(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'profiles' AND column_name = 'last_seen'
+    `);
+    if (columnCheck.rows.length === 0) {
+      console.log("  Adding last_seen column to profiles table...");
+      await pool.query("ALTER TABLE profiles ADD COLUMN last_seen TIMESTAMP WITH TIME ZONE");
+      console.log("  ✓ Added last_seen column");
+    } else {
+      console.log("  ⊙ last_seen column already exists");
+    }
+  } catch (err) {
+    console.error("  ✗ Failed to add last_seen column:", err.message);
+    // Don't throw - this is a migration, not critical for startup
+  }
+  
   console.log("Database schema initialized successfully");
 }
 
@@ -810,8 +1001,9 @@ async function start() {
   }
 
   if (!isVercel) {
-    app.listen(PORT, () => {
+    httpServer.listen(PORT, () => {
       console.log(`Profile API listening on http://localhost:${PORT}`);
+      console.log(`WebSocket server ready for online status tracking`);
     });
   }
 }

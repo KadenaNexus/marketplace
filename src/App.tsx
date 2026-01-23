@@ -5,11 +5,18 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { WalletProvider } from "@/hooks/useWallet";
 import { ThemeProvider } from "next-themes";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import Profile from "./pages/Profile";
 
 const queryClient = new QueryClient();
+
+// Component to initialize WebSocket connection
+function OnlineStatusProvider({ children }: { children: React.ReactNode }) {
+  useOnlineStatus(); // Initialize WebSocket connection
+  return <>{children}</>;
+}
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
@@ -19,12 +26,14 @@ const App = () => (
         <Sonner />
         <BrowserRouter>
           <WalletProvider>
-            <Routes>
-              <Route path="/" element={<Index />} />
-              <Route path="/u/:wallet" element={<Profile />} />
-              {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-              <Route path="*" element={<NotFound />} />
-            </Routes>
+            <OnlineStatusProvider>
+              <Routes>
+                <Route path="/" element={<Index />} />
+                <Route path="/u/:wallet" element={<Profile />} />
+                {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            </OnlineStatusProvider>
           </WalletProvider>
         </BrowserRouter>
       </TooltipProvider>

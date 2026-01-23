@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useWallet } from "@/hooks/useWallet";
 import { fetchProfilesBulk } from "@/lib/profileApi";
+import { initializeOnlineStatus } from "@/hooks/useOnlineStatus";
 import {
   listAllEscrows,
   buildAcceptOfferTx,
@@ -176,6 +177,10 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
     queryKey: ["profiles-bulk", allWallets.join(",")],
     queryFn: () => fetchProfilesBulk(allWallets),
     enabled: allWallets.length > 0,
+    onSuccess: (data) => {
+      // Initialize online status from API response
+      initializeOnlineStatus(data);
+    },
   });
 
   // Check if there's an open dispute for the selected escrow
