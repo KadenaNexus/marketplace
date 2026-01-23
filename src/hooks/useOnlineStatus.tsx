@@ -84,6 +84,11 @@ function getSocket(): Socket | null {
     globalSocket.on("error", (error) => {
       console.error("WebSocket error:", error);
     });
+
+    // Expose socket globally for ChatBox component
+    if (typeof window !== "undefined") {
+      (window as any).__socket = globalSocket;
+    }
   }
 
   return globalSocket;
@@ -176,11 +181,8 @@ export function useOnlineStatus() {
       socket.emit("identify", { wallet: currentWallet });
       prevWalletRef.current = currentWallet;
     }
-    // User is still connected, ensure they're identified (re-identify if socket reconnected)
-    else if (currentWallet && isConnected && isSocketConnected && prevWallet === currentWallet) {
-      // Re-identify to ensure server knows we're still online
-      socket.emit("identify", { wallet: currentWallet });
-    }
+    // User is still connected - don't re-identify unnecessarily
+    // Only re-identify if socket just reconnected (handled in connect handler)
     // Update ref even if socket not connected yet
     else if (currentWallet && currentWallet !== prevWallet) {
       prevWalletRef.current = currentWallet;

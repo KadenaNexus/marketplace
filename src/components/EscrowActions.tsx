@@ -8,6 +8,7 @@ import { ProfileSummaryView } from "./ProfileSummary";
 import { OfferCard } from "./OfferCard";
 import { DisputeView } from "./DisputeView";
 import { OpenDisputeDialog } from "./OpenDisputeDialog";
+import { ChatBox } from "./ChatBox";
 import { getDispute } from "@/lib/disputeApi";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -41,6 +42,7 @@ import {
   RefreshCw,
   AlertTriangle,
   FileText,
+  MessageCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -395,6 +397,10 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
             <Tabs value={disputeTab} onValueChange={setDisputeTab}>
               <TabsList>
                 <TabsTrigger value="details">Details</TabsTrigger>
+                <TabsTrigger value="chat" className="gap-2">
+                  <MessageCircle className="h-4 w-4" />
+                  Chat
+                </TabsTrigger>
                 <TabsTrigger value="dispute" className="gap-2">
                   <AlertTriangle className="h-4 w-4" />
                   Dispute
@@ -592,6 +598,30 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
                 Connect your wallet to interact with this escrow
               </div>
             )}
+              </TabsContent>
+
+              <TabsContent value="chat" className="mt-4">
+                {(() => {
+                  const isBuyer = account?.account === selectedEscrow.buyer;
+                  const isSeller = account?.account === selectedEscrow.seller;
+                  const otherWallet = isBuyer ? selectedEscrow.seller : isSeller ? (selectedEscrow.buyer || selectedEscrow.seller) : selectedEscrow.seller;
+                  
+                  if (!account || !isConnected) {
+                    return (
+                      <div className="text-center py-8 text-muted-foreground">
+                        Please connect your wallet to use chat
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <ChatBox
+                      otherWallet={otherWallet}
+                      otherProfile={profileMap[otherWallet]}
+                      contextOfferId={selectedEscrow.offerId}
+                    />
+                  );
+                })()}
               </TabsContent>
 
               <TabsContent value="dispute" className="mt-4">

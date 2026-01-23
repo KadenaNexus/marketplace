@@ -115,6 +115,14 @@ const app = express();
 app.use(cors({ origin: true }));
 app.use(express.json({ limit: "256kb" }));
 
+// Debug middleware to log all requests
+app.use((req, res, next) => {
+  if (req.path?.includes("messages")) {
+    console.log(`[Request] ${req.method} ${req.path}`, req.query);
+  }
+  next();
+});
+
 // Serve uploaded profile images
 app.use("/uploads/profiles", express.static(UPLOADS_DIR));
 // Serve uploaded evidence files
@@ -139,11 +147,20 @@ const onlineUsers = new Map();
 const HEARTBEAT_TIMEOUT = 60 * 1000; // 60 seconds
 setInterval(() => {
   const now = Date.now();
+  const toRemove = [];
   for (const [wallet, data] of onlineUsers.entries()) {
-    if (now - data.lastSeen > HEARTBEAT_TIMEOUT) {
-      onlineUsers.delete(wallet);
-      io.emit("user-offline", { wallet });
+    // Check if socket is still connected
+    const socket = io.sockets.sockets.get(data.socketId);
+    if (!socket || !socket.connected) {
+      toRemove.push(wallet);
+    } else if (now - data.lastSeen > HEARTBEAT_TIMEOUT) {
+      toRemove.push(wallet);
     }
+  }
+  for (const wallet of toRemove) {
+    onlineUsers.delete(wallet);
+    io.emit("user-offline", { wallet });
+    console.log(`User ${wallet} marked offline (timeout or disconnected)`);
   }
 }, 30000); // Check every 30 seconds
 
@@ -157,11 +174,14 @@ io.on("connection", (socket) => {
       return;
     }
 
-    // Remove old socket if user reconnects
+    // Remove old socket if user reconnects (but keep the user online if it's the same wallet)
     const existing = onlineUsers.get(wallet);
     if (existing && existing.socketId !== socket.id) {
-      // Disconnect old socket
-      io.to(existing.socketId).disconnectSockets();
+      // Disconnect old socket only if it's still connected
+      const oldSocket = io.sockets.sockets.get(existing.socketId);
+      if (oldSocket) {
+        oldSocket.disconnect();
+      }
     }
 
     // Mark user as online
@@ -238,6 +258,27 @@ io.on("connection", (socket) => {
         console.log(`User offline (disconnected): ${wallet}`);
         socket.broadcast.emit("user-offline", { wallet });
       }
+    }
+  });
+
+  // Handle joining conversation room for real-time chat (user-to-user)
+  socket.on("join-conversation", ({ otherWallet }) => {
+    if (otherWallet && typeof otherWallet === "string" && socket.data.wallet) {
+      // Create a consistent room name by sorting wallets alphabetically
+      const wallets = [socket.data.wallet, otherWallet].sort();
+      const roomName = `conversation:${wallets[0]}:${wallets[1]}`;
+      socket.join(roomName);
+      console.log(`Socket ${socket.id} (${socket.data.wallet}) joined conversation room with ${otherWallet}`);
+    }
+  });
+
+  // Handle leaving conversation room
+  socket.on("leave-conversation", ({ otherWallet }) => {
+    if (otherWallet && typeof otherWallet === "string" && socket.data.wallet) {
+      const wallets = [socket.data.wallet, otherWallet].sort();
+      const roomName = `conversation:${wallets[0]}:${wallets[1]}`;
+      socket.leave(roomName);
+      console.log(`Socket ${socket.id} left conversation room with ${otherWallet}`);
     }
   });
 });
@@ -527,6 +568,333 @@ app.post("/api/profiles/status/bulk", async (req, res) => {
 });
 
 /* ============================================================
+   USER MESSAGES API (User-to-user conversations, not tied to specific offers)
+   NOTE: Defined before DISPUTE API to avoid route conflicts
+============================================================ */
+
+// POST /api/messages – send a message to another user (user-to-user conversation)
+// Body: { toWallet, message, wallet, publicKey, signedCmd, contextOfferId? }
+app.post("/api/messages", async (req, res) => {
+  const { message, toWallet, wallet, publicKey, signedCmd, contextOfferId } = req.body ?? {};
+  
+  console.log(`[POST /api/messages] from: ${wallet}, to: ${toWallet}, contextOfferId: ${contextOfferId}`);
+  
+  if (!message || typeof message !== "string" || !message.trim()) {
+    return res.status(400).json({ error: "Message is required" });
+  }
+  if (!toWallet || typeof toWallet !== "string") {
+    return res.status(400).json({ error: "Missing toWallet" });
+  }
+  if (!wallet || typeof wallet !== "string") {
+    return res.status(400).json({ error: "Missing wallet" });
+  }
+  if (wallet === toWallet) {
+    return res.status(400).json({ error: "Cannot send message to yourself" });
+  }
+  
+  const v = verifyProfileAuth(signedCmd, wallet, publicKey);
+  if (!v.ok) {
+    return res.status(403).json({ error: "Proof of ownership failed", reason: v.reason });
+  }
+  
+  try {
+    // Ensure pool is initialized
+    if (!pool) {
+      console.error("Database pool not initialized");
+      return res.status(500).json({ error: "Database not initialized" });
+    }
+    
+    // Try user_messages first, fallback to offer_messages if table doesn't exist
+    let result;
+    try {
+      result = await pool.query(
+        `INSERT INTO user_messages (from_wallet, to_wallet, message, context_offer_id, created_at)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING id, from_wallet, to_wallet, message, created_at, read_at, context_offer_id`,
+        [wallet, toWallet, message.trim().slice(0, 2000), contextOfferId || null, new Date().toISOString()]
+      );
+    } catch (tableErr) {
+      // If user_messages table doesn't exist, use offer_messages (backwards compatibility)
+      if (tableErr.message?.includes("does not exist") || tableErr.message?.includes("relation") && tableErr.message?.includes("does not exist")) {
+        console.log("user_messages table not found, using offer_messages");
+        result = await pool.query(
+          `INSERT INTO offer_messages (offer_id, from_wallet, to_wallet, message, created_at)
+           VALUES ($1, $2, $3, $4, $5)
+           RETURNING id, offer_id, from_wallet, to_wallet, message, created_at, read_at`,
+          [contextOfferId || 'general', wallet, toWallet, message.trim().slice(0, 2000), new Date().toISOString()]
+        );
+      } else {
+        throw tableErr;
+      }
+    }
+    
+    const msg = result.rows[0];
+    
+    // Emit real-time message via WebSocket to both users
+    const messageData = {
+      id: msg.id,
+      from: msg.from_wallet || msg.from_wallet,
+      to: msg.to_wallet || msg.to_wallet,
+      message: msg.message,
+      createdAt: msg.created_at,
+      readAt: msg.read_at || null,
+      contextOfferId: msg.context_offer_id || msg.offer_id || null,
+    };
+    
+    // Send to conversation room (both users)
+    const wallets = [wallet, toWallet].sort();
+    const roomName = `conversation:${wallets[0]}:${wallets[1]}`;
+    io.to(roomName).emit("new-message", messageData);
+    
+    // Also send directly to both users if they're online (even if not in room)
+    const senderSocket = Array.from(io.sockets.sockets.values()).find(
+      (s) => s.data.wallet === wallet
+    );
+    if (senderSocket) {
+      senderSocket.emit("new-message", messageData);
+    }
+    
+    const recipientSocket = Array.from(io.sockets.sockets.values()).find(
+      (s) => s.data.wallet === toWallet
+    );
+    if (recipientSocket) {
+      recipientSocket.emit("new-message", messageData);
+    }
+    
+    return res.json({
+      id: msg.id,
+      from: msg.from_wallet || msg.from_wallet,
+      to: msg.to_wallet || msg.to_wallet,
+      message: msg.message,
+      createdAt: msg.created_at,
+      readAt: msg.read_at || null,
+      contextOfferId: msg.context_offer_id || msg.offer_id || null,
+    });
+  } catch (err) {
+    console.error("POST /api/messages", err);
+    return res.status(500).json({ error: err.message || "Database error" });
+  }
+});
+
+// GET /api/messages/:otherWallet – get all messages between current user and another user
+// Query: ?wallet=<currentUserWallet>
+app.get("/api/messages/:otherWallet", async (req, res) => {
+  const otherWallet = req.params.otherWallet?.trim();
+  const wallet = req.query.wallet?.toString();
+  
+  console.log(`[GET /api/messages/:otherWallet] wallet: ${wallet}, otherWallet: ${otherWallet}`);
+  
+  if (!otherWallet) {
+    return res.status(400).json({ error: "Missing otherWallet" });
+  }
+  if (!wallet) {
+    return res.status(400).json({ error: "Missing wallet parameter" });
+  }
+  
+  try {
+    // Ensure pool is initialized
+    if (!pool) {
+      console.error("Database pool not initialized");
+      return res.status(500).json({ error: "Database not initialized" });
+    }
+    
+    // Try user_messages first, fallback to offer_messages
+    let result;
+    try {
+      result = await pool.query(
+        `SELECT id, from_wallet, to_wallet, message, created_at, read_at, context_offer_id
+         FROM user_messages
+         WHERE (from_wallet = $1 AND to_wallet = $2) OR (from_wallet = $2 AND to_wallet = $1)
+         ORDER BY created_at ASC`,
+        [wallet, otherWallet]
+      );
+    } catch (tableErr) {
+      // If user_messages table doesn't exist, use offer_messages
+      if (tableErr.message?.includes("does not exist") || tableErr.message?.includes("relation") && tableErr.message?.includes("does not exist")) {
+        console.log("user_messages table not found, using offer_messages");
+        result = await pool.query(
+          `SELECT id, offer_id, from_wallet, to_wallet, message, created_at, read_at
+           FROM offer_messages
+           WHERE (from_wallet = $1 AND to_wallet = $2) OR (from_wallet = $2 AND to_wallet = $1)
+           ORDER BY created_at ASC`,
+          [wallet, otherWallet]
+        );
+      } else {
+        throw tableErr;
+      }
+    }
+    
+    const messages = result.rows.map(row => ({
+      id: row.id,
+      from: row.from_wallet,
+      to: row.to_wallet,
+      message: row.message,
+      createdAt: row.created_at,
+      readAt: row.read_at || null,
+      contextOfferId: row.context_offer_id || row.offer_id || null,
+    }));
+    
+    console.log(`[GET /api/messages/:otherWallet] Returning ${messages.length} messages`);
+    return res.json(messages);
+  } catch (err) {
+    console.error("GET /api/messages/:otherWallet", err);
+    return res.status(500).json({ error: err.message || "Database error" });
+  }
+});
+
+// PUT /api/messages/:messageId/read – mark message as read
+app.put("/api/messages/:messageId/read", async (req, res) => {
+  const messageId = parseInt(req.params.messageId);
+  const { wallet, publicKey, signedCmd } = req.body ?? {};
+  
+  if (!messageId || isNaN(messageId)) {
+    return res.status(400).json({ error: "Invalid messageId" });
+  }
+  if (!wallet || typeof wallet !== "string") {
+    return res.status(400).json({ error: "Missing wallet" });
+  }
+  
+  const v = verifyProfileAuth(signedCmd, wallet, publicKey);
+  if (!v.ok) {
+    return res.status(403).json({ error: "Proof of ownership failed", reason: v.reason });
+  }
+  
+  try {
+    // Try user_messages first, fallback to offer_messages
+    let result;
+    try {
+      result = await pool.query(
+        `UPDATE user_messages
+         SET read_at = CURRENT_TIMESTAMP
+         WHERE id = $1 AND to_wallet = $2 AND read_at IS NULL
+         RETURNING id, read_at`,
+        [messageId, wallet]
+      );
+    } catch (tableErr) {
+      if (tableErr.message?.includes("does not exist") || tableErr.message?.includes("relation") && tableErr.message?.includes("does not exist")) {
+        result = await pool.query(
+          `UPDATE offer_messages
+           SET read_at = CURRENT_TIMESTAMP
+           WHERE id = $1 AND to_wallet = $2 AND read_at IS NULL
+           RETURNING id, read_at`,
+          [messageId, wallet]
+        );
+      } else {
+        throw tableErr;
+      }
+    }
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Message not found or already read" });
+    }
+    
+    return res.json({ id: result.rows[0].id, readAt: result.rows[0].read_at });
+  } catch (err) {
+    console.error("PUT /api/messages/:messageId/read", err);
+    return res.status(500).json({ error: err.message || "Database error" });
+  }
+});
+
+// GET /api/messages/unread-count – get unread message count for a wallet
+app.get("/api/messages/unread-count", async (req, res) => {
+  const wallet = req.query.wallet?.toString();
+  
+  if (!wallet) {
+    return res.status(400).json({ error: "Missing wallet parameter" });
+  }
+  
+  try {
+    // Try user_messages first, fallback to offer_messages
+    let result;
+    try {
+      result = await pool.query(
+        `SELECT COUNT(*) as count
+         FROM user_messages
+         WHERE to_wallet = $1 AND read_at IS NULL`,
+        [wallet]
+      );
+    } catch (tableErr) {
+      if (tableErr.message?.includes("does not exist") || tableErr.message?.includes("relation") && tableErr.message?.includes("does not exist")) {
+        result = await pool.query(
+          `SELECT COUNT(*) as count
+           FROM offer_messages
+           WHERE to_wallet = $1 AND read_at IS NULL`,
+          [wallet]
+        );
+      } else {
+        throw tableErr;
+      }
+    }
+    
+    return res.json({ unreadCount: parseInt(result.rows[0].count) || 0 });
+  } catch (err) {
+    console.error("GET /api/messages/unread-count", err);
+    return res.status(500).json({ error: err.message || "Database error" });
+  }
+});
+
+// Legacy endpoint: POST /api/offers/:offerId/messages (for backwards compatibility)
+// Redirects to POST /api/messages with contextOfferId
+app.post("/api/offers/:offerId/messages", async (req, res) => {
+  const offerId = req.params.offerId?.trim();
+  req.body.contextOfferId = offerId;
+  // Forward to the new endpoint
+  return app._router.handle({ ...req, url: "/api/messages", path: "/api/messages" }, res);
+});
+
+// Legacy endpoint: GET /api/offers/:offerId/messages (for backwards compatibility)
+// Gets messages between buyer and seller of the offer
+app.get("/api/offers/:offerId/messages", async (req, res) => {
+  const offerId = req.params.offerId?.trim();
+  const wallet = req.query.wallet?.toString();
+  
+  if (!offerId || !wallet) {
+    return res.status(400).json({ error: "Missing offerId or wallet" });
+  }
+  
+  // We need to find the other wallet from the offer
+  // For now, we'll get all messages for this user and filter by context
+  // In a real implementation, you'd query the escrow contract to get buyer/seller
+  try {
+    const result = await pool.query(
+      `SELECT DISTINCT 
+         CASE WHEN from_wallet = $1 THEN to_wallet ELSE from_wallet END as other_wallet
+       FROM user_messages
+       WHERE (from_wallet = $1 OR to_wallet = $1) AND context_offer_id = $2
+       LIMIT 1`,
+      [wallet, offerId]
+    ).catch(() => ({ rows: [] }));
+    
+    if (result.rows.length === 0) {
+      // Fallback: try to get from offer_messages
+      const fallback = await pool.query(
+        `SELECT DISTINCT 
+           CASE WHEN from_wallet = $1 THEN to_wallet ELSE from_wallet END as other_wallet
+         FROM offer_messages
+         WHERE (from_wallet = $1 OR to_wallet = $1) AND offer_id = $2
+         LIMIT 1`,
+        [wallet, offerId]
+      ).catch(() => ({ rows: [] }));
+      
+      if (fallback.rows.length === 0) {
+        return res.json([]);
+      }
+      
+      const otherWallet = fallback.rows[0].other_wallet;
+      req.params.otherWallet = otherWallet;
+      return app._router.handle({ ...req, url: `/api/messages/${otherWallet}?wallet=${wallet}`, path: `/api/messages/${otherWallet}` }, res);
+    }
+    
+    const otherWallet = result.rows[0].other_wallet;
+    req.params.otherWallet = otherWallet;
+    return app._router.handle({ ...req, url: `/api/messages/${otherWallet}?wallet=${wallet}`, path: `/api/messages/${otherWallet}` }, res);
+  } catch (err) {
+    console.error("GET /api/offers/:offerId/messages (legacy)", err);
+    return res.status(500).json({ error: err.message || "Database error" });
+  }
+});
+
+/* ============================================================
    DISPUTE API
 ============================================================ */
 
@@ -783,12 +1151,14 @@ app.post("/api/disputes/:offerId/messages", async (req, res) => {
 // GET /api/disputes/:offerId/messages – get all messages in dispute
 app.get("/api/disputes/:offerId/messages", async (req, res) => {
   const offerId = req.params.offerId?.trim();
+  console.log(`[GET /api/disputes/:offerId/messages] Matched! offerId: ${offerId}, path: ${req.path}`);
   if (!offerId) {
     return res.status(400).json({ error: "Missing offerId" });
   }
   try {
     const disputeResult = await pool.query("SELECT id FROM disputes WHERE offer_id = $1", [offerId]);
     if (disputeResult.rows.length === 0) {
+      console.log(`[GET /api/disputes/:offerId/messages] Dispute not found for offerId: ${offerId}`);
       return res.status(404).json({ error: "Dispute not found" });
     }
     
@@ -931,6 +1301,81 @@ async function initializeSchema() {
     }
   } catch (err) {
     console.error("  ✗ Failed to add last_seen column:", err.message);
+    // Don't throw - this is a migration, not critical for startup
+  }
+
+  // Ensure user_messages table exists (new user-to-user messaging system)
+  try {
+    const tableCheck = await pool.query(`
+      SELECT table_name 
+      FROM information_schema.tables 
+      WHERE table_name = 'user_messages'
+    `);
+    if (tableCheck.rows.length === 0) {
+      console.log("  Creating user_messages table...");
+      await pool.query(`
+        CREATE TABLE user_messages (
+          id SERIAL PRIMARY KEY,
+          from_wallet VARCHAR(255) NOT NULL,
+          to_wallet VARCHAR(255) NOT NULL,
+          message TEXT NOT NULL,
+          read_at TIMESTAMP WITH TIME ZONE,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          context_offer_id VARCHAR(255)
+        )
+      `);
+      await pool.query(`CREATE INDEX idx_user_messages_from_wallet ON user_messages(from_wallet)`);
+      await pool.query(`CREATE INDEX idx_user_messages_to_wallet ON user_messages(to_wallet)`);
+      await pool.query(`CREATE INDEX idx_user_messages_created_at ON user_messages(created_at)`);
+      await pool.query(`CREATE INDEX idx_user_messages_context_offer ON user_messages(context_offer_id)`);
+      // Composite index for efficient conversation queries
+      await pool.query(`
+        CREATE INDEX idx_user_messages_conversation ON user_messages(
+          LEAST(from_wallet, to_wallet), 
+          GREATEST(from_wallet, to_wallet), 
+          created_at
+        )
+      `);
+      console.log("  ✓ Created user_messages table");
+    } else {
+      console.log("  ⊙ user_messages table already exists");
+    }
+  } catch (err) {
+    console.error("  ✗ Failed to create user_messages table:", err.message);
+    // Don't throw - this is a migration, not critical for startup
+  }
+  
+  // Ensure offer_messages table exists (legacy, kept for backwards compatibility)
+  try {
+    const tableCheck = await pool.query(`
+      SELECT table_name 
+      FROM information_schema.tables 
+      WHERE table_name = 'offer_messages'
+    `);
+    if (tableCheck.rows.length === 0) {
+      console.log("  Creating offer_messages table (legacy)...");
+      await pool.query(`
+        CREATE TABLE offer_messages (
+          id SERIAL PRIMARY KEY,
+          offer_id VARCHAR(255) NOT NULL,
+          from_wallet VARCHAR(255) NOT NULL,
+          to_wallet VARCHAR(255) NOT NULL,
+          message TEXT NOT NULL,
+          read_at TIMESTAMP WITH TIME ZONE,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await pool.query(`CREATE INDEX idx_offer_messages_offer_id ON offer_messages(offer_id)`);
+      await pool.query(`CREATE INDEX idx_offer_messages_from_wallet ON offer_messages(from_wallet)`);
+      await pool.query(`CREATE INDEX idx_offer_messages_to_wallet ON offer_messages(to_wallet)`);
+      await pool.query(`CREATE INDEX idx_offer_messages_created_at ON offer_messages(created_at)`);
+      await pool.query(`CREATE INDEX idx_offer_messages_conversation ON offer_messages(offer_id, from_wallet, to_wallet)`);
+      console.log("  ✓ Created offer_messages table (legacy)");
+    } else {
+      console.log("  ⊙ offer_messages table already exists");
+    }
+  } catch (err) {
+    console.error("  ✗ Failed to create offer_messages table:", err.message);
     // Don't throw - this is a migration, not critical for startup
   }
   

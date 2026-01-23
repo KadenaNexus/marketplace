@@ -4,8 +4,11 @@ import { Badge } from "@/components/ui/badge";
 import { EscrowStatus } from "./EscrowStatus";
 import { ProfileSummaryView } from "./ProfileSummary";
 import type { Escrow } from "@/lib/kadena";
-import { ShoppingCart, Store, ArrowRight, CreditCard } from "lucide-react";
+import { ShoppingCart, Store, ArrowRight, CreditCard, MessageCircle } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
+import { useState } from "react";
+import { ChatBox } from "./ChatBox";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 
 interface OfferCardProps {
   escrow: Escrow;
@@ -17,8 +20,10 @@ interface OfferCardProps {
 
 export function OfferCard({ escrow, profileMap, onSelect, role, isSelected = false }: OfferCardProps) {
   const { account } = useWallet();
+  const [showChat, setShowChat] = useState(false);
   const isMyOffer = escrow.seller === account?.account;
   const canAccept = role === "buyer" && escrow.state === "CREATED" && !isMyOffer;
+  const canChat = account && isMyOffer ? escrow.buyer : !isMyOffer;
   
   // Parse payment methods
   let paymentMethods: string[] = [];
@@ -102,15 +107,45 @@ export function OfferCard({ escrow, profileMap, onSelect, role, isSelected = fal
                 size="sm"
               />
             </div>
-            {canAccept && (
-              <Button size="sm" onClick={(e) => { e.stopPropagation(); onSelect(escrow.offerId); }}>
-                Accept
-                <ArrowRight className="h-3 w-3 ml-1" />
-              </Button>
-            )}
+            <div className="flex items-center gap-2">
+              {canChat && (
+                <Button 
+                  size="sm" 
+                  variant="outline"
+                  onClick={(e) => { 
+                    e.stopPropagation(); 
+                    setShowChat(true);
+                  }}
+                >
+                  <MessageCircle className="h-3 w-3" />
+                </Button>
+              )}
+              {canAccept && (
+                <Button size="sm" onClick={(e) => { e.stopPropagation(); onSelect(escrow.offerId); }}>
+                  Accept
+                  <ArrowRight className="h-3 w-3 ml-1" />
+                </Button>
+              )}
+            </div>
           </div>
         </div>
       </CardContent>
+      
+      {/* Chat Dialog */}
+      <Dialog open={showChat} onOpenChange={setShowChat}>
+        <DialogContent className="max-w-2xl h-[600px] p-0">
+          <DialogTitle className="sr-only">Chat with {isMyOffer && escrow.buyer ? "Buyer" : "Seller"}</DialogTitle>
+          {canChat && (
+            <ChatBox
+              otherWallet={isMyOffer && escrow.buyer ? escrow.buyer : escrow.seller}
+              otherProfile={isMyOffer && escrow.buyer ? profileMap[escrow.buyer] : profileMap[escrow.seller]}
+              onClose={() => setShowChat(false)}
+              className="border-0 h-full"
+              contextOfferId={escrow.offerId}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
