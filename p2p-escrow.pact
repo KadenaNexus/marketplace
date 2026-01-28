@@ -30,6 +30,8 @@
 
   ;; ------------------------------------------------------------
   ;; Create offer (Binance P2P style: side, price, limits, payment method)
+  ;; SELL: creator = seller (has KDA); accepter = buyer.
+  ;; BUY:  creator = buyer (wants KDA); accepter = seller (has KDA).
   ;; side: "BUY" or "SELL"
   ;; price: price per KDA in fiat currency
   ;; minAmount/maxAmount: transaction limits in KDA
@@ -66,43 +68,61 @@
       , "fiatCurrency": fiatCurrency }))
 
   ;; ------------------------------------------------------------
-  ;; Accept offer (buyer chooses an offer; caller becomes the buyer)
+  ;; Accept offer
+  ;; SELL: buyer accepts (caller becomes buyer).
+  ;; BUY:  seller accepts (caller becomes buyer field = KDA holder).
   ;; ------------------------------------------------------------
   (defun accept-offer (id)
-    (let ((buyer (read-msg "sender")))
+    (let ((accepter (read-msg "sender")))
       (with-read escrows id { "state" := s }
         (enforce (= s "CREATED") "Invalid state")
-        (update escrows id { "buyer": buyer, "state": "ACCEPTED" }))))
+        (update escrows id { "buyer": accepter, "state": "ACCEPTED" }))))
 
   ;; ------------------------------------------------------------
-  ;; Deposit (seller locks KDA in vault)
+  ;; Deposit (KDA holder locks KDA in vault)
+  ;; SELL: creator = seller (KDA holder) deposits.
+  ;; BUY:  buyer field = seller (KDA holder) deposits.
   ;; Uses transfer-create so the vault is created on first deposit.
   ;; Message must contain "vault-guard" keyset (e.g. keys:[], pred:"keys-all").
   ;; ------------------------------------------------------------
   (defun deposit (id)
     (with-read escrows id
       { "creator" := c
+      , "buyer" := b
       , "amount" := a
-      , "state" := s }
+      , "state" := s
+      , "side" := side }
       (enforce (= s "ACCEPTED") "Invalid state")
-      (enforce (= c (read-msg "sender")) "Only creator")
-      (coin.transfer-create c VAULT_ACCOUNT (read-keyset "vault-guard") a)
-      (update escrows id { "state": "FUNDED" })))
+      (enforce
+        (or (and (= side "SELL") (= c (read-msg "sender")))
+            (and (= side "BUY") (= b (read-msg "sender"))))
+        "Only KDA holder can deposit (SELL=creator, BUY=buyer field)")
+      (let ((depositor (if (= side "SELL") c b)))
+        (coin.transfer-create depositor VAULT_ACCOUNT (read-keyset "vault-guard") a)
+        (update escrows id { "state": "FUNDED" }))))
 
   ;; ------------------------------------------------------------
-  ;; Mark paid (buyer confirms off-chain payment to seller)
+  ;; Mark paid (fiat payer confirms off-chain payment)
+  ;; SELL: buyer field = fiat payer.
+  ;; BUY:  creator = fiat payer.
   ;; ------------------------------------------------------------
   (defun mark-paid (id)
     (with-read escrows id
-      { "buyer" := b
-      , "state" := s }
+      { "creator" := c
+      , "buyer" := b
+      , "state" := s
+      , "side" := side }
       (enforce (= s "FUNDED") "Invalid state")
-      (enforce (= b (read-msg "sender")) "Only buyer")
+      (enforce
+        (or (and (= side "SELL") (= b (read-msg "sender")))
+            (and (= side "BUY") (= c (read-msg "sender"))))
+        "Only fiat payer can mark paid (SELL=buyer field, BUY=creator)")
       (update escrows id { "state": "PAID" })))
 
   ;; ------------------------------------------------------------
-  ;; Release (seller or arbiter sends KDA from vault to buyer)
-  ;; Second call fails: state is COMPLETED, no longer PAID
+  ;; Release (KDA holder or arbiter sends KDA from vault to fiat payer)
+  ;; SELL: release to buyer (b). Only creator (seller) or arbiter.
+  ;; BUY:  release to creator (buyer in trade). Only buyer field (seller) or arbiter.
   ;; ------------------------------------------------------------
   (defun release (id)
     (with-read escrows id
@@ -110,38 +130,46 @@
       , "buyer" := b
       , "arbiter" := a
       , "amount" := amt
-      , "state" := s }
+      , "state" := s
+      , "side" := side }
       (enforce (= s "PAID") "Invalid state")
       (enforce
-        (or (= (read-msg "sender") c)
-            (= (read-msg "sender") a))
-        "Only seller or arbiter can release")
-      (coin.transfer VAULT_ACCOUNT b amt)
+        (or (= (read-msg "sender") a)
+            (and (= side "SELL") (= (read-msg "sender") c))
+            (and (= side "BUY") (= (read-msg "sender") b)))
+        "Only KDA holder or arbiter can release")
+      (if (= side "SELL")
+        (coin.transfer VAULT_ACCOUNT b amt)
+        (coin.transfer VAULT_ACCOUNT c amt))
       (update escrows id { "state": "COMPLETED" })))
 
   ;; ------------------------------------------------------------
-  ;; Refund (arbiter returns funds to seller; offer reset to CREATED for re-use)
-  ;; Any buyer can accept again; seller must deposit again after accept
+  ;; Refund (arbiter returns KDA to depositor)
+  ;; SELL: refund to creator (seller).
+  ;; BUY:  refund to buyer field (seller in trade).
   ;; ------------------------------------------------------------
   (defun refund (id)
     (with-read escrows id
       { "creator" := c
+      , "buyer" := b
       , "arbiter" := a
       , "amount" := amt
-      , "state" := s }
+      , "state" := s
+      , "side" := side }
       (enforce (or (= s "PAID") (= s "FUNDED")) "Invalid state for refund")
       (enforce (= (read-msg "sender") a) "Only arbiter")
-      (coin.transfer VAULT_ACCOUNT c amt)
-      (update escrows id { "buyer": "", "state": "CREATED" })))
+      (let ((refund-to (if (= side "SELL") c b)))
+        (coin.transfer VAULT_ACCOUNT refund-to amt)
+        (update escrows id { "buyer": "", "state": "CREATED" }))))
 
   ;; ------------------------------------------------------------
-  ;; Close offer (seller marks offer closed in CREATED state only)
-  ;; Pact tables do not support row deletion; we set state to CLOSED
+  ;; Close offer (creator marks offer closed in CREATED state only)
+  ;; SELL: creator = seller. BUY: creator = buyer. Only creator can close.
   ;; ------------------------------------------------------------
   (defun close-offer (id)
     (with-read escrows id { "creator" := c, "state" := s }
       (enforce (= s "CREATED") "Can only close in CREATED state")
-      (enforce (= (read-msg "sender") c) "Only seller can close")
+      (enforce (= (read-msg "sender") c) "Only creator can close")
       (update escrows id { "state": "CLOSED" })))
 
   (defun get-escrow (id)

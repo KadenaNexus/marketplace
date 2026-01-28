@@ -309,7 +309,7 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
   const handleDeposit = () => {
     if (!account || !selectedEscrow) return;
     executeAction("Deposit", () => 
-      buildDepositTx(selectedEscrow.offerId, selectedEscrow.amount, account.account, account.publicKey, selectedEscrow.seller)
+      buildDepositTx(selectedEscrow.offerId, selectedEscrow.amount, account.account, account.publicKey)
     );
   };
 
@@ -337,17 +337,17 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
   const handleCloseOffer = () => {
     if (!account || !selectedEscrow) return;
     executeAction("Close Offer", () => 
-      buildCloseOfferTx(selectedEscrow.offerId, account.account, account.publicKey)
+      buildCloseOfferTx(selectedEscrow.offerId, selectedEscrow.creator, account.publicKey)
     );
   };
 
-  const canAccept = selectedEscrow?.state === "CREATED" && account?.account !== selectedEscrow?.seller;
+  const canAccept = selectedEscrow?.state === "CREATED" && account?.account !== selectedEscrow?.creator;
   const canDeposit = selectedEscrow?.state === "ACCEPTED" && account?.account === selectedEscrow?.seller;
   const canMarkPaid = selectedEscrow?.state === "FUNDED" && account?.account === selectedEscrow?.buyer;
   const canRelease = selectedEscrow?.state === "PAID" && 
     (account?.account === selectedEscrow?.seller || account?.account === selectedEscrow?.arbiter);
   const canRefund = (selectedEscrow?.state === "FUNDED" || selectedEscrow?.state === "PAID") && account?.account === selectedEscrow?.arbiter;
-  const canCloseOffer = selectedEscrow?.state === "CREATED" && account?.account === selectedEscrow?.seller;
+  const canCloseOffer = selectedEscrow?.state === "CREATED" && account?.account === selectedEscrow?.creator;
   const canOpenDispute = selectedEscrow?.buyer && 
     (account?.account === selectedEscrow?.buyer || account?.account === selectedEscrow?.seller) &&
     (selectedEscrow?.state === "FUNDED" || selectedEscrow?.state === "PAID") &&

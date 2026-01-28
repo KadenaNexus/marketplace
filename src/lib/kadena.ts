@@ -36,8 +36,12 @@ export type EscrowState =
 
 export interface Escrow {
   offerId: string;
+  /** KDA holder (deposits, receives refund). SELL=creator, BUY=buyer field. */
   seller: string;
+  /** Fiat payer (receives KDA on release). SELL=buyer field, BUY=creator. */
   buyer: string | null;
+  /** Contract creator (SELL=seller, BUY=buyer; only creator can close offer). */
+  creator: string;
   arbiter: string;
   amount: number;
   state: EscrowState;
@@ -173,11 +177,12 @@ export async function sendTestTransfer(account: string, publicKey: string): Prom
 
 /* ---------- CREATE OFFER (Binance P2P style with side, price, limits, payment method) ---------- */
 
+/** Creator is seller for SELL offers, buyer for BUY offers. */
 export function buildCreateOfferTx(
   offerId: string,
   amount: number,
-  sellerAccount: string,
-  sellerPubKey: string,
+  creatorAccount: string,
+  creatorPubKey: string,
   side: "BUY" | "SELL",
   price: number,
   minAmount: number,
@@ -185,15 +190,15 @@ export function buildCreateOfferTx(
   paymentMethod: string, // JSON string array
   fiatCurrency: string
 ) {
-  const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.create-offer "${offerId}" "${sellerAccount}" ${amount.toFixed(8)} "${side}" ${price.toFixed(8)} ${minAmount.toFixed(8)} ${maxAmount.toFixed(8)} "${paymentMethod}" "${fiatCurrency}")`;
+  const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.create-offer "${offerId}" "${creatorAccount}" ${amount.toFixed(8)} "${side}" ${price.toFixed(8)} ${minAmount.toFixed(8)} ${maxAmount.toFixed(8)} "${paymentMethod}" "${fiatCurrency}")`;
 
   return Pact.builder
     .execution(pactCode)
-    .addData("sender", sellerAccount)
-    .addSigner(sellerPubKey, (signFor) => [signFor("coin.GAS")])
+    .addData("sender", creatorAccount)
+    .addSigner(creatorPubKey, (signFor) => [signFor("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
-      senderAccount: sellerAccount,
+      senderAccount: creatorAccount,
       gasLimit: 25000,
       gasPrice: 0.00001,
       ttl: 600,
@@ -225,32 +230,31 @@ export function buildAcceptOfferTx(
 }
 
 /* ---------- DEPOSIT ---------- */
-/* creatorFromEscrow: must match escrow.creator. Contract uses coin.transfer-create so the vault
-   is created on first deposit. vault-guard: keyset with keys:[] so no one can spend from vault
-   except via the contract (release/refund) which use a signed (coin.TRANSFER VAULT_ACCOUNT ...). */
+/* depositorAccount: KDA holder (SELL=creator, BUY=buyer field). Contract uses coin.transfer-create
+   so the vault is created on first deposit. vault-guard: keyset with keys:[] so no one can spend
+   from vault except via the contract (release/refund). */
 
 const VAULT_GUARD = { keys: [] as string[], pred: "keys-all" as const };
 
 export function buildDepositTx(
   offerId: string,
   amount: number,
-  sellerAccount: string,
-  sellerPubKey: string,
-  creatorFromEscrow: string
+  depositorAccount: string,
+  depositorPubKey: string
 ) {
   const amountDecimal = { decimal: amount.toFixed(8) };
   return Pact.builder
     .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.deposit "${offerId}")`)
-    .addData("sender", sellerAccount)
+    .addData("sender", depositorAccount)
     .addData("vault-guard", VAULT_GUARD)
-    .addSigner(sellerPubKey, (s) => [
+    .addSigner(depositorPubKey, (s) => [
       s("coin.GAS"),
-      s("coin.TRANSFER", creatorFromEscrow, "p2p-escrow-vault", amountDecimal),
-      s("coin.TRANSFER-CREATE", creatorFromEscrow, "p2p-escrow-vault", VAULT_GUARD, amountDecimal),
+      s("coin.TRANSFER", depositorAccount, "p2p-escrow-vault", amountDecimal),
+      s("coin.TRANSFER-CREATE", depositorAccount, "p2p-escrow-vault", VAULT_GUARD, amountDecimal),
     ])
     .setMeta({
       chainId: CHAIN_ID,
-      senderAccount: sellerAccount,
+      senderAccount: depositorAccount,
       gasLimit: 25000,
       gasPrice: 0.00001,
       ttl: 600,
@@ -357,20 +361,20 @@ export function buildInitTx(senderAccount: string, senderPubKey: string) {
     .createTransaction();
 }
 
-/* ---------- CLOSE OFFER (seller only, CREATED state) ---------- */
+/* ---------- CLOSE OFFER (creator only, CREATED state; SELL=seller, BUY=buyer) ---------- */
 
 export function buildCloseOfferTx(
   offerId: string,
-  sellerAccount: string,
-  sellerPubKey: string
+  creatorAccount: string,
+  creatorPubKey: string
 ) {
   return Pact.builder
     .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.close-offer "${offerId}")`)
-    .addData("sender", sellerAccount)
-    .addSigner(sellerPubKey, (s) => [s("coin.GAS")])
+    .addData("sender", creatorAccount)
+    .addSigner(creatorPubKey, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
-      senderAccount: sellerAccount,
+      senderAccount: creatorAccount,
       gasLimit: 25000,
       gasPrice: 0.00001,
       ttl: 600,
@@ -425,10 +429,17 @@ export async function readEscrow(offerId: string): Promise<Escrow | null> {
   const paymentMethod = typeof o.paymentMethod === "string" ? o.paymentMethod : "[]";
   const fiatCurrency = typeof o.fiatCurrency === "string" ? o.fiatCurrency : "USD";
 
+  const creator = typeof o.creator === "string" ? o.creator : "";
+  const buyerField = typeof o.buyer === "string" ? o.buyer : null;
+  // SELL: creator=seller (KDA holder), buyer field=fiat payer. BUY: creator=fiat payer, buyer field=seller (KDA holder).
+  const seller = side === "SELL" ? creator : (buyerField ?? "");
+  const buyer = side === "SELL" ? buyerField : (creator || null);
+
   return {
     offerId,
-    seller: o.creator,
-    buyer: (typeof o.buyer === "string" ? o.buyer : null) as string | null,
+    seller,
+    buyer,
+    creator,
     arbiter: o.arbiter,
     amount: amt,
     state: o.state as EscrowState,

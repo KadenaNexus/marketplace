@@ -24,9 +24,9 @@ interface OfferCardProps {
 export function OfferCard({ escrow, profileMap, ratingSummaryMap, onSelect, role, isSelected = false }: OfferCardProps) {
   const { account } = useWallet();
   const [showChat, setShowChat] = useState(false);
-  const isMyOffer = escrow.seller === account?.account;
-  const canAccept = role === "buyer" && escrow.state === "CREATED" && !isMyOffer;
-  const canChat = account && isMyOffer ? escrow.buyer : !isMyOffer;
+  const isMyOffer = escrow.creator === account?.account;
+  const canAccept = escrow.state === "CREATED" && !isMyOffer;
+  const canChat = account && isMyOffer ? !!escrow.buyer : !isMyOffer;
   
   // Parse payment methods
   let paymentMethods: string[] = [];
@@ -144,11 +144,11 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, onSelect, role
       {/* Chat Dialog */}
       <Dialog open={showChat} onOpenChange={setShowChat}>
         <DialogContent className="max-w-2xl h-[600px] p-0">
-          <DialogTitle className="sr-only">Chat with {isMyOffer && escrow.buyer ? "Buyer" : "Seller"}</DialogTitle>
+          <DialogTitle className="sr-only">Chat with {isMyOffer && escrow.buyer ? "Counterparty" : "Creator"}</DialogTitle>
           {canChat && (
             <ChatBox
-              otherWallet={isMyOffer && escrow.buyer ? escrow.buyer : escrow.seller}
-              otherProfile={isMyOffer && escrow.buyer ? profileMap[escrow.buyer] : profileMap[escrow.seller]}
+              otherWallet={isMyOffer && escrow.buyer ? escrow.buyer : escrow.creator}
+              otherProfile={isMyOffer && escrow.buyer ? profileMap[escrow.buyer] : profileMap[escrow.creator]}
               onClose={() => setShowChat(false)}
               className="border-0 h-full"
               contextOfferId={escrow.offerId}
