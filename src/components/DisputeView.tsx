@@ -61,8 +61,8 @@ export function DisputeView({ escrow, onClose }: DisputeViewProps) {
   const isArbiter = account?.account === escrow.arbiter;
   const canViewEvidence = (isBuyer || isSeller || isArbiter) && !!dispute;
   const canSubmitEvidence = (isBuyer || isSeller) && dispute?.status === "OPEN" && !!account;
-  const canSendMessage = (isBuyer || isSeller || isArbiter) && dispute?.status === "OPEN" && !!account;
-  const canCloseDispute = isArbiter && dispute?.status === "OPEN" && !!account;
+  const canSendMessage = (isBuyer || isSeller || isArbiter) && (dispute?.status === "OPEN" || dispute?.status === "UNDER_REVIEW") && !!account;
+  const canCloseDispute = isArbiter && (dispute?.status === "OPEN" || dispute?.status === "UNDER_REVIEW") && !!account;
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
@@ -222,7 +222,7 @@ export function DisputeView({ escrow, onClose }: DisputeViewProps) {
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
-              <Badge variant={dispute.status === "OPEN" ? "destructive" : "secondary"}>
+              <Badge variant={dispute.status === "OPEN" ? "destructive" : dispute.status === "UNDER_REVIEW" ? "secondary" : "outline"}>
                 {dispute.status}
               </Badge>
               {canCloseDispute && (

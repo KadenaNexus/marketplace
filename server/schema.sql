@@ -14,14 +14,15 @@ CREATE TABLE IF NOT EXISTS profiles (
 -- Create unique index on wallet (already primary key, but explicit for clarity)
 CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_wallet ON profiles(wallet);
 
--- Disputes table
+-- Disputes table (OPEN | UNDER_REVIEW | CLOSED)
 CREATE TABLE IF NOT EXISTS disputes (
     id SERIAL PRIMARY KEY,
     offer_id VARCHAR(255) NOT NULL,
     opened_by VARCHAR(10) NOT NULL CHECK (opened_by IN ('buyer', 'seller')),
     reason TEXT,
     opened_by_wallet VARCHAR(255) NOT NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN', 'CLOSED')),
+    status VARCHAR(20) NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN', 'UNDER_REVIEW', 'CLOSED')),
+    triggered_by_timeout BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -29,6 +30,18 @@ CREATE TABLE IF NOT EXISTS disputes (
 -- Indexes for disputes
 CREATE INDEX IF NOT EXISTS idx_disputes_offer_id ON disputes(offer_id);
 CREATE INDEX IF NOT EXISTS idx_disputes_status ON disputes(status);
+
+-- Dispute actions log (admin/arbiter: request_info, under_review, resolved)
+CREATE TABLE IF NOT EXISTS dispute_actions (
+    id SERIAL PRIMARY KEY,
+    offer_id VARCHAR(255) NOT NULL,
+    action_type VARCHAR(30) NOT NULL CHECK (action_type IN ('request_info', 'under_review', 'resolved')),
+    by_wallet VARCHAR(255) NOT NULL,
+    payload JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_dispute_actions_offer_id ON dispute_actions(offer_id);
 
 -- Evidence table
 CREATE TABLE IF NOT EXISTS evidence (

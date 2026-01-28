@@ -948,6 +948,47 @@ app.post("/api/disputes", async (req, res) => {
   }
 });
 
+// GET /api/disputes – list all disputes (for admin/arbiter panel). Query: ?status=OPEN|UNDER_REVIEW|CLOSED
+app.get("/api/disputes", async (req, res) => {
+  const statusFilter = req.query.status?.toString()?.toUpperCase();
+  const validStatuses = ["OPEN", "UNDER_REVIEW", "CLOSED"];
+  const status = statusFilter && validStatuses.includes(statusFilter) ? statusFilter : null;
+  try {
+    let result;
+    try {
+      result = await pool.query(
+        `SELECT id, offer_id, opened_by, reason, opened_by_wallet, status, triggered_by_timeout, created_at, updated_at
+         FROM disputes ${status ? "WHERE status = $1" : ""} ORDER BY created_at DESC`,
+        status ? [status] : []
+      );
+    } catch (e) {
+      if (e.message?.includes("triggered_by_timeout")) {
+        result = await pool.query(
+          `SELECT id, offer_id, opened_by, reason, opened_by_wallet, status, created_at, updated_at
+           FROM disputes ${status ? "WHERE status = $1" : ""} ORDER BY created_at DESC`,
+          status ? [status] : []
+        );
+        result.rows = result.rows.map((r) => ({ ...r, triggered_by_timeout: false }));
+      } else throw e;
+    }
+    const list = result.rows.map((r) => ({
+      id: r.id,
+      offerId: r.offer_id,
+      openedBy: r.opened_by,
+      reason: r.reason || null,
+      openedByWallet: r.opened_by_wallet,
+      status: r.status,
+      triggeredByTimeout: !!r.triggered_by_timeout,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    }));
+    return res.json(list);
+  } catch (err) {
+    console.error("GET /api/disputes", err);
+    return res.status(500).json({ error: err.message || "Database error" });
+  }
+});
+
 // GET /api/disputes/:offerId – get dispute for an offer
 app.get("/api/disputes/:offerId", async (req, res) => {
   const offerId = req.params.offerId?.trim();
@@ -955,10 +996,21 @@ app.get("/api/disputes/:offerId", async (req, res) => {
     return res.status(400).json({ error: "Missing offerId" });
   }
   try {
-    const result = await pool.query(
-      "SELECT id, offer_id, opened_by, reason, opened_by_wallet, status, created_at, updated_at FROM disputes WHERE offer_id = $1",
-      [offerId]
-    );
+    let result;
+    try {
+      result = await pool.query(
+        "SELECT id, offer_id, opened_by, reason, opened_by_wallet, status, triggered_by_timeout, created_at, updated_at FROM disputes WHERE offer_id = $1",
+        [offerId]
+      );
+    } catch (e) {
+      if (e.message?.includes("triggered_by_timeout")) {
+        result = await pool.query(
+          "SELECT id, offer_id, opened_by, reason, opened_by_wallet, status, created_at, updated_at FROM disputes WHERE offer_id = $1",
+          [offerId]
+        );
+        if (result.rows[0]) result.rows[0].triggered_by_timeout = false;
+      } else throw e;
+    }
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "Dispute not found" });
     }
@@ -969,6 +1021,7 @@ app.get("/api/disputes/:offerId", async (req, res) => {
       reason: dispute.reason,
       openedByWallet: dispute.opened_by_wallet,
       status: dispute.status,
+      triggeredByTimeout: !!dispute.triggered_by_timeout,
       createdAt: dispute.created_at,
       updatedAt: dispute.updated_at,
     });
@@ -1182,6 +1235,93 @@ app.get("/api/disputes/:offerId/messages", async (req, res) => {
   }
 });
 
+// GET /api/disputes/:offerId/actions – action log for admin (request_info, under_review, resolved)
+app.get("/api/disputes/:offerId/actions", async (req, res) => {
+  const offerId = req.params.offerId?.trim();
+  if (!offerId) return res.status(400).json({ error: "Missing offerId" });
+  try {
+    const result = await pool.query(
+      "SELECT id, offer_id, action_type, by_wallet, payload, created_at FROM dispute_actions WHERE offer_id = $1 ORDER BY created_at ASC",
+      [offerId]
+    ).catch((e) => {
+      if (e.message?.includes("dispute_actions")) return { rows: [] };
+      throw e;
+    });
+    const actions = result.rows.map((r) => ({
+      id: r.id,
+      offerId: r.offer_id,
+      actionType: r.action_type,
+      byWallet: r.by_wallet,
+      payload: r.payload || null,
+      createdAt: r.created_at,
+    }));
+    return res.json(actions);
+  } catch (err) {
+    console.error("GET /api/disputes/:offerId/actions", err);
+    return res.status(500).json({ error: err.message || "Database error" });
+  }
+});
+
+// PUT /api/disputes/:offerId/review – arbiter marks dispute under review. Body: { wallet, publicKey, signedCmd }
+app.put("/api/disputes/:offerId/review", async (req, res) => {
+  const offerId = req.params.offerId?.trim();
+  const { wallet, publicKey, signedCmd } = req.body ?? {};
+  if (!offerId) return res.status(400).json({ error: "Missing offerId" });
+  if (!wallet || typeof wallet !== "string") return res.status(400).json({ error: "Missing wallet" });
+  const v = verifyProfileAuth(signedCmd, wallet, publicKey);
+  if (!v.ok) return res.status(403).json({ error: "Proof of ownership failed", reason: v.reason });
+  try {
+    const disputeResult = await pool.query("SELECT status FROM disputes WHERE offer_id = $1", [offerId]);
+    if (disputeResult.rows.length === 0) return res.status(404).json({ error: "Dispute not found" });
+    const dispute = disputeResult.rows[0];
+    if (dispute.status !== "OPEN" && dispute.status !== "UNDER_REVIEW") {
+      return res.status(400).json({ error: "Dispute is already closed" });
+    }
+    await pool.query(
+      "UPDATE disputes SET status = $1, updated_at = $2 WHERE offer_id = $3",
+      ["UNDER_REVIEW", new Date().toISOString(), offerId]
+    );
+    await pool.query(
+      "INSERT INTO dispute_actions (offer_id, action_type, by_wallet, payload) VALUES ($1, $2, $3, $4)",
+      [offerId, "under_review", wallet.trim(), JSON.stringify({ at: new Date().toISOString() })]
+    ).catch(() => {});
+    return res.json({ success: true, status: "UNDER_REVIEW" });
+  } catch (err) {
+    console.error("PUT /api/disputes/:offerId/review", err);
+    return res.status(500).json({ error: err.message || "Database error" });
+  }
+});
+
+// POST /api/disputes/:offerId/request-info – arbiter requests more info. Body: { message?, wallet, publicKey, signedCmd }
+app.post("/api/disputes/:offerId/request-info", async (req, res) => {
+  const offerId = req.params.offerId?.trim();
+  const { message, wallet, publicKey, signedCmd } = req.body ?? {};
+  if (!offerId) return res.status(400).json({ error: "Missing offerId" });
+  if (!wallet || typeof wallet !== "string") return res.status(400).json({ error: "Missing wallet" });
+  const v = verifyProfileAuth(signedCmd, wallet, publicKey);
+  if (!v.ok) return res.status(403).json({ error: "Proof of ownership failed", reason: v.reason });
+  try {
+    const disputeResult = await pool.query("SELECT id FROM disputes WHERE offer_id = $1", [offerId]);
+    if (disputeResult.rows.length === 0) return res.status(404).json({ error: "Dispute not found" });
+    const msg = typeof message === "string" ? message.trim().slice(0, 1000) : null;
+    await pool.query(
+      "INSERT INTO dispute_actions (offer_id, action_type, by_wallet, payload) VALUES ($1, $2, $3, $4)",
+      [offerId, "request_info", wallet.trim(), JSON.stringify({ message: msg || "Arbiter requested more information.", at: new Date().toISOString() })]
+    ).catch(() => {});
+    if (msg) {
+      await pool.query(
+        "INSERT INTO dispute_messages (offer_id, from_wallet, message) VALUES ($1, $2, $3)",
+        [offerId, wallet.trim(), `[Arbiter] ${msg}`]
+      );
+      await pool.query("UPDATE disputes SET updated_at = $1 WHERE offer_id = $2", [new Date().toISOString(), offerId]);
+    }
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("POST /api/disputes/:offerId/request-info", err);
+    return res.status(500).json({ error: err.message || "Database error" });
+  }
+});
+
 // PUT /api/disputes/:offerId/close – arbiter closes dispute. Body: { wallet, publicKey, signedCmd }
 app.put("/api/disputes/:offerId/close", async (req, res) => {
   const offerId = req.params.offerId?.trim();
@@ -1202,14 +1342,17 @@ app.put("/api/disputes/:offerId/close", async (req, res) => {
       return res.status(404).json({ error: "Dispute not found" });
     }
     const dispute = disputeResult.rows[0];
-    if (dispute.status !== "OPEN") {
-      return res.status(400).json({ error: "Dispute is not open" });
+    if (dispute.status !== "OPEN" && dispute.status !== "UNDER_REVIEW") {
+      return res.status(400).json({ error: "Dispute is already closed" });
     }
-    // Note: In production, verify wallet is the arbiter from escrow contract
     await pool.query(
       "UPDATE disputes SET status = $1, updated_at = $2 WHERE offer_id = $3",
       ["CLOSED", new Date().toISOString(), offerId]
     );
+    await pool.query(
+      "INSERT INTO dispute_actions (offer_id, action_type, by_wallet, payload) VALUES ($1, $2, $3, $4)",
+      [offerId, "resolved", wallet.trim(), JSON.stringify({ at: new Date().toISOString() })]
+    ).catch(() => {});
     return res.json({ success: true, status: "CLOSED" });
   } catch (err) {
     console.error("PUT /api/disputes/:offerId/close", err);
@@ -1627,6 +1770,55 @@ async function initializeSchema() {
   } catch (err) {
     console.error("  ✗ Failed to create offer_messages table:", err.message);
     // Don't throw - this is a migration, not critical for startup
+  }
+
+  // Admin/Arbiter: dispute_actions table and disputes.triggered_by_timeout
+  try {
+    const tableCheck = await pool.query(`
+      SELECT table_name FROM information_schema.tables WHERE table_name = 'dispute_actions'
+    `);
+    if (tableCheck.rows.length === 0) {
+      console.log("  Creating dispute_actions table...");
+      await pool.query(`
+        CREATE TABLE dispute_actions (
+          id SERIAL PRIMARY KEY,
+          offer_id VARCHAR(255) NOT NULL,
+          action_type VARCHAR(30) NOT NULL CHECK (action_type IN ('request_info', 'under_review', 'resolved')),
+          by_wallet VARCHAR(255) NOT NULL,
+          payload JSONB,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await pool.query("CREATE INDEX idx_dispute_actions_offer_id ON dispute_actions(offer_id)");
+      console.log("  ✓ Created dispute_actions table");
+    } else {
+      console.log("  ⊙ dispute_actions table already exists");
+    }
+  } catch (err) {
+    console.error("  ✗ Failed to create dispute_actions table:", err.message);
+  }
+  try {
+    const colCheck = await pool.query(`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'disputes' AND column_name = 'triggered_by_timeout'
+    `);
+    if (colCheck.rows.length === 0) {
+      console.log("  Adding triggered_by_timeout to disputes...");
+      await pool.query("ALTER TABLE disputes ADD COLUMN triggered_by_timeout BOOLEAN NOT NULL DEFAULT FALSE");
+      console.log("  ✓ Added triggered_by_timeout");
+    }
+    // Allow UNDER_REVIEW in status (drop old check, add new)
+    await pool.query(`
+      ALTER TABLE disputes DROP CONSTRAINT IF EXISTS disputes_status_check
+    `).catch(() => {});
+    await pool.query(`
+      ALTER TABLE disputes ADD CONSTRAINT disputes_status_check
+      CHECK (status IN ('OPEN', 'UNDER_REVIEW', 'CLOSED'))
+    `).catch((e) => {
+      if (!e.message?.includes("already exists")) console.warn("  Note: disputes status constraint:", e.message);
+    });
+  } catch (err) {
+    console.error("  ✗ Disputes migration:", err.message);
   }
   
   console.log("Database schema initialized successfully");

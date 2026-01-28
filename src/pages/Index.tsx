@@ -9,8 +9,8 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useState } from "react";
 import { useWallet } from "@/hooks/useWallet";
 import { fetchProfile } from "@/lib/profileApi";
-import { CHAIN_ID, NETWORK_ID } from "@/lib/kadena";
-import { ShieldCheck, LogOut } from "lucide-react";
+import { CHAIN_ID, NETWORK_ID, listAllEscrows } from "@/lib/kadena";
+import { ShieldCheck, LogOut, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ThemeToggle";
 
@@ -26,6 +26,14 @@ const Index = () => {
     queryFn: () => fetchProfile(account!.account),
     enabled: !!account && isConnected,
   });
+
+  const { data: escrows } = useQuery({
+    queryKey: ["escrows-for-arbiter", account?.account],
+    queryFn: () => listAllEscrows(),
+    enabled: !!account && isConnected,
+    staleTime: 60_000,
+  });
+  const isArbiter = !!account && !!escrows?.some((e) => e.arbiter === account.account);
 
   const handleRoleSelect = (selectedRole: UserRole) => {
     setRole(selectedRole);
@@ -57,6 +65,14 @@ const Index = () => {
           </div>
           <div className="flex items-center gap-4">
             <ThemeToggle />
+            {isArbiter && (
+              <Link to="/admin" title="Admin / Arbiter panel">
+                <Button variant="outline" size="sm" className="gap-1.5">
+                  <Shield className="h-4 w-4" />
+                  Admin
+                </Button>
+              </Link>
+            )}
             {isConnected && account && (
               <Link
                 to={`/u/${encodeURIComponent(account.account)}`}

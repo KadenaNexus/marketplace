@@ -5,9 +5,74 @@ export interface Dispute {
   openedBy: "buyer" | "seller";
   reason: string;
   openedByWallet: string;
-  status: "OPEN" | "RESOLVED" | "CLOSED";
+  status: "OPEN" | "UNDER_REVIEW" | "CLOSED";
+  triggeredByTimeout?: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface DisputeListItem extends Dispute {
+  id: number;
+}
+
+export interface DisputeAction {
+  id: number;
+  offerId: string;
+  actionType: "request_info" | "under_review" | "resolved";
+  byWallet: string;
+  payload: { message?: string; at?: string } | null;
+  createdAt: string;
+}
+
+export async function listDisputes(status?: "OPEN" | "UNDER_REVIEW" | "CLOSED"): Promise<DisputeListItem[]> {
+  const url = new URL(`${API}/api/disputes`, window.location.origin);
+  if (status) url.searchParams.set("status", status);
+  const res = await fetch(url.toString());
+  if (!res.ok) throw new Error(await res.text().catch(() => res.statusText));
+  return res.json();
+}
+
+export async function getDisputeActions(offerId: string): Promise<DisputeAction[]> {
+  const res = await fetch(`${API}/api/disputes/${encodeURIComponent(offerId)}/actions`);
+  if (!res.ok) throw new Error(await res.text().catch(() => res.statusText));
+  return res.json();
+}
+
+export async function setDisputeUnderReview(params: {
+  offerId: string;
+  wallet: string;
+  publicKey: string;
+  signedCmd: unknown;
+}): Promise<{ success: boolean; status: string }> {
+  const res = await fetch(`${API}/api/disputes/${encodeURIComponent(params.offerId)}/review`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(e.reason || e.error || "Failed to set under review");
+  }
+  return res.json();
+}
+
+export async function requestDisputeInfo(params: {
+  offerId: string;
+  message?: string;
+  wallet: string;
+  publicKey: string;
+  signedCmd: unknown;
+}): Promise<{ success: boolean }> {
+  const res = await fetch(`${API}/api/disputes/${encodeURIComponent(params.offerId)}/request-info`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(e.reason || e.error || "Failed to request info");
+  }
+  return res.json();
 }
 
 export interface Evidence {
