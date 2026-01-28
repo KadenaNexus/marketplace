@@ -159,6 +159,7 @@ setInterval(() => {
   }
   for (const wallet of toRemove) {
     onlineUsers.delete(wallet);
+    // Notify all clients that this user is offline
     io.emit("user-offline", { wallet });
     console.log(`User ${wallet} marked offline (timeout or disconnected)`);
   }
@@ -208,8 +209,8 @@ io.on("connection", (socket) => {
       }
     }
 
-    // Notify all clients that this user is online
-    socket.broadcast.emit("user-online", { wallet });
+    // Notify all clients that this user is online (including the user themselves)
+    io.emit("user-online", { wallet });
   });
 
   // Heartbeat to keep connection alive
@@ -242,9 +243,8 @@ io.on("connection", (socket) => {
     if (userData && userData.socketId === socket.id) {
       onlineUsers.delete(wallet);
       console.log(`User logged out: ${wallet}`);
-      socket.broadcast.emit("user-offline", { wallet });
-      // Also emit to the disconnecting client so they see their own status change
-      socket.emit("user-offline", { wallet });
+      // Notify all clients (including the logging out user)
+      io.emit("user-offline", { wallet });
     }
   });
 
@@ -256,7 +256,8 @@ io.on("connection", (socket) => {
       if (userData && userData.socketId === socket.id) {
         onlineUsers.delete(wallet);
         console.log(`User offline (disconnected): ${wallet}`);
-        socket.broadcast.emit("user-offline", { wallet });
+        // Notify all clients (including the disconnecting user)
+        io.emit("user-offline", { wallet });
       }
     }
   });
@@ -1218,9 +1219,6 @@ app.put("/api/disputes/:offerId/close", async (req, res) => {
 
 const PORT = Number(process.env.PORT) || 3001;
 
-// Check if running in Vercel serverless environment
-const isVercel = process.env.VERCEL === "1";
-
 async function initializeSchema() {
   const schemaPath = path.join(__dirname, "schema.sql");
   if (!fs.existsSync(schemaPath)) {
@@ -1440,63 +1438,28 @@ async function start() {
     console.error("3. DATABASE_URL is correct");
     console.error("   - Format: postgresql://user:password@host:port/database");
     console.error("   - Current: " + DATABASE_URL.replace(/:[^:@]+@/, ":****@"));
-    if (!isVercel) {
-      process.exit(1);
-    }
+    process.exit(1);
   }
 
-  if (!isVercel) {
-    httpServer.listen(PORT, () => {
-      console.log(`Profile API listening on http://localhost:${PORT}`);
-      console.log(`WebSocket server ready for online status tracking`);
-    });
-  }
-}
-
-// Initialize database connection for serverless (lazy initialization)
-let dbInitialized = false;
-async function ensureDbInitialized() {
-  if (dbInitialized) return;
-  try {
-    if (!pool) {
-      pool = new Pool({
-        connectionString: DATABASE_URL,
-      });
-    }
-    await pool.query("SELECT 1");
-    if (!dbInitialized) {
-      await initializeSchema();
-      dbInitialized = true;
-    }
-  } catch (err) {
-    console.error("Database initialization error:", err.message);
-  }
-}
-
-// Export ensureDbInitialized for serverless functions
-app.ensureDbInitialized = ensureDbInitialized;
-
-// Graceful shutdown (only for traditional server)
-if (!isVercel) {
-  process.on("SIGINT", async () => {
-    if (pool) {
-      await pool.end();
-    }
-    process.exit(0);
+  httpServer.listen(PORT, () => {
+    console.log(`Profile API listening on http://localhost:${PORT}`);
+    console.log(`WebSocket server ready for online status tracking`);
   });
-
-  process.on("SIGTERM", async () => {
-    if (pool) {
-      await pool.end();
-    }
-    process.exit(0);
-  });
-
-  start();
-} else {
-  // In Vercel, initialize DB on first request
-  ensureDbInitialized();
 }
 
-// Export app for Vercel serverless functions
-export default app;
+// Graceful shutdown
+process.on("SIGINT", async () => {
+  if (pool) {
+    await pool.end();
+  }
+  process.exit(0);
+});
+
+process.on("SIGTERM", async () => {
+  if (pool) {
+    await pool.end();
+  }
+  process.exit(0);
+});
+
+start();

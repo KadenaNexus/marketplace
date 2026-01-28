@@ -117,6 +117,15 @@ export function useOnlineStatus() {
       const wallet = account?.account;
       if (wallet && isConnected) {
         console.log(`Identifying wallet: ${wallet}`);
+        // Immediately update local status to online (optimistic update)
+        onlineStatusMap.set(wallet, true);
+        statusListeners.forEach((listener) => {
+          try {
+            listener(wallet, true);
+          } catch (err) {
+            console.error("Error in status listener:", err);
+          }
+        });
         socket.emit("identify", { wallet });
         prevWalletRef.current = wallet;
       }
@@ -140,6 +149,15 @@ export function useOnlineStatus() {
       const wallet = account?.account;
       if (wallet && isConnected) {
         console.log(`Socket already connected, identifying wallet: ${wallet}`);
+        // Immediately update local status to online (optimistic update)
+        onlineStatusMap.set(wallet, true);
+        statusListeners.forEach((listener) => {
+          try {
+            listener(wallet, true);
+          } catch (err) {
+            console.error("Error in status listener:", err);
+          }
+        });
         socket.emit("identify", { wallet });
         prevWalletRef.current = wallet;
       }
@@ -172,12 +190,30 @@ export function useOnlineStatus() {
     // User logged out (had a wallet, now doesn't)
     if (prevWallet && !currentWallet && isSocketConnected) {
       console.log(`Wallet disconnected, marking offline: ${prevWallet}`);
+      // Immediately update local status to offline
+      onlineStatusMap.set(prevWallet, false);
+      statusListeners.forEach((listener) => {
+        try {
+          listener(prevWallet, false);
+        } catch (err) {
+          console.error("Error in status listener:", err);
+        }
+      });
       socket.emit("logout", { wallet: prevWallet });
       prevWalletRef.current = null;
     }
     // User logged in (didn't have wallet, now does) or switched wallets
     else if (currentWallet && currentWallet !== prevWallet && isSocketConnected) {
       console.log(`Wallet connected, identifying: ${currentWallet}`);
+      // Immediately update local status to online (optimistic update)
+      onlineStatusMap.set(currentWallet, true);
+      statusListeners.forEach((listener) => {
+        try {
+          listener(currentWallet, true);
+        } catch (err) {
+          console.error("Error in status listener:", err);
+        }
+      });
       socket.emit("identify", { wallet: currentWallet });
       prevWalletRef.current = currentWallet;
     }
