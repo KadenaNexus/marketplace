@@ -1217,6 +1217,258 @@ app.put("/api/disputes/:offerId/close", async (req, res) => {
   }
 });
 
+/* ============================================================
+   RATINGS & REPUTATION ENFORCEMENT
+   - Only allow rating after a completed trade (completed_offers).
+   - One rating per party per trade: UNIQUE(offer_id, rater_wallet).
+   - No self-rating: ratedWallet must be the counterparty.
+   - Expose: trade counts, completion counts, dispute counts, rating aggregates
+     (GET summary, bulk summary, and per-trade ratings for UI/integrity).
+============================================================ */
+
+// POST /api/completed-offers – register a completed trade (buyer or seller). Body: { offerId, buyerWallet, sellerWallet, wallet, publicKey, signedCmd }
+app.post("/api/completed-offers", async (req, res) => {
+  const { offerId, buyerWallet, sellerWallet, wallet, publicKey, signedCmd } = req.body ?? {};
+  if (!offerId || typeof offerId !== "string") {
+    return res.status(400).json({ error: "Missing offerId" });
+  }
+  if (!buyerWallet || typeof buyerWallet !== "string" || !sellerWallet || typeof sellerWallet !== "string") {
+    return res.status(400).json({ error: "Missing buyerWallet or sellerWallet" });
+  }
+  if (!wallet || typeof wallet !== "string") {
+    return res.status(400).json({ error: "Missing wallet" });
+  }
+  const v = verifyProfileAuth(signedCmd, wallet, publicKey);
+  if (!v.ok) {
+    return res.status(403).json({ error: "Proof of ownership failed", reason: v.reason });
+  }
+  if (wallet !== buyerWallet && wallet !== sellerWallet) {
+    return res.status(403).json({ error: "Wallet must be buyer or seller for this offer" });
+  }
+  try {
+    await pool.query(
+      `INSERT INTO completed_offers (offer_id, buyer_wallet, seller_wallet)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (offer_id) DO NOTHING`,
+      [offerId.trim(), buyerWallet.trim(), sellerWallet.trim()]
+    );
+    return res.json({ ok: true, offerId: offerId.trim() });
+  } catch (err) {
+    console.error("POST /api/completed-offers", err);
+    return res.status(500).json({ error: err.message || "Database error" });
+  }
+});
+
+// POST /api/ratings – submit a rating (enforcement: completed trade only, one per party, no self-rating)
+app.post("/api/ratings", async (req, res) => {
+  const { offerId, ratedWallet, rating, comment, wallet, publicKey, signedCmd } = req.body ?? {};
+  if (!offerId || typeof offerId !== "string") {
+    return res.status(400).json({ error: "Missing offerId" });
+  }
+  if (!ratedWallet || typeof ratedWallet !== "string") {
+    return res.status(400).json({ error: "Missing ratedWallet" });
+  }
+  const r = Number(rating);
+  if (!Number.isFinite(r) || r < 1 || r > 5) {
+    return res.status(400).json({ error: "rating must be 1–5" });
+  }
+  if (!wallet || typeof wallet !== "string") {
+    return res.status(400).json({ error: "Missing wallet" });
+  }
+  const v = verifyProfileAuth(signedCmd, wallet, publicKey);
+  if (!v.ok) {
+    return res.status(403).json({ error: "Proof of ownership failed", reason: v.reason });
+  }
+  try {
+    // Enforcement: only allow rating after a completed trade
+    const row = await pool.query(
+      "SELECT buyer_wallet, seller_wallet FROM completed_offers WHERE offer_id = $1",
+      [offerId.trim()]
+    );
+    if (row.rows.length === 0) {
+      return res.status(400).json({ error: "Offer not found as completed; complete the trade first" });
+    }
+    const { buyer_wallet, seller_wallet } = row.rows[0];
+    if (wallet !== buyer_wallet && wallet !== seller_wallet) {
+      return res.status(403).json({ error: "Only buyer or seller can rate this trade" });
+    }
+    if (ratedWallet !== buyer_wallet && ratedWallet !== seller_wallet) {
+      return res.status(400).json({ error: "ratedWallet must be the other party (buyer or seller)" });
+    }
+    // Enforcement: no self-rating
+    if (ratedWallet === wallet) {
+      return res.status(400).json({ error: "Cannot rate yourself" });
+    }
+    const commentTrim = typeof comment === "string" ? comment.trim().slice(0, 500) : null;
+    await pool.query(
+      `INSERT INTO ratings (offer_id, rater_wallet, rated_wallet, rating, comment)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (offer_id, rater_wallet) DO UPDATE SET rating = $4, comment = $5, created_at = CURRENT_TIMESTAMP`,
+      [offerId.trim(), wallet.trim(), ratedWallet.trim(), Math.round(r), commentTrim]
+    );
+    return res.json({ ok: true, offerId: offerId.trim() });
+  } catch (err) {
+    console.error("POST /api/ratings", err);
+    return res.status(500).json({ error: err.message || "Database error" });
+  }
+});
+
+// GET /api/ratings/trade/:offerId – per-trade ratings for UI/integrity (trade counts, who rated whom)
+app.get("/api/ratings/trade/:offerId", async (req, res) => {
+  const offerId = req.params.offerId?.trim();
+  if (!offerId) {
+    return res.status(400).json({ error: "Missing offerId" });
+  }
+  try {
+    const completed = await pool.query(
+      "SELECT offer_id, buyer_wallet, seller_wallet, completed_at FROM completed_offers WHERE offer_id = $1",
+      [offerId]
+    );
+    const trade = completed.rows[0] || null;
+    const ratingsResult = await pool.query(
+      "SELECT rater_wallet, rated_wallet, rating, comment, created_at FROM ratings WHERE offer_id = $1 ORDER BY created_at",
+      [offerId]
+    );
+    const ratings = ratingsResult.rows.map((r) => ({
+      raterWallet: r.rater_wallet,
+      ratedWallet: r.rated_wallet,
+      rating: r.rating,
+      comment: r.comment || null,
+      createdAt: r.created_at,
+    }));
+    return res.json({
+      offerId,
+      trade: trade ? { buyerWallet: trade.buyer_wallet, sellerWallet: trade.seller_wallet, completedAt: trade.completed_at } : null,
+      ratings,
+      ratingCount: ratings.length,
+    });
+  } catch (err) {
+    console.error("GET /api/ratings/trade/:offerId", err);
+    return res.status(500).json({ error: err.message || "Database error" });
+  }
+});
+
+// GET /api/ratings/summary/:wallet – UI/hybrid: trade counts, completion counts, dispute counts, rating aggregates
+app.get("/api/ratings/summary/:wallet", async (req, res) => {
+  const wallet = req.params.wallet?.trim();
+  if (!wallet) {
+    return res.status(400).json({ error: "Missing wallet" });
+  }
+  try {
+    const completed = await pool.query(
+      "SELECT COUNT(*) AS cnt FROM completed_offers WHERE buyer_wallet = $1 OR seller_wallet = $1",
+      [wallet]
+    );
+    const completedTrades = parseInt(completed.rows[0]?.cnt ?? "0", 10);
+
+    const disputed = await pool.query(
+      `SELECT COUNT(DISTINCT d.id) AS cnt
+       FROM disputes d
+       INNER JOIN completed_offers c ON c.offer_id = d.offer_id
+       WHERE c.buyer_wallet = $1 OR c.seller_wallet = $1`,
+      [wallet]
+    );
+    const disputedCount = parseInt(disputed.rows[0]?.cnt ?? "0", 10);
+
+    // Completion rate: share of completed trades that had no dispute
+    const completionRate = completedTrades > 0
+      ? Math.max(0, (completedTrades - disputedCount) / completedTrades)
+      : 1;
+
+    const agg = await pool.query(
+      "SELECT COALESCE(AVG(rating), 0) AS avg_rating, COUNT(*) AS cnt FROM ratings WHERE rated_wallet = $1",
+      [wallet]
+    );
+    const averageRating = parseFloat(agg.rows[0]?.avg_rating ?? "0");
+    const totalRatings = parseInt(agg.rows[0]?.cnt ?? "0", 10);
+
+    return res.json({
+      averageRating: Math.round(averageRating * 10) / 10,
+      totalRatings,
+      completedTrades,
+      disputedCount,
+      completionRate: Math.round(completionRate * 100) / 100,
+    });
+  } catch (err) {
+    console.error("GET /api/ratings/summary/:wallet", err);
+    return res.status(500).json({ error: err.message || "Database error" });
+  }
+});
+
+// POST /api/ratings/summary/bulk – body: { wallets: string[] }; returns { [wallet]: { averageRating, totalRatings, completedTrades, disputedCount, completionRate } }
+app.post("/api/ratings/summary/bulk", async (req, res) => {
+  const { wallets } = req.body ?? {};
+  if (!Array.isArray(wallets)) {
+    return res.status(400).json({ error: "wallets must be an array" });
+  }
+  const list = wallets.filter((w) => typeof w === "string").map((w) => w.trim()).filter(Boolean);
+  if (list.length === 0) return res.json({});
+  try {
+    const out = {};
+    for (const w of list) {
+      const completed = await pool.query(
+        "SELECT COUNT(*) AS cnt FROM completed_offers WHERE buyer_wallet = $1 OR seller_wallet = $1",
+        [w]
+      );
+      const completedTrades = parseInt(completed.rows[0]?.cnt ?? "0", 10);
+      const disputed = await pool.query(
+        `SELECT COUNT(DISTINCT d.id) AS cnt
+         FROM disputes d
+         INNER JOIN completed_offers c ON c.offer_id = d.offer_id
+         WHERE c.buyer_wallet = $1 OR c.seller_wallet = $1`,
+        [w]
+      );
+      const disputedCount = parseInt(disputed.rows[0]?.cnt ?? "0", 10);
+      const completionRate = completedTrades > 0
+        ? Math.max(0, (completedTrades - disputedCount) / completedTrades)
+        : 1;
+      const agg = await pool.query(
+        "SELECT COALESCE(AVG(rating), 0) AS avg_rating, COUNT(*) AS cnt FROM ratings WHERE rated_wallet = $1",
+        [w]
+      );
+      const averageRating = parseFloat(agg.rows[0]?.avg_rating ?? "0");
+      const totalRatings = parseInt(agg.rows[0]?.cnt ?? "0", 10);
+      out[w] = {
+        averageRating: Math.round(averageRating * 10) / 10,
+        totalRatings,
+        completedTrades,
+        disputedCount,
+        completionRate: Math.round(completionRate * 100) / 100,
+      };
+    }
+    return res.json(out);
+  } catch (err) {
+    console.error("POST /api/ratings/summary/bulk", err);
+    return res.status(500).json({ error: err.message || "Database error" });
+  }
+});
+
+// GET /api/ratings/check – query: offerId, wallet – returns { canRate: boolean, alreadyRated: boolean }
+app.get("/api/ratings/check", async (req, res) => {
+  const offerId = req.query.offerId?.trim();
+  const wallet = req.query.wallet?.trim();
+  if (!offerId || !wallet) {
+    return res.status(400).json({ error: "Missing offerId or wallet" });
+  }
+  try {
+    const completed = await pool.query(
+      "SELECT 1 FROM completed_offers WHERE offer_id = $1 AND (buyer_wallet = $2 OR seller_wallet = $2)",
+      [offerId, wallet]
+    );
+    if (completed.rows.length === 0) {
+      return res.json({ canRate: false, alreadyRated: false });
+    }
+    const existing = await pool.query(
+      "SELECT 1 FROM ratings WHERE offer_id = $1 AND rater_wallet = $2",
+      [offerId, wallet]
+    );
+    return res.json({ canRate: true, alreadyRated: existing.rows.length > 0 });
+  } catch (err) {
+    console.error("GET /api/ratings/check", err);
+    return res.status(500).json({ error: err.message || "Database error" });
+  }
+});
+
 const PORT = Number(process.env.PORT) || 3001;
 
 async function initializeSchema() {

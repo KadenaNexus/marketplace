@@ -4,8 +4,10 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ProfileEdit } from "@/components/ProfileEdit";
+import { RatingDisplay } from "@/components/RatingDisplay";
 import { useWallet } from "@/hooks/useWallet";
 import { fetchProfile } from "@/lib/profileApi";
+import { fetchRatingSummary } from "@/lib/ratingApi";
 import { useState } from "react";
 import { Pencil, ArrowLeft, Loader2 } from "lucide-react";
 
@@ -22,6 +24,12 @@ export default function Profile() {
   const { data: profile, isLoading, refetch } = useQuery({
     queryKey: ["profile", wallet],
     queryFn: () => fetchProfile(wallet!),
+    enabled: !!wallet,
+  });
+
+  const { data: ratingSummary } = useQuery({
+    queryKey: ["rating-summary", wallet],
+    queryFn: () => fetchRatingSummary(wallet!),
     enabled: !!wallet,
   });
 
@@ -69,6 +77,9 @@ export default function Profile() {
               <div className="flex-1 min-w-0">
                 <CardTitle className="text-xl truncate">{displayName}</CardTitle>
                 <CardDescription className="font-mono text-xs break-all">{wallet}</CardDescription>
+                <div className="mt-3 pt-3 border-t border-border">
+                  <RatingDisplay summary={ratingSummary} variant="full" />
+                </div>
                 {isOwn && (
                   <Button
                     variant="outline"

@@ -101,6 +101,41 @@ CREATE INDEX IF NOT EXISTS idx_offer_messages_to_wallet ON offer_messages(to_wal
 CREATE INDEX IF NOT EXISTS idx_offer_messages_created_at ON offer_messages(created_at);
 CREATE INDEX IF NOT EXISTS idx_offer_messages_conversation ON offer_messages(offer_id, from_wallet, to_wallet);
 
+-- =============================================================================
+-- RATINGS & REPUTATION (integrity rules)
+-- 1. Only allow rating after a completed trade (row must exist in completed_offers).
+-- 2. One rating per party per trade: UNIQUE(offer_id, rater_wallet).
+-- 3. No self-rating: enforced in API (rated_wallet must be the counterparty).
+-- 4. UI/hybrid outputs: summary API exposes trade counts, completion counts,
+--    dispute counts, and rating aggregates; per-trade endpoint exposes ratings.
+-- =============================================================================
+
+-- Completed offers (only these trades can be rated)
+CREATE TABLE IF NOT EXISTS completed_offers (
+    offer_id VARCHAR(255) PRIMARY KEY,
+    buyer_wallet VARCHAR(255) NOT NULL,
+    seller_wallet VARCHAR(255) NOT NULL,
+    completed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_completed_offers_buyer ON completed_offers(buyer_wallet);
+CREATE INDEX IF NOT EXISTS idx_completed_offers_seller ON completed_offers(seller_wallet);
+
+-- Ratings: one per (trade/offer_id, rater); rated_wallet = counterparty (no self-rating in API)
+CREATE TABLE IF NOT EXISTS ratings (
+    id SERIAL PRIMARY KEY,
+    offer_id VARCHAR(255) NOT NULL,
+    rater_wallet VARCHAR(255) NOT NULL,
+    rated_wallet VARCHAR(255) NOT NULL,
+    rating SMALLINT NOT NULL CHECK (rating >= 1 AND rating <= 5),
+    comment VARCHAR(500),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(offer_id, rater_wallet)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ratings_rated_wallet ON ratings(rated_wallet);
+CREATE INDEX IF NOT EXISTS idx_ratings_offer_id ON ratings(offer_id);
+
 -- Add last_seen column to profiles if it doesn't exist (for existing databases)
 DO $$ 
 BEGIN

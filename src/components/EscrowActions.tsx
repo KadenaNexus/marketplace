@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,7 +14,10 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useWallet } from "@/hooks/useWallet";
 import { fetchProfilesBulk } from "@/lib/profileApi";
+import { fetchRatingSummariesBulk, registerCompletion, checkCanRate, fetchTradeRatings } from "@/lib/ratingApi";
 import { initializeOnlineStatus } from "@/hooks/useOnlineStatus";
+import { RatingDisplay } from "./RatingDisplay";
+import { RatingSubmitDialog } from "./RatingSubmitDialog";
 import {
   listAllEscrows,
   buildAcceptOfferTx,
@@ -23,6 +26,7 @@ import {
   buildReleaseTx,
   buildRefundTx,
   buildCloseOfferTx,
+  buildProfileAuthTx,
   signTransaction,
   submitTransaction,
   pollTransaction,
@@ -43,6 +47,7 @@ import {
   AlertTriangle,
   FileText,
   MessageCircle,
+  Star,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -61,6 +66,7 @@ interface EscrowActionsProps {
 
 export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", viewMode = "all" }: EscrowActionsProps) {
   const { account, isConnected } = useWallet();
+  const queryClient = useQueryClient();
   const [allEscrows, setAllEscrows] = useState<Escrow[]>([]);
   const [selectedOfferId, setSelectedOfferId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -68,6 +74,8 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
   const [transactions, setTransactions] = useState<TransactionResult[]>([]);
   const [showDisputeDialog, setShowDisputeDialog] = useState(false);
   const [disputeTab, setDisputeTab] = useState("details");
+  const [showRatingDialog, setShowRatingDialog] = useState(false);
+  const [registeringCompletion, setRegisteringCompletion] = useState(false);
 
   // Filter escrows based on filters and role
   const escrows = useMemo(() => {
@@ -190,6 +198,30 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
     queryKey: ["dispute-check", selectedEscrow?.offerId],
     queryFn: () => selectedEscrow ? getDispute(selectedEscrow.offerId) : null,
     enabled: !!selectedEscrow,
+  });
+
+  // Rating summary for all wallets (offer cards + detail)
+  const { data: ratingSummaryMap = {} } = useQuery({
+    queryKey: ["ratings-summary-bulk", allWallets.join(",")],
+    queryFn: () => fetchRatingSummariesBulk(allWallets),
+    enabled: allWallets.length > 0,
+  });
+
+  // Can current user rate the selected COMPLETED trade?
+  const { data: ratingCheck, refetch: refetchRatingCheck } = useQuery({
+    queryKey: ["rating-check", selectedEscrow?.offerId, account?.account],
+    queryFn: () =>
+      selectedEscrow && account
+        ? checkCanRate(selectedEscrow.offerId, account.account)
+        : { canRate: false, alreadyRated: false },
+    enabled: !!selectedEscrow && !!account && selectedEscrow.state === "COMPLETED",
+  });
+
+  // Per-trade ratings for COMPLETED escrow (UI/integrity: who rated whom)
+  const { data: tradeRatings } = useQuery({
+    queryKey: ["trade-ratings", selectedEscrow?.offerId],
+    queryFn: () => (selectedEscrow ? fetchTradeRatings(selectedEscrow.offerId) : null),
+    enabled: !!selectedEscrow && selectedEscrow.state === "COMPLETED",
   });
 
   const loadAll = async () => {
@@ -323,6 +355,43 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
 
   const isTerminal = selectedEscrow?.state === "COMPLETED" || selectedEscrow?.state === "REFUNDED" || selectedEscrow?.state === "CLOSED";
 
+  const isCompletedTrade = selectedEscrow?.state === "COMPLETED" && selectedEscrow?.buyer;
+  const isPartyToTrade = isCompletedTrade && account && (account.account === selectedEscrow.buyer || account.account === selectedEscrow.seller);
+  // Show "Register completion to rate" when we're a party, not already rated, and (check still loading OR backend says can't rate yet)
+  const needsRegisterCompletion = isPartyToTrade && !ratingCheck?.alreadyRated && (ratingCheck === undefined || !ratingCheck.canRate);
+  const canRateTrade = isPartyToTrade && ratingCheck?.canRate === true && !ratingCheck?.alreadyRated;
+  const alreadyRated = isPartyToTrade && ratingCheck?.alreadyRated === true;
+  const counterpartyWallet = isCompletedTrade && account
+    ? (account.account === selectedEscrow.buyer ? selectedEscrow.seller : selectedEscrow.buyer)
+    : null;
+
+  const handleRegisterCompletion = async () => {
+    if (!account || !selectedEscrow?.buyer) return;
+    setRegisteringCompletion(true);
+    try {
+      const tx = buildProfileAuthTx(account.account, account.publicKey);
+      let signedCmd = await signTransaction(tx);
+      if (signedCmd?.signedCmd && !signedCmd.cmd) signedCmd = signedCmd.signedCmd;
+      const sigs = Array.isArray(signedCmd?.sigs) ? signedCmd.sigs : [];
+      if (sigs[0] && !sigs[0].pubKey) sigs[0] = { ...sigs[0], pubKey: account.publicKey };
+      if (sigs[0]?.signature && !sigs[0].sig) sigs[0] = { ...sigs[0], sig: sigs[0].signature };
+      await registerCompletion({
+        offerId: selectedEscrow.offerId,
+        buyerWallet: selectedEscrow.buyer,
+        sellerWallet: selectedEscrow.seller,
+        wallet: account.account,
+        publicKey: account.publicKey,
+        signedCmd,
+      });
+      toast.success("Trade registered");
+      refetchRatingCheck();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to register");
+    } finally {
+      setRegisteringCompletion(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* All Offers List */}
@@ -374,6 +443,7 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
                   key={e.offerId}
                   escrow={e}
                   profileMap={profileMap}
+                  ratingSummaryMap={ratingSummaryMap}
                   onSelect={setSelectedOfferId}
                   role={role}
                   isSelected={selectedOfferId === e.offerId}
@@ -462,11 +532,15 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
               <div>
                 <Label className="text-muted-foreground">Seller</Label>
                 <ProfileSummaryView wallet={selectedEscrow.seller} summary={profileMap[selectedEscrow.seller]} />
+                <RatingDisplay summary={ratingSummaryMap[selectedEscrow.seller]} variant="full" className="mt-2" />
               </div>
               <div>
                 <Label className="text-muted-foreground">Buyer</Label>
                 {selectedEscrow.buyer ? (
-                  <ProfileSummaryView wallet={selectedEscrow.buyer} summary={profileMap[selectedEscrow.buyer]} />
+                  <>
+                    <ProfileSummaryView wallet={selectedEscrow.buyer} summary={profileMap[selectedEscrow.buyer]} />
+                    <RatingDisplay summary={ratingSummaryMap[selectedEscrow.buyer]} variant="full" className="mt-2" />
+                  </>
                 ) : (
                   <span className="text-muted-foreground italic text-sm">Not yet accepted</span>
                 )}
@@ -588,8 +662,62 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
             )}
 
             {isTerminal && (
-              <div className="pt-4 border-t border-border text-center text-muted-foreground">
-                This escrow has been finalized.
+              <div className="pt-4 border-t border-border space-y-3">
+                <p className="text-center text-muted-foreground">This escrow has been finalized.</p>
+                {isPartyToTrade && (
+                  <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2">
+                    <p className="text-sm font-medium text-center">Leave a rating for this trade</p>
+                    {needsRegisterCompletion && (
+                      <div className="flex flex-col items-center gap-2">
+                        <p className="text-xs text-muted-foreground text-center">
+                          First register this completed trade (one-time, sign with your wallet). Then you can rate the other party.
+                        </p>
+                        <Button
+                          variant="default"
+                          size="sm"
+                          onClick={handleRegisterCompletion}
+                          disabled={registeringCompletion}
+                          className="gap-2"
+                        >
+                          {registeringCompletion ? <Loader2 className="h-4 w-4 animate-spin" /> : <Star className="h-4 w-4" />}
+                          Register completion to rate
+                        </Button>
+                      </div>
+                    )}
+                    {canRateTrade && counterpartyWallet && (
+                      <div className="flex justify-center">
+                        <Button
+                          variant="default"
+                          size="sm"
+                          onClick={() => setShowRatingDialog(true)}
+                          className="gap-2"
+                        >
+                          <Star className="h-4 w-4" />
+                          Rate this trade
+                        </Button>
+                      </div>
+                    )}
+                    {alreadyRated && (
+                      <p className="text-center text-sm text-muted-foreground">You already rated this trade.</p>
+                    )}
+                  </div>
+                )}
+                {tradeRatings && tradeRatings.ratingCount > 0 && (
+                  <div className="text-sm border rounded-md p-3 bg-muted/50">
+                    <p className="font-medium text-muted-foreground mb-2">Ratings for this trade</p>
+                    <ul className="space-y-1">
+                      {tradeRatings.ratings.map((r, i) => (
+                        <li key={i} className="flex items-center gap-2">
+                          <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
+                          <span>
+                            {profileMap[r.raterWallet]?.username || `${r.raterWallet.slice(0, 8)}…`} → {r.rating}/5
+                            {r.comment && <span className="text-muted-foreground">: &quot;{r.comment.slice(0, 60)}{r.comment.length > 60 ? "…" : ""}&quot;</span>}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             )}
 
@@ -643,6 +771,22 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
           escrow={selectedEscrow}
           onSuccess={() => {
             setDisputeTab("dispute");
+            loadAll();
+          }}
+        />
+      )}
+
+      {/* Rate trade dialog (only for completed trades) */}
+      {counterpartyWallet && selectedEscrow && (
+        <RatingSubmitDialog
+          open={showRatingDialog}
+          onOpenChange={setShowRatingDialog}
+          offerId={selectedEscrow.offerId}
+          ratedWallet={counterpartyWallet}
+          onSuccess={() => {
+            refetchRatingCheck();
+            queryClient.invalidateQueries({ queryKey: ["ratings-summary-bulk"] });
+            queryClient.invalidateQueries({ queryKey: ["trade-ratings", selectedEscrow?.offerId] });
             loadAll();
           }}
         />

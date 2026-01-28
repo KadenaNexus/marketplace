@@ -3,7 +3,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { EscrowStatus } from "./EscrowStatus";
 import { ProfileSummaryView } from "./ProfileSummary";
+import { RatingDisplay } from "./RatingDisplay";
 import type { Escrow } from "@/lib/kadena";
+import type { RatingSummary } from "@/lib/ratingApi";
 import { ShoppingCart, Store, ArrowRight, CreditCard, MessageCircle } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { useState } from "react";
@@ -13,12 +15,13 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 interface OfferCardProps {
   escrow: Escrow;
   profileMap: Record<string, { username: string | null; avatar: string | null; wallet: string }>;
+  ratingSummaryMap?: Record<string, RatingSummary>;
   onSelect: (offerId: string) => void;
   role: "buyer" | "seller";
   isSelected?: boolean;
 }
 
-export function OfferCard({ escrow, profileMap, onSelect, role, isSelected = false }: OfferCardProps) {
+export function OfferCard({ escrow, profileMap, ratingSummaryMap, onSelect, role, isSelected = false }: OfferCardProps) {
   const { account } = useWallet();
   const [showChat, setShowChat] = useState(false);
   const isMyOffer = escrow.seller === account?.account;
@@ -97,14 +100,21 @@ export function OfferCard({ escrow, profileMap, onSelect, role, isSelected = fal
 
           {/* Seller/Buyer Info */}
           <div className="flex items-center justify-between pt-2 border-t">
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-muted-foreground">
-                {escrow.side === "SELL" ? "Seller:" : "Buyer:"}
-              </span>
-              <ProfileSummaryView 
-                wallet={escrow.seller} 
-                summary={profileMap[escrow.seller]} 
-                size="sm"
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">
+                  {escrow.side === "SELL" ? "Seller:" : "Buyer:"}
+                </span>
+                <ProfileSummaryView 
+                  wallet={escrow.seller} 
+                  summary={profileMap[escrow.seller]} 
+                  size="sm"
+                />
+              </div>
+              <RatingDisplay
+                summary={ratingSummaryMap?.[escrow.seller]}
+                variant="compact"
+                className="text-xs"
               />
             </div>
             <div className="flex items-center gap-2">
