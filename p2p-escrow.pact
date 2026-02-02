@@ -74,8 +74,9 @@
   ;; ------------------------------------------------------------
   (defun accept-offer (id)
     (let ((accepter (read-msg "sender")))
-      (with-read escrows id { "state" := s }
+      (with-read escrows id { "creator" := c, "state" := s }
         (enforce (= s "CREATED") "Invalid state")
+        (enforce (!= accepter c) "Cannot accept your own offer")
         (update escrows id { "buyer": accepter, "state": "ACCEPTED" }))))
 
   ;; ------------------------------------------------------------
@@ -160,7 +161,7 @@
       (enforce (= (read-msg "sender") a) "Only arbiter")
       (let ((refund-to (if (= side "SELL") c b)))
         (coin.transfer VAULT_ACCOUNT refund-to amt)
-        (update escrows id { "buyer": "", "state": "CREATED" }))))
+        (update escrows id { "buyer": "", "state": "REFUNDED" }))))
 
   ;; ------------------------------------------------------------
   ;; Close offer (creator marks offer closed in CREATED state only)
