@@ -99,13 +99,20 @@ VITE_CHAINWEB_PROXY_TARGET=https://chainweb.chaddex.com npm run dev
 
 ## Contract Deployment
 
-The Pact module `free.p2p-escrow` requires the `escrows` table to exist. Run **in the same deployment transaction** as the module (signed by the deployer):
+The Pact module `free.p2p-escrow` is production-ready with:
 
-```pact
-(create-table free.p2p-escrow.escrows)
-```
+- **Strict state machine** — CREATED → ACCEPTED → FUNDED → PAID → COMPLETED (or REFUNDED/CLOSED/DISPUTED via timeouts or arbiter).
+- **Timed transitions** — T1/T2/T3 (default 10 min each); timeouts auto-close, refund, or escalate to DISPUTED.
+- **Events** — Every state change is logged (offerId, eventType, fromState, toState, actor, blockTime) for UI activity and audit.
+- **Completed trades** — On release, the contract writes to `completed-trades`; rating enforcement can use `get-completed-trade` / `list-completed-offer-ids`.
+- **Admin** — `init-config` and `set-config(arbiter, t1, t2, t3)` (GOVERNANCE) to set arbiter and timeout seconds.
 
-The dApp **Initialize** action will fail with “Module admin is necessary” because only the deployer can create the table. See **DEPLOY.md** (if present) or your deployment tooling for full steps.
+After deploying the module, run **one** init transaction (signed by the deployer with GOVERNANCE):
+
+- **Minimal:** `buildInitTx` — creates only `escrows`.
+- **Full (recommended):** `buildInitAllTx` — creates `escrows`, `events`, `completed-trades`, `config`, `offer-event-ids` and runs `init-config`.
+
+The dApp **Initialize** action may fail with “Module admin is necessary” because only the deployer can create tables. Use your deployment tooling or sign `buildInitAllTx` with the deployer key.
 
 ## Configuration
 

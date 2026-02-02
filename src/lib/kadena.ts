@@ -73,6 +73,25 @@ export interface WalletAccount {
   chainId: string;
 }
 
+/** On-chain event for UI / logs (state transitions). */
+export interface EscrowEvent {
+  txHash: string;
+  offerId: string;
+  eventType: string;
+  fromState: string;
+  toState: string;
+  actor: string;
+  blockTime: string;
+}
+
+/** Completed trade (rating enforcement: only these can be rated). */
+export interface CompletedTrade {
+  offerId: string;
+  buyer: string;
+  seller: string;
+  completedAt: string;
+}
+
 /* ============================================================
    WALLET
 ============================================================ */
@@ -353,7 +372,7 @@ export function buildRefundTx(
     .createTransaction();
 }
 
-/* ---------- INIT (create-table; usually fails with "Module admin" from dApp) ---------- */
+/* ---------- INIT (create-table; usually in DEPLOYMENT tx) ---------- */
 /* Kadena requires create-table in the DEPLOYMENT tx, signed by the deployer. See DEPLOY.md. */
 
 export function buildInitTx(senderAccount: string, senderPubKey: string) {
@@ -366,6 +385,32 @@ export function buildInitTx(senderAccount: string, senderPubKey: string) {
       chainId: CHAIN_ID,
       senderAccount,
       gasLimit: 25000,
+      gasPrice: 0.00001,
+      ttl: 600,
+    })
+    .setNetworkId(NETWORK_ID)
+    .createTransaction();
+}
+
+/** Initialize all tables (escrows, events, completed-trades, config, offer-event-ids) and run init-config. Run once after deploy. */
+export function buildInitAllTx(senderAccount: string, senderPubKey: string) {
+  const govCap = `${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.GOVERNANCE`;
+  const ns = CONTRACT_NAMESPACE;
+  const mod = CONTRACT_MODULE;
+  const code = `(with-capability (${govCap})
+    (create-table ${ns}.${mod}.escrows)
+    (create-table ${ns}.${mod}.events)
+    (create-table ${ns}.${mod}.completed-trades)
+    (create-table ${ns}.${mod}.config)
+    (create-table ${ns}.${mod}.offer-event-ids)
+    (${ns}.${mod}.init-config))`;
+  return Pact.builder
+    .execution(code)
+    .addSigner(senderPubKey, (s) => [s("coin.GAS"), s(govCap)])
+    .setMeta({
+      chainId: CHAIN_ID,
+      senderAccount,
+      gasLimit: 60000,
       gasPrice: 0.00001,
       ttl: 600,
     })
@@ -466,6 +511,49 @@ export function buildTimeoutPaidDisputeTx(
 /** Explorer URL for a request key (mainnet). */
 export function getTxExplorerUrl(requestKey: string): string {
   return `https://explorer.chainweb.com/mainnet/tx/${requestKey}`;
+}
+
+/* ---------- ADMIN: init config (GOVERNANCE; run once after deploy) ---------- */
+export function buildInitConfigTx(senderAccount: string, senderPubKey: string) {
+  const govCap = `${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.GOVERNANCE`;
+  const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.init-config)`;
+  return Pact.builder
+    .execution(pactCode)
+    .addSigner(senderPubKey, (s) => [s("coin.GAS"), s(govCap)])
+    .setMeta({
+      chainId: CHAIN_ID,
+      senderAccount,
+      gasLimit: 25000,
+      gasPrice: 0.00001,
+      ttl: 600,
+    })
+    .setNetworkId(NETWORK_ID)
+    .createTransaction();
+}
+
+/* ---------- ADMIN: set config (arbiter, T1, T2, T3 in seconds; GOVERNANCE) ---------- */
+export function buildSetConfigTx(
+  arbiter: string,
+  t1Seconds: number,
+  t2Seconds: number,
+  t3Seconds: number,
+  adminAccount: string,
+  adminPubKey: string
+) {
+  const govCap = `${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.GOVERNANCE`;
+  const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.set-config "${arbiter}" ${t1Seconds} ${t2Seconds} ${t3Seconds})`;
+  return Pact.builder
+    .execution(pactCode)
+    .addSigner(adminPubKey, (s) => [s("coin.GAS"), s(govCap)])
+    .setMeta({
+      chainId: CHAIN_ID,
+      senderAccount: adminAccount,
+      gasLimit: 25000,
+      gasPrice: 0.00001,
+      ttl: 600,
+    })
+    .setNetworkId(NETWORK_ID)
+    .createTransaction();
 }
 
 /* ============================================================
@@ -600,6 +688,107 @@ export async function listAllEscrows(): Promise<Escrow[]> {
   const ids = await listEscrowIds();
   const results = await Promise.all(ids.map((id) => readEscrow(id)));
   return results.filter((e): e is Escrow => e != null);
+}
+
+/** Returns event tx-hash IDs for an offer (newest first). For UI / logs. */
+export async function getEventIdsForOffer(offerId: string): Promise<string[]> {
+  const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.get-event-ids-for-offer "${offerId}")`;
+  const command = Pact.builder
+    .execution(pactCode)
+    .setMeta({ chainId: CHAIN_ID, senderAccount: "free", gasLimit: 25000, gasPrice: 0.00001, ttl: 600 })
+    .setNetworkId(NETWORK_ID)
+    .createTransaction();
+  const result = await kadenaClient.local(
+    { cmd: command.cmd, hash: command.hash, sigs: [] },
+    { preflight: false }
+  );
+  if (result.result.status !== "success") return [];
+  const raw = result.result.data as unknown;
+  if (Array.isArray(raw)) return raw.filter((x): x is string => typeof x === "string");
+  return [];
+}
+
+/** Returns a single event by tx-hash. */
+export async function getEventByTxHash(txHash: string): Promise<EscrowEvent | null> {
+  const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.get-event-by-tx "${txHash}")`;
+  const command = Pact.builder
+    .execution(pactCode)
+    .setMeta({ chainId: CHAIN_ID, senderAccount: "free", gasLimit: 25000, gasPrice: 0.00001, ttl: 600 })
+    .setNetworkId(NETWORK_ID)
+    .createTransaction();
+  const result = await kadenaClient.local(
+    { cmd: command.cmd, hash: command.hash, sigs: [] },
+    { preflight: false }
+  );
+  if (result.result.status !== "success") return null;
+  const o = result.result.data as Record<string, unknown> | null;
+  if (!o || typeof o.offerId !== "string") return null;
+  return {
+    txHash,
+    offerId: o.offerId as string,
+    eventType: (o.eventType as string) ?? "",
+    fromState: (o.fromState as string) ?? "",
+    toState: (o.toState as string) ?? "",
+    actor: (o.actor as string) ?? "",
+    blockTime: (o.blockTime as string) ?? "",
+  };
+}
+
+/** Fetches all events for an offer (for UI updates / activity log). */
+export async function getEscrowEvents(offerId: string): Promise<EscrowEvent[]> {
+  const ids = await getEventIdsForOffer(offerId);
+  const events = await Promise.all(ids.map((txHash) => getEventByTxHash(txHash)));
+  return events.filter((e): e is EscrowEvent => e != null);
+}
+
+/** Returns completed trade for an offer (rating enforcement: only these can be rated). */
+export async function getCompletedTrade(offerId: string): Promise<CompletedTrade | null> {
+  const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.get-completed-trade "${offerId}")`;
+  const command = Pact.builder
+    .execution(pactCode)
+    .setMeta({ chainId: CHAIN_ID, senderAccount: "free", gasLimit: 25000, gasPrice: 0.00001, ttl: 600 })
+    .setNetworkId(NETWORK_ID)
+    .createTransaction();
+  const result = await kadenaClient.local(
+    { cmd: command.cmd, hash: command.hash, sigs: [] },
+    { preflight: false }
+  );
+  if (result.result.status !== "success") return null;
+  const o = result.result.data as Record<string, unknown> | null;
+  if (!o || typeof o.buyer !== "string" || typeof o.seller !== "string") return null;
+  return {
+    offerId,
+    buyer: o.buyer as string,
+    seller: o.seller as string,
+    completedAt: (o.completedAt as string) ?? "",
+  };
+}
+
+/** Returns all offer IDs that have completed (for rating enforcement / sync). */
+export async function listCompletedOfferIds(): Promise<string[]> {
+  const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.list-completed-offer-ids)`;
+  const command = Pact.builder
+    .execution(pactCode)
+    .setMeta({ chainId: CHAIN_ID, senderAccount: "free", gasLimit: 100000, gasPrice: 0.00001, ttl: 600 })
+    .setNetworkId(NETWORK_ID)
+    .createTransaction();
+  const result = await kadenaClient.local(
+    { cmd: command.cmd, hash: command.hash, sigs: [] },
+    { preflight: false }
+  );
+  if (result.result.status !== "success") return [];
+  const raw = result.result.data as unknown;
+  if (Array.isArray(raw)) return raw.filter((x): x is string => typeof x === "string");
+  if (raw != null && typeof raw === "object" && !Array.isArray(raw)) {
+    return Object.values(raw).filter((x): x is string => typeof x === "string");
+  }
+  return [];
+}
+
+/** Returns true if the offer is completed on-chain (for rating enforcement). */
+export async function isCompletedTradeOnChain(offerId: string): Promise<boolean> {
+  const trade = await getCompletedTrade(offerId);
+  return trade != null;
 }
 
 export async function disconnectEckoWallet(): Promise<void> {

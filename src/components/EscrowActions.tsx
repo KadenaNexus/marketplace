@@ -31,6 +31,7 @@ import {
   buildTimeoutPaidDisputeTx,
   buildProfileAuthTx,
   getTxExplorerUrl,
+  getEscrowEvents,
   signTransaction,
   submitTransaction,
   pollTransaction,
@@ -38,6 +39,7 @@ import {
   T2_SECONDS,
   T3_SECONDS,
   type Escrow,
+  type EscrowEvent,
 } from "@/lib/kadena";
 import { TradeTimer, isStepExpired } from "./TradeTimer";
 import type { OfferFilters } from "./OfferFilters";
@@ -56,6 +58,7 @@ import {
   FileText,
   MessageCircle,
   Star,
+  History,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -215,6 +218,13 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
     queryKey: ["ratings-summary-bulk", allWallets.join(",")],
     queryFn: () => fetchRatingSummariesBulk(allWallets),
     enabled: allWallets.length > 0,
+  });
+
+  // On-chain events for selected offer (activity log)
+  const { data: escrowEvents = [], isLoading: eventsLoading } = useQuery<EscrowEvent[]>({
+    queryKey: ["escrow-events", selectedEscrow?.offerId],
+    queryFn: () => (selectedEscrow ? getEscrowEvents(selectedEscrow.offerId) : []),
+    enabled: !!selectedEscrow?.offerId,
   });
 
   // Can current user rate the selected COMPLETED trade?
@@ -505,6 +515,10 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
             <Tabs value={disputeTab} onValueChange={setDisputeTab}>
               <TabsList>
                 <TabsTrigger value="details">Details</TabsTrigger>
+                <TabsTrigger value="activity" className="gap-2">
+                  <History className="h-4 w-4" />
+                  Activity
+                </TabsTrigger>
                 <TabsTrigger value="chat" className="gap-2">
                   <MessageCircle className="h-4 w-4" />
                   Chat
@@ -817,6 +831,40 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
                 Connect your wallet to interact with this escrow
               </div>
             )}
+              </TabsContent>
+
+              <TabsContent value="activity" className="mt-4 space-y-4">
+                <p className="text-sm text-muted-foreground">On-chain state transitions (contract events).</p>
+                {eventsLoading ? (
+                  <div className="flex justify-center py-6">
+                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                  </div>
+                ) : escrowEvents.length === 0 ? (
+                  <p className="text-sm text-muted-foreground py-4">No events yet (or events table not initialized).</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {escrowEvents.map((evt, i) => (
+                      <li key={evt.txHash + i} className="flex flex-wrap items-center gap-2 rounded-lg border p-3 text-sm">
+                        <Badge variant="outline">{evt.eventType}</Badge>
+                        {evt.fromState && evt.toState && (
+                          <span className="text-muted-foreground">
+                            {evt.fromState} → {evt.toState}
+                          </span>
+                        )}
+                        <span>by {evt.actor.slice(0, 10)}…</span>
+                        <span className="text-muted-foreground">{evt.blockTime ? new Date(evt.blockTime).toLocaleString() : ""}</span>
+                        <a
+                          href={getTxExplorerUrl(evt.txHash)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-primary hover:underline"
+                        >
+                          Tx <ExternalLink className="h-3 w-3" />
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </TabsContent>
 
               <TabsContent value="chat" className="mt-4">
