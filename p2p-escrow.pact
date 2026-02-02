@@ -8,6 +8,10 @@
   (defconst VAULT_ACCOUNT "p2p-escrow-vault")
   ;; Set to your platform arbiter account (k:...) before deployment
   (defconst PLATFORM_ARBITER "k:665976b8f985c0119c3afa74115fde19f71309cc85428a7104dc2648252b593e")
+  ;; Timed steps (Binance P2P): time limits in seconds. Each step = 10 minutes.
+  (defconst T1_SECONDS 600)
+  (defconst T2_SECONDS 600)
+  (defconst T3_SECONDS 600)
 
   (defschema escrow
     creator:string
@@ -20,7 +24,10 @@
     minAmount:decimal
     maxAmount:decimal
     paymentMethod:string
-    fiatCurrency:string)
+    fiatCurrency:string
+    acceptedAt:string
+    fundedAt:string
+    paidAt:string)
 
   (deftable escrows:{escrow})
 
@@ -65,7 +72,10 @@
       , "minAmount": minAmount
       , "maxAmount": maxAmount
       , "paymentMethod": paymentMethod
-      , "fiatCurrency": fiatCurrency }))
+      , "fiatCurrency": fiatCurrency
+      , "acceptedAt": ""
+      , "fundedAt": ""
+      , "paidAt": "" }))
 
   ;; ------------------------------------------------------------
   ;; Accept offer
@@ -73,11 +83,12 @@
   ;; BUY:  seller accepts (caller becomes buyer field = KDA holder).
   ;; ------------------------------------------------------------
   (defun accept-offer (id)
-    (let ((accepter (read-msg "sender")))
+    (let ((accepter (read-msg "sender"))
+          (now (at "block-time" (chain-data))))
       (with-read escrows id { "creator" := c, "state" := s }
         (enforce (= s "CREATED") "Invalid state")
         (enforce (!= accepter c) "Cannot accept your own offer")
-        (update escrows id { "buyer": accepter, "state": "ACCEPTED" }))))
+        (update escrows id { "buyer": accepter, "state": "ACCEPTED", "acceptedAt": now }))))
 
   ;; ------------------------------------------------------------
   ;; Deposit (KDA holder locks KDA in vault)
@@ -87,20 +98,27 @@
   ;; Message must contain "vault-guard" keyset (e.g. keys:[], pred:"keys-all").
   ;; ------------------------------------------------------------
   (defun deposit (id)
-    (with-read escrows id
-      { "creator" := c
-      , "buyer" := b
-      , "amount" := a
-      , "state" := s
-      , "side" := side }
-      (enforce (= s "ACCEPTED") "Invalid state")
-      (enforce
-        (or (and (= side "SELL") (= c (read-msg "sender")))
-            (and (= side "BUY") (= b (read-msg "sender"))))
-        "Only KDA holder can deposit (SELL=creator, BUY=buyer field)")
-      (let ((depositor (if (= side "SELL") c b)))
-        (coin.transfer-create depositor VAULT_ACCOUNT (read-keyset "vault-guard") a)
-        (update escrows id { "state": "FUNDED" }))))
+    (let ((now (time (at "block-time" (chain-data)))))
+      (with-read escrows id
+        { "creator" := c
+        , "buyer" := b
+        , "amount" := a
+        , "state" := s
+        , "side" := side
+        , "acceptedAt" := acceptedAt }
+        (enforce (= s "ACCEPTED") "Invalid state")
+        (enforce
+          (or (= (length acceptedAt) 0)
+              (<= now (add-time (time acceptedAt) T1_SECONDS)))
+          "Funding period expired (T1); trade can be closed via timeout-accepted-close")
+        (enforce
+          (or (and (= side "SELL") (= c (read-msg "sender")))
+              (and (= side "BUY") (= b (read-msg "sender"))))
+          "Only KDA holder can deposit (SELL=creator, BUY=buyer field)")
+        (let ((depositor (if (= side "SELL") c b))
+              (fundedAt (at "block-time" (chain-data))))
+          (coin.transfer-create depositor VAULT_ACCOUNT (read-keyset "vault-guard") a)
+          (update escrows id { "state": "FUNDED", "fundedAt": fundedAt })))))
 
   ;; ------------------------------------------------------------
   ;; Mark paid (fiat payer confirms off-chain payment)
@@ -108,17 +126,24 @@
   ;; BUY:  creator = fiat payer.
   ;; ------------------------------------------------------------
   (defun mark-paid (id)
-    (with-read escrows id
-      { "creator" := c
-      , "buyer" := b
-      , "state" := s
-      , "side" := side }
-      (enforce (= s "FUNDED") "Invalid state")
-      (enforce
-        (or (and (= side "SELL") (= b (read-msg "sender")))
-            (and (= side "BUY") (= c (read-msg "sender"))))
-        "Only fiat payer can mark paid (SELL=buyer field, BUY=creator)")
-      (update escrows id { "state": "PAID" })))
+    (let ((now (time (at "block-time" (chain-data)))))
+      (with-read escrows id
+        { "creator" := c
+        , "buyer" := b
+        , "state" := s
+        , "side" := side
+        , "fundedAt" := fundedAt }
+        (enforce (= s "FUNDED") "Invalid state")
+        (enforce
+          (or (= (length fundedAt) 0)
+              (<= now (add-time (time fundedAt) T2_SECONDS)))
+          "Mark-paid period expired (T2); seller can refund via timeout-funded-refund")
+        (enforce
+          (or (and (= side "SELL") (= b (read-msg "sender")))
+              (and (= side "BUY") (= c (read-msg "sender"))))
+          "Only fiat payer can mark paid (SELL=buyer field, BUY=creator)")
+        (let ((paidAt (at "block-time" (chain-data))))
+          (update escrows id { "state": "PAID", "paidAt": paidAt })))))
 
   ;; ------------------------------------------------------------
   ;; Release (KDA holder or arbiter sends KDA from vault to fiat payer)
@@ -126,23 +151,30 @@
   ;; BUY:  release to creator (buyer in trade). Only buyer field (seller) or arbiter.
   ;; ------------------------------------------------------------
   (defun release (id)
-    (with-read escrows id
-      { "creator" := c
-      , "buyer" := b
-      , "arbiter" := a
-      , "amount" := amt
-      , "state" := s
-      , "side" := side }
-      (enforce (= s "PAID") "Invalid state")
-      (enforce
-        (or (= (read-msg "sender") a)
-            (and (= side "SELL") (= (read-msg "sender") c))
-            (and (= side "BUY") (= (read-msg "sender") b)))
-        "Only KDA holder or arbiter can release")
-      (if (= side "SELL")
-        (coin.transfer VAULT_ACCOUNT b amt)
-        (coin.transfer VAULT_ACCOUNT c amt))
-      (update escrows id { "state": "COMPLETED" })))
+    (let ((now (time (at "block-time" (chain-data)))))
+      (with-read escrows id
+        { "creator" := c
+        , "buyer" := b
+        , "arbiter" := a
+        , "amount" := amt
+        , "state" := s
+        , "side" := side
+        , "paidAt" := paidAt }
+        (enforce (or (= s "PAID") (= s "DISPUTED")) "Invalid state for release")
+        (enforce
+          (or (= s "DISPUTED")
+              (= (length paidAt) 0)
+              (<= now (add-time (time paidAt) T3_SECONDS)))
+          "Release period expired (T3); trade moved to dispute via timeout-paid-dispute")
+        (enforce
+          (or (= (read-msg "sender") a)
+              (and (= s "PAID") (= side "SELL") (= (read-msg "sender") c))
+              (and (= s "PAID") (= side "BUY") (= (read-msg "sender") b)))
+          "Only KDA holder or arbiter can release; when DISPUTED only arbiter")
+        (if (= side "SELL")
+          (coin.transfer VAULT_ACCOUNT b amt)
+          (coin.transfer VAULT_ACCOUNT c amt))
+        (update escrows id { "state": "COMPLETED" }))))
 
   ;; ------------------------------------------------------------
   ;; Refund (arbiter returns KDA to depositor)
@@ -157,7 +189,7 @@
       , "amount" := amt
       , "state" := s
       , "side" := side }
-      (enforce (or (= s "PAID") (= s "FUNDED")) "Invalid state for refund")
+      (enforce (or (= s "PAID") (= s "FUNDED") (= s "DISPUTED")) "Invalid state for refund")
       (enforce (= (read-msg "sender") a) "Only arbiter")
       (let ((refund-to (if (= side "SELL") c b)))
         (coin.transfer VAULT_ACCOUNT refund-to amt)
@@ -172,6 +204,57 @@
       (enforce (= s "CREATED") "Can only close in CREATED state")
       (enforce (= (read-msg "sender") c) "Only creator can close")
       (update escrows id { "state": "CLOSED" })))
+
+  ;; ------------------------------------------------------------
+  ;; Timeout: ACCEPTED -> CLOSED (seller did not fund within T1). Anyone can call.
+  ;; ------------------------------------------------------------
+  (defun timeout-accepted-close (id)
+    (let ((now (time (at "block-time" (chain-data)))))
+      (with-read escrows id { "state" := s, "acceptedAt" := acceptedAt }
+        (enforce (= s "ACCEPTED") "Invalid state")
+        (enforce (> (length acceptedAt) 0) "Missing acceptedAt")
+        (enforce
+          (> now (add-time (time acceptedAt) T1_SECONDS))
+          "Funding period not yet expired")
+        (update escrows id { "state": "CLOSED", "buyer": "", "acceptedAt": "" }))))
+
+  ;; ------------------------------------------------------------
+  ;; Timeout: FUNDED -> REFUNDED (buyer did not mark paid within T2). Seller calls.
+  ;; ------------------------------------------------------------
+  (defun timeout-funded-refund (id)
+    (let ((now (time (at "block-time" (chain-data)))))
+      (with-read escrows id
+        { "creator" := c
+        , "buyer" := b
+        , "amount" := amt
+        , "state" := s
+        , "side" := side
+        , "fundedAt" := fundedAt }
+        (enforce (= s "FUNDED") "Invalid state")
+        (enforce (> (length fundedAt) 0) "Missing fundedAt")
+        (enforce
+          (> now (add-time (time fundedAt) T2_SECONDS))
+          "Mark-paid period not yet expired")
+        (enforce
+          (or (and (= side "SELL") (= (read-msg "sender") c))
+              (and (= side "BUY") (= (read-msg "sender") b)))
+          "Only seller (KDA holder) can timeout-refund")
+        (let ((refund-to (if (= side "SELL") c b)))
+          (coin.transfer VAULT_ACCOUNT refund-to amt)
+          (update escrows id { "state": "REFUNDED", "buyer": "", "fundedAt": "" })))))
+
+  ;; ------------------------------------------------------------
+  ;; Timeout: PAID -> DISPUTED (seller did not release within T3). Anyone can call.
+  ;; ------------------------------------------------------------
+  (defun timeout-paid-dispute (id)
+    (let ((now (time (at "block-time" (chain-data)))))
+      (with-read escrows id { "state" := s, "paidAt" := paidAt }
+        (enforce (= s "PAID") "Invalid state")
+        (enforce (> (length paidAt) 0) "Missing paidAt")
+        (enforce
+          (> now (add-time (time paidAt) T3_SECONDS))
+          "Release period not yet expired")
+        (update escrows id { "state": "DISPUTED" }))))
 
   (defun get-escrow (id)
     (read escrows id))

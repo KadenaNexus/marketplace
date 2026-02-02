@@ -6,7 +6,8 @@ import {
   Lock, 
   DollarSign, 
   CheckCircle, 
-  XCircle 
+  XCircle,
+  AlertTriangle,
 } from "lucide-react";
 
 interface EscrowStatusProps {
@@ -54,10 +55,21 @@ const stateConfig: Record<EscrowState, {
     icon: XCircle, 
     className: "status-cancelled" 
   },
+  DISPUTED: { 
+    label: "Disputed", 
+    icon: AlertTriangle, 
+    className: "status-cancelled" 
+  },
 };
 
+const DEFAULT_STATE_CONFIG = {
+  label: "Unknown",
+  icon: Clock,
+  className: "status-pending",
+} as const;
+
 export function EscrowStatus({ state, className }: EscrowStatusProps) {
-  const config = stateConfig[state];
+  const config = stateConfig[state] ?? DEFAULT_STATE_CONFIG;
   const Icon = config.icon;
 
   return (

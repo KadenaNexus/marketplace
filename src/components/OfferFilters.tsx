@@ -26,7 +26,7 @@ interface OfferFiltersProps {
   role: "buyer" | "seller";
 }
 
-const ESCROW_STATES: EscrowState[] = ["CREATED", "ACCEPTED", "FUNDED", "PAID", "COMPLETED", "REFUNDED", "CLOSED"];
+const ESCROW_STATES: EscrowState[] = ["CREATED", "ACCEPTED", "FUNDED", "PAID", "COMPLETED", "REFUNDED", "CLOSED", "DISPUTED"];
 
 export function OfferFiltersComponent({ filters, onFiltersChange, role }: OfferFiltersProps) {
   const [isOpen, setIsOpen] = useState(false);

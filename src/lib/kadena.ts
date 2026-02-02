@@ -32,7 +32,13 @@ export type EscrowState =
   | "PAID"
   | "COMPLETED"
   | "REFUNDED"
-  | "CLOSED";
+  | "CLOSED"
+  | "DISPUTED";
+
+/** Time limits for timed steps (seconds). Match contract T1/T2/T3. */
+export const T1_SECONDS = 600;
+export const T2_SECONDS = 600;
+export const T3_SECONDS = 600;
 
 export interface Escrow {
   offerId: string;
@@ -46,6 +52,12 @@ export interface Escrow {
   amount: number;
   state: EscrowState;
   createdAt?: string;
+  /** ISO timestamp when offer was accepted (for T1 countdown). */
+  acceptedAt?: string;
+  /** ISO timestamp when escrow was funded (for T2 countdown). */
+  fundedAt?: string;
+  /** ISO timestamp when buyer marked paid (for T3 countdown). */
+  paidAt?: string;
   // Binance P2P style fields
   side: "BUY" | "SELL";
   price: number;
@@ -383,6 +395,79 @@ export function buildCloseOfferTx(
     .createTransaction();
 }
 
+/* ---------- TIMEOUT: ACCEPTED -> CLOSED (anyone; seller did not fund within T1) ---------- */
+export function buildTimeoutAcceptedCloseTx(
+  offerId: string,
+  callerAccount: string,
+  callerPubKey: string
+) {
+  return Pact.builder
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.timeout-accepted-close "${offerId}")`)
+    .addData("sender", callerAccount)
+    .addSigner(callerPubKey, (s) => [s("coin.GAS")])
+    .setMeta({
+      chainId: CHAIN_ID,
+      senderAccount: callerAccount,
+      gasLimit: 25000,
+      gasPrice: 0.00001,
+      ttl: 600,
+    })
+    .setNetworkId(NETWORK_ID)
+    .createTransaction();
+}
+
+/* ---------- TIMEOUT: FUNDED -> REFUNDED (seller only; buyer did not mark paid within T2) ---------- */
+export function buildTimeoutFundedRefundTx(
+  offerId: string,
+  sellerAccount: string,
+  sellerPubKey: string,
+  amount: number
+) {
+  const amt = { decimal: amount.toFixed(8) };
+  return Pact.builder
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.timeout-funded-refund "${offerId}")`)
+    .addData("sender", sellerAccount)
+    .addSigner(sellerPubKey, (s) => [
+      s("coin.GAS"),
+      s("coin.TRANSFER", "p2p-escrow-vault", sellerAccount, amt),
+    ])
+    .setMeta({
+      chainId: CHAIN_ID,
+      senderAccount: sellerAccount,
+      gasLimit: 25000,
+      gasPrice: 0.00001,
+      ttl: 600,
+    })
+    .setNetworkId(NETWORK_ID)
+    .createTransaction();
+}
+
+/* ---------- TIMEOUT: PAID -> DISPUTED (anyone; seller did not release within T3) ---------- */
+export function buildTimeoutPaidDisputeTx(
+  offerId: string,
+  callerAccount: string,
+  callerPubKey: string
+) {
+  return Pact.builder
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.timeout-paid-dispute "${offerId}")`)
+    .addData("sender", callerAccount)
+    .addSigner(callerPubKey, (s) => [s("coin.GAS")])
+    .setMeta({
+      chainId: CHAIN_ID,
+      senderAccount: callerAccount,
+      gasLimit: 25000,
+      gasPrice: 0.00001,
+      ttl: 600,
+    })
+    .setNetworkId(NETWORK_ID)
+    .createTransaction();
+}
+
+/** Explorer URL for a request key (mainnet). */
+export function getTxExplorerUrl(requestKey: string): string {
+  return `https://explorer.chainweb.com/mainnet/tx/${requestKey}`;
+}
+
 /* ============================================================
    READ-ONLY
 ============================================================ */
@@ -429,6 +514,10 @@ export async function readEscrow(offerId: string): Promise<Escrow | null> {
   const paymentMethod = typeof o.paymentMethod === "string" ? o.paymentMethod : "[]";
   const fiatCurrency = typeof o.fiatCurrency === "string" ? o.fiatCurrency : "USD";
 
+  const acceptedAt = typeof o.acceptedAt === "string" ? o.acceptedAt : undefined;
+  const fundedAt = typeof o.fundedAt === "string" ? o.fundedAt : undefined;
+  const paidAt = typeof o.paidAt === "string" ? o.paidAt : undefined;
+
   const creator = typeof o.creator === "string" ? o.creator : "";
   const buyerField = typeof o.buyer === "string" ? o.buyer : null;
   // SELL: creator=seller (KDA holder), buyer field=fiat payer. BUY: creator=fiat payer, buyer field=seller (KDA holder).
@@ -444,6 +533,9 @@ export async function readEscrow(offerId: string): Promise<Escrow | null> {
     amount: amt,
     state: o.state as EscrowState,
     createdAt: "",
+    acceptedAt,
+    fundedAt,
+    paidAt,
     side,
     price,
     minAmount,

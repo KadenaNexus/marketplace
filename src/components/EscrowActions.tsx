@@ -13,8 +13,8 @@ import { getDispute } from "@/lib/disputeApi";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useWallet } from "@/hooks/useWallet";
-import { fetchProfilesBulk } from "@/lib/profileApi";
-import { fetchRatingSummariesBulk, registerCompletion, checkCanRate, fetchTradeRatings } from "@/lib/ratingApi";
+import { fetchProfilesBulk, type ProfileSummary } from "@/lib/profileApi";
+import { fetchRatingSummariesBulk, registerCompletion, checkCanRate, fetchTradeRatings, type RatingSummary } from "@/lib/ratingApi";
 import { initializeOnlineStatus } from "@/hooks/useOnlineStatus";
 import { RatingDisplay } from "./RatingDisplay";
 import { RatingSubmitDialog } from "./RatingSubmitDialog";
@@ -26,12 +26,20 @@ import {
   buildReleaseTx,
   buildRefundTx,
   buildCloseOfferTx,
+  buildTimeoutAcceptedCloseTx,
+  buildTimeoutFundedRefundTx,
+  buildTimeoutPaidDisputeTx,
   buildProfileAuthTx,
+  getTxExplorerUrl,
   signTransaction,
   submitTransaction,
   pollTransaction,
+  T1_SECONDS,
+  T2_SECONDS,
+  T3_SECONDS,
   type Escrow,
 } from "@/lib/kadena";
+import { TradeTimer, isStepExpired } from "./TradeTimer";
 import type { OfferFilters } from "./OfferFilters";
 import { 
   List,
@@ -183,15 +191,17 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
     return Array.from(set);
   }, [escrows]);
 
-  const { data: profileMap = {} } = useQuery({
+  const { data: profileMap = {} } = useQuery<Record<string, ProfileSummary>>({
     queryKey: ["profiles-bulk", allWallets.join(",")],
     queryFn: () => fetchProfilesBulk(allWallets),
     enabled: allWallets.length > 0,
-    onSuccess: (data) => {
-      // Initialize online status from API response
-      initializeOnlineStatus(data);
-    },
   });
+
+  useEffect(() => {
+    if (Object.keys(profileMap).length > 0) {
+      initializeOnlineStatus(profileMap);
+    }
+  }, [profileMap]);
 
   // Check if there's an open dispute for the selected escrow
   const { data: existingDispute } = useQuery({
@@ -201,7 +211,7 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
   });
 
   // Rating summary for all wallets (offer cards + detail)
-  const { data: ratingSummaryMap = {} } = useQuery({
+  const { data: ratingSummaryMap = {} } = useQuery<Record<string, RatingSummary>>({
     queryKey: ["ratings-summary-bulk", allWallets.join(",")],
     queryFn: () => fetchRatingSummariesBulk(allWallets),
     enabled: allWallets.length > 0,
@@ -341,17 +351,42 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
     );
   };
 
+  const handleTimeoutAcceptedClose = () => {
+    if (!account || !selectedEscrow) return;
+    executeAction("Timeout: Close (T1)", () =>
+      buildTimeoutAcceptedCloseTx(selectedEscrow.offerId, account.account, account.publicKey)
+    );
+  };
+
+  const handleTimeoutFundedRefund = () => {
+    if (!account || !selectedEscrow) return;
+    executeAction("Timeout: Refund (T2)", () =>
+      buildTimeoutFundedRefundTx(selectedEscrow.offerId, account.account, account.publicKey, selectedEscrow.amount)
+    );
+  };
+
+  const handleTimeoutPaidDispute = () => {
+    if (!account || !selectedEscrow) return;
+    executeAction("Timeout: Dispute (T3)", () =>
+      buildTimeoutPaidDisputeTx(selectedEscrow.offerId, account.account, account.publicKey)
+    );
+  };
+
   const canAccept = selectedEscrow?.state === "CREATED" && account?.account !== selectedEscrow?.creator;
   const canDeposit = selectedEscrow?.state === "ACCEPTED" && account?.account === selectedEscrow?.seller;
   const canMarkPaid = selectedEscrow?.state === "FUNDED" && account?.account === selectedEscrow?.buyer;
-  const canRelease = selectedEscrow?.state === "PAID" && 
-    (account?.account === selectedEscrow?.seller || account?.account === selectedEscrow?.arbiter);
-  const canRefund = (selectedEscrow?.state === "FUNDED" || selectedEscrow?.state === "PAID") && account?.account === selectedEscrow?.arbiter;
+  const canRelease = (selectedEscrow?.state === "PAID" || selectedEscrow?.state === "DISPUTED") &&
+    (account?.account === selectedEscrow?.seller || account?.account === selectedEscrow?.arbiter) &&
+    (selectedEscrow?.state !== "DISPUTED" || account?.account === selectedEscrow?.arbiter);
+  const canRefund = (selectedEscrow?.state === "FUNDED" || selectedEscrow?.state === "PAID" || selectedEscrow?.state === "DISPUTED") && account?.account === selectedEscrow?.arbiter;
   const canCloseOffer = selectedEscrow?.state === "CREATED" && account?.account === selectedEscrow?.creator;
   const canOpenDispute = selectedEscrow?.buyer && 
     (account?.account === selectedEscrow?.buyer || account?.account === selectedEscrow?.seller) &&
     (selectedEscrow?.state === "FUNDED" || selectedEscrow?.state === "PAID") &&
     (!existingDispute || existingDispute.status !== "OPEN");
+  const canTimeoutAcceptedClose = selectedEscrow?.state === "ACCEPTED" && !!account?.account && isStepExpired(selectedEscrow.acceptedAt, T1_SECONDS);
+  const canTimeoutFundedRefund = selectedEscrow?.state === "FUNDED" && account?.account === selectedEscrow?.seller && isStepExpired(selectedEscrow.fundedAt, T2_SECONDS);
+  const canTimeoutPaidDispute = selectedEscrow?.state === "PAID" && !!account?.account && isStepExpired(selectedEscrow.paidAt, T3_SECONDS);
 
   const isTerminal = selectedEscrow?.state === "COMPLETED" || selectedEscrow?.state === "REFUNDED" || selectedEscrow?.state === "CLOSED";
 
@@ -370,18 +405,21 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
     setRegisteringCompletion(true);
     try {
       const tx = buildProfileAuthTx(account.account, account.publicKey);
-      let signedCmd = await signTransaction(tx);
-      if (signedCmd?.signedCmd && !signedCmd.cmd) signedCmd = signedCmd.signedCmd;
-      const sigs = Array.isArray(signedCmd?.sigs) ? signedCmd.sigs : [];
+      let rawSigned = await signTransaction(tx) as unknown;
+      const signedCmd = rawSigned && typeof rawSigned === "object" && "signedCmd" in rawSigned
+        ? (rawSigned as { signedCmd: unknown }).signedCmd
+        : rawSigned;
+      const cmd = signedCmd as { sigs?: Array<{ pubKey?: string; sig?: string; signature?: string }> };
+      const sigs = Array.isArray(cmd?.sigs) ? [...cmd.sigs] : [];
       if (sigs[0] && !sigs[0].pubKey) sigs[0] = { ...sigs[0], pubKey: account.publicKey };
-      if (sigs[0]?.signature && !sigs[0].sig) sigs[0] = { ...sigs[0], sig: sigs[0].signature };
+      if (sigs[0] && "signature" in sigs[0] && sigs[0].signature && !sigs[0].sig) sigs[0] = { ...sigs[0], sig: sigs[0].signature };
       await registerCompletion({
         offerId: selectedEscrow.offerId,
         buyerWallet: selectedEscrow.buyer,
         sellerWallet: selectedEscrow.seller,
         wallet: account.account,
         publicKey: account.publicKey,
-        signedCmd,
+        signedCmd: { ...cmd, sigs },
       });
       toast.success("Trade registered");
       refetchRatingCheck();
@@ -478,6 +516,11 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
               </TabsList>
 
               <TabsContent value="details" className="space-y-6 mt-4">
+            {/* Timed step countdown (contract is source of truth) */}
+            {(selectedEscrow.state === "ACCEPTED" || selectedEscrow.state === "FUNDED" || selectedEscrow.state === "PAID") && (
+              <TradeTimer escrow={selectedEscrow} />
+            )}
+
             {/* Details Grid */}
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
@@ -658,6 +701,54 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
                     Open Dispute
                   </Button>
                 )}
+
+                {canTimeoutAcceptedClose && (
+                  <Button 
+                    onClick={handleTimeoutAcceptedClose}
+                    disabled={!!actionLoading}
+                    variant="outline"
+                    className="gap-2"
+                  >
+                    {actionLoading === "Timeout: Close (T1)" ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <XCircle className="h-4 w-4" />
+                    )}
+                    Close (seller did not fund in time)
+                  </Button>
+                )}
+
+                {canTimeoutFundedRefund && (
+                  <Button 
+                    onClick={handleTimeoutFundedRefund}
+                    disabled={!!actionLoading}
+                    variant="outline"
+                    className="gap-2"
+                  >
+                    {actionLoading === "Timeout: Refund (T2)" ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <RotateCcw className="h-4 w-4" />
+                    )}
+                    Refund (buyer did not mark paid in time)
+                  </Button>
+                )}
+
+                {canTimeoutPaidDispute && (
+                  <Button 
+                    onClick={handleTimeoutPaidDispute}
+                    disabled={!!actionLoading}
+                    variant="outline"
+                    className="gap-2 border-amber-500 text-amber-600 hover:bg-amber-500/10"
+                  >
+                    {actionLoading === "Timeout: Dispute (T3)" ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <AlertTriangle className="h-4 w-4" />
+                    )}
+                    Move to dispute (seller did not release in time)
+                  </Button>
+                )}
               </div>
             )}
 
@@ -796,12 +887,13 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
       {transactions.length > 0 && (
         <Card className="escrow-card">
           <CardHeader>
-            <CardTitle className="text-base">Recent Transactions</CardTitle>
+            <CardTitle className="text-base">On-chain references (recent transactions)</CardTitle>
+            <p className="text-sm text-muted-foreground">View transaction status and details on the block explorer.</p>
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
               {transactions.map((tx, i) => (
-                <div 
+                <div
                   key={tx.requestKey + i}
                   className="flex items-center justify-between p-3 bg-muted rounded-md"
                 >
@@ -810,7 +902,7 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
                     <p className="tx-hash">{tx.requestKey}</p>
                   </div>
                   <a
-                    href={`https://denascan.com/transactions/${tx.requestKey}`}
+                    href={getTxExplorerUrl(tx.requestKey)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-primary hover:underline"
