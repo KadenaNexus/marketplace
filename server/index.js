@@ -508,6 +508,69 @@ app.put("/api/profiles", async (req, res) => {
   }
 });
 
+// GET /api/offers/:offerId – off-chain offer details (price, limits, payment method). Contract stores only trustless data.
+app.get("/api/offers/:offerId", async (req, res) => {
+  const offerId = req.params.offerId?.trim();
+  if (!offerId) return res.status(400).json({ error: "Missing offerId" });
+  try {
+    const result = await pool.query(
+      "SELECT offer_id, creator, amount, side, price, min_amount, max_amount, payment_method, fiat_currency, created_at FROM offer_details WHERE offer_id = $1",
+      [offerId]
+    );
+    const row = result.rows[0];
+    if (!row) return res.status(404).json({ error: "Offer not found" });
+    return res.json({
+      offerId: row.offer_id,
+      creator: row.creator,
+      amount: Number(row.amount),
+      side: row.side,
+      price: Number(row.price),
+      minAmount: Number(row.min_amount),
+      maxAmount: Number(row.max_amount),
+      paymentMethod: row.payment_method,
+      fiatCurrency: row.fiat_currency,
+      createdAt: row.created_at,
+    });
+  } catch (err) {
+    console.error("GET /api/offers/:offerId", err);
+    return res.status(500).json({ error: err.message || "Database error" });
+  }
+});
+
+// PUT /api/offers – upsert off-chain offer details (call before or after create-offer on chain)
+app.put("/api/offers", async (req, res) => {
+  const { offerId, creator, amount, side, price, minAmount, maxAmount, paymentMethod, fiatCurrency } = req.body ?? {};
+  if (!offerId || typeof offerId !== "string") return res.status(400).json({ error: "Missing offerId" });
+  if (!creator || typeof creator !== "string") return res.status(400).json({ error: "Missing creator" });
+  const amt = Number(amount);
+  if (!Number.isFinite(amt) || amt <= 0) return res.status(400).json({ error: "Invalid amount" });
+  if (side !== "BUY" && side !== "SELL") return res.status(400).json({ error: "Invalid side" });
+  const pr = Number(price);
+  if (!Number.isFinite(pr) || pr <= 0) return res.status(400).json({ error: "Invalid price" });
+  const minA = Number(minAmount);
+  const maxA = Number(maxAmount);
+  if (!Number.isFinite(minA) || minA <= 0 || !Number.isFinite(maxA) || maxA < minA) {
+    return res.status(400).json({ error: "Invalid minAmount/maxAmount" });
+  }
+  const pm = typeof paymentMethod === "string" ? paymentMethod : "[]";
+  const fc = typeof fiatCurrency === "string" ? fiatCurrency.trim().slice(0, 10) : "USD";
+  try {
+    await pool.query(
+      `INSERT INTO offer_details (offer_id, creator, amount, side, price, min_amount, max_amount, payment_method, fiat_currency)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT (offer_id) DO UPDATE SET
+         creator = EXCLUDED.creator, amount = EXCLUDED.amount, side = EXCLUDED.side,
+         price = EXCLUDED.price, min_amount = EXCLUDED.min_amount, max_amount = EXCLUDED.max_amount,
+         payment_method = EXCLUDED.payment_method, fiat_currency = EXCLUDED.fiat_currency`,
+      [offerId.trim(), creator.trim(), amt, side, pr, minA, maxA, pm, fc]
+    );
+    return res.json({ ok: true, offerId: offerId.trim() });
+  } catch (err) {
+    console.error("PUT /api/offers", err);
+    return res.status(500).json({ error: err.message || "Database error" });
+  }
+});
+
 // POST /api/profiles/bulk – body: { wallets: string[] }; returns { [wallet]: ProfileSummary }
 app.post("/api/profiles/bulk", async (req, res) => {
   const { wallets } = req.body ?? {};

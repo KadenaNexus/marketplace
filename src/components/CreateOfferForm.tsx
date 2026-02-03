@@ -12,6 +12,7 @@ import {
   submitTransaction,
   pollTransaction,
 } from "@/lib/kadena";
+import { putOfferDetails } from "@/lib/offerDetailsApi";
 import { Plus, Loader2, ShoppingCart, Store } from "lucide-react";
 import { toast } from "sonner";
 
@@ -95,19 +96,27 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
     setIsLoading(true);
 
     try {
-      // Build the transaction with all Binance P2P fields
+      // Save off-chain offer details (price, limits, payment method); contract stores only trustless data
       const paymentMethodJson = JSON.stringify(paymentMethods);
+      await putOfferDetails({
+        offerId,
+        creator: account.account,
+        amount: amountNum,
+        side,
+        price: priceNum,
+        minAmount: minAmountNum,
+        maxAmount: maxAmountNum,
+        paymentMethod: paymentMethodJson,
+        fiatCurrency,
+      });
+
+      // On-chain: create-offer (id, creator, amount, side only)
       const tx = buildCreateOfferTx(
         offerId,
         amountNum,
         account.account,
         account.publicKey,
-        side,
-        priceNum,
-        minAmountNum,
-        maxAmountNum,
-        paymentMethodJson,
-        fiatCurrency
+        side
       );
 
       console.log("Built transaction:", tx);

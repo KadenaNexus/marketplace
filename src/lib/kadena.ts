@@ -73,23 +73,11 @@ export interface WalletAccount {
   chainId: string;
 }
 
-/** On-chain event for UI / logs (state transitions). */
-export interface EscrowEvent {
-  txHash: string;
-  offerId: string;
-  eventType: string;
-  fromState: string;
-  toState: string;
-  actor: string;
-  blockTime: string;
-}
-
-/** Completed trade (rating enforcement: only these can be rated). */
-export interface CompletedTrade {
-  offerId: string;
-  buyer: string;
-  seller: string;
-  completedAt: string;
+/** On-chain reputation counters only (score calculation & UI off-chain). */
+export interface ChainReputation {
+  totalTrades: number;
+  successfulTrades: number;
+  disputesCount: number;
 }
 
 /* ============================================================
@@ -206,22 +194,16 @@ export async function sendTestTransfer(account: string, publicKey: string): Prom
    TRANSACTION BUILDERS (ALL OF THEM)
 ============================================================ */
 
-/* ---------- CREATE OFFER (Binance P2P style with side, price, limits, payment method) ---------- */
+/* ---------- CREATE OFFER (trustless only: id, creator, amount, side; details off-chain) ---------- */
 
-/** Creator is seller for SELL offers, buyer for BUY offers. */
 export function buildCreateOfferTx(
   offerId: string,
   amount: number,
   creatorAccount: string,
   creatorPubKey: string,
-  side: "BUY" | "SELL",
-  price: number,
-  minAmount: number,
-  maxAmount: number,
-  paymentMethod: string, // JSON string array
-  fiatCurrency: string
+  side: "BUY" | "SELL"
 ) {
-  const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.create-offer "${offerId}" "${creatorAccount}" ${amount.toFixed(8)} "${side}" ${price.toFixed(8)} ${minAmount.toFixed(8)} ${maxAmount.toFixed(8)} "${paymentMethod}" "${fiatCurrency}")`;
+  const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.create-offer "${offerId}" "${creatorAccount}" ${amount.toFixed(8)} "${side}")`;
 
   return Pact.builder
     .execution(pactCode)
@@ -392,17 +374,15 @@ export function buildInitTx(senderAccount: string, senderPubKey: string) {
     .createTransaction();
 }
 
-/** Initialize all tables (escrows, events, completed-trades, config, offer-event-ids) and run init-config. Run once after deploy. */
+/** Initialize all tables (escrows, reputation, config) and run init-config. Run once after deploy. */
 export function buildInitAllTx(senderAccount: string, senderPubKey: string) {
   const govCap = `${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.GOVERNANCE`;
   const ns = CONTRACT_NAMESPACE;
   const mod = CONTRACT_MODULE;
   const code = `(with-capability (${govCap})
     (create-table ${ns}.${mod}.escrows)
-    (create-table ${ns}.${mod}.events)
-    (create-table ${ns}.${mod}.completed-trades)
+    (create-table ${ns}.${mod}.reputation)
     (create-table ${ns}.${mod}.config)
-    (create-table ${ns}.${mod}.offer-event-ids)
     (${ns}.${mod}.init-config))`;
   return Pact.builder
     .execution(code)
@@ -410,7 +390,7 @@ export function buildInitAllTx(senderAccount: string, senderPubKey: string) {
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount,
-      gasLimit: 60000,
+      gasLimit: 50000,
       gasPrice: 0.00001,
       ttl: 600,
     })
@@ -594,23 +574,21 @@ export async function readEscrow(offerId: string): Promise<Escrow | null> {
   const amt = Number(o.amount);
   if (Number.isNaN(amt)) return null;
 
-  // Parse new Binance P2P fields (with defaults for backward compatibility)
   const side = (typeof o.side === "string" && (o.side === "BUY" || o.side === "SELL")) ? o.side as "BUY" | "SELL" : "SELL";
+  const acceptedAt = typeof o.acceptedAt === "string" ? o.acceptedAt : undefined;
+  const fundedAt = typeof o.fundedAt === "string" ? o.fundedAt : undefined;
+  const paidAt = typeof o.paidAt === "string" ? o.paidAt : undefined;
+  const creator = typeof o.creator === "string" ? o.creator : "";
+  const buyerField = typeof o.buyer === "string" ? o.buyer : null;
+  const seller = side === "SELL" ? creator : (buyerField ?? "");
+  const buyer = side === "SELL" ? buyerField : (creator || null);
+
+  // Contract stores only trustless data; price/limits/payment come from off-chain offer_details (merge in UI)
   const price = typeof o.price === "number" ? o.price : (typeof o.price === "string" ? Number(o.price) : 0);
   const minAmount = typeof o.minAmount === "number" ? o.minAmount : (typeof o.minAmount === "string" ? Number(o.minAmount) : amt);
   const maxAmount = typeof o.maxAmount === "number" ? o.maxAmount : (typeof o.maxAmount === "string" ? Number(o.maxAmount) : amt);
   const paymentMethod = typeof o.paymentMethod === "string" ? o.paymentMethod : "[]";
   const fiatCurrency = typeof o.fiatCurrency === "string" ? o.fiatCurrency : "USD";
-
-  const acceptedAt = typeof o.acceptedAt === "string" ? o.acceptedAt : undefined;
-  const fundedAt = typeof o.fundedAt === "string" ? o.fundedAt : undefined;
-  const paidAt = typeof o.paidAt === "string" ? o.paidAt : undefined;
-
-  const creator = typeof o.creator === "string" ? o.creator : "";
-  const buyerField = typeof o.buyer === "string" ? o.buyer : null;
-  // SELL: creator=seller (KDA holder), buyer field=fiat payer. BUY: creator=fiat payer, buyer field=seller (KDA holder).
-  const seller = side === "SELL" ? creator : (buyerField ?? "");
-  const buyer = side === "SELL" ? buyerField : (creator || null);
 
   return {
     offerId,
@@ -690,9 +668,9 @@ export async function listAllEscrows(): Promise<Escrow[]> {
   return results.filter((e): e is Escrow => e != null);
 }
 
-/** Returns event tx-hash IDs for an offer (newest first). For UI / logs. */
-export async function getEventIdsForOffer(offerId: string): Promise<string[]> {
-  const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.get-event-ids-for-offer "${offerId}")`;
+/** On-chain reputation counters only (score calculation & UI off-chain). */
+export async function getReputation(wallet: string): Promise<ChainReputation> {
+  const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.get-reputation "${wallet}")`;
   const command = Pact.builder
     .execution(pactCode)
     .setMeta({ chainId: CHAIN_ID, senderAccount: "free", gasLimit: 25000, gasPrice: 0.00001, ttl: 600 })
@@ -702,93 +680,16 @@ export async function getEventIdsForOffer(offerId: string): Promise<string[]> {
     { cmd: command.cmd, hash: command.hash, sigs: [] },
     { preflight: false }
   );
-  if (result.result.status !== "success") return [];
-  const raw = result.result.data as unknown;
-  if (Array.isArray(raw)) return raw.filter((x): x is string => typeof x === "string");
-  return [];
-}
-
-/** Returns a single event by tx-hash. */
-export async function getEventByTxHash(txHash: string): Promise<EscrowEvent | null> {
-  const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.get-event-by-tx "${txHash}")`;
-  const command = Pact.builder
-    .execution(pactCode)
-    .setMeta({ chainId: CHAIN_ID, senderAccount: "free", gasLimit: 25000, gasPrice: 0.00001, ttl: 600 })
-    .setNetworkId(NETWORK_ID)
-    .createTransaction();
-  const result = await kadenaClient.local(
-    { cmd: command.cmd, hash: command.hash, sigs: [] },
-    { preflight: false }
-  );
-  if (result.result.status !== "success") return null;
-  const o = result.result.data as Record<string, unknown> | null;
-  if (!o || typeof o.offerId !== "string") return null;
-  return {
-    txHash,
-    offerId: o.offerId as string,
-    eventType: (o.eventType as string) ?? "",
-    fromState: (o.fromState as string) ?? "",
-    toState: (o.toState as string) ?? "",
-    actor: (o.actor as string) ?? "",
-    blockTime: (o.blockTime as string) ?? "",
-  };
-}
-
-/** Fetches all events for an offer (for UI updates / activity log). */
-export async function getEscrowEvents(offerId: string): Promise<EscrowEvent[]> {
-  const ids = await getEventIdsForOffer(offerId);
-  const events = await Promise.all(ids.map((txHash) => getEventByTxHash(txHash)));
-  return events.filter((e): e is EscrowEvent => e != null);
-}
-
-/** Returns completed trade for an offer (rating enforcement: only these can be rated). */
-export async function getCompletedTrade(offerId: string): Promise<CompletedTrade | null> {
-  const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.get-completed-trade "${offerId}")`;
-  const command = Pact.builder
-    .execution(pactCode)
-    .setMeta({ chainId: CHAIN_ID, senderAccount: "free", gasLimit: 25000, gasPrice: 0.00001, ttl: 600 })
-    .setNetworkId(NETWORK_ID)
-    .createTransaction();
-  const result = await kadenaClient.local(
-    { cmd: command.cmd, hash: command.hash, sigs: [] },
-    { preflight: false }
-  );
-  if (result.result.status !== "success") return null;
-  const o = result.result.data as Record<string, unknown> | null;
-  if (!o || typeof o.buyer !== "string" || typeof o.seller !== "string") return null;
-  return {
-    offerId,
-    buyer: o.buyer as string,
-    seller: o.seller as string,
-    completedAt: (o.completedAt as string) ?? "",
-  };
-}
-
-/** Returns all offer IDs that have completed (for rating enforcement / sync). */
-export async function listCompletedOfferIds(): Promise<string[]> {
-  const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.list-completed-offer-ids)`;
-  const command = Pact.builder
-    .execution(pactCode)
-    .setMeta({ chainId: CHAIN_ID, senderAccount: "free", gasLimit: 100000, gasPrice: 0.00001, ttl: 600 })
-    .setNetworkId(NETWORK_ID)
-    .createTransaction();
-  const result = await kadenaClient.local(
-    { cmd: command.cmd, hash: command.hash, sigs: [] },
-    { preflight: false }
-  );
-  if (result.result.status !== "success") return [];
-  const raw = result.result.data as unknown;
-  if (Array.isArray(raw)) return raw.filter((x): x is string => typeof x === "string");
-  if (raw != null && typeof raw === "object" && !Array.isArray(raw)) {
-    return Object.values(raw).filter((x): x is string => typeof x === "string");
+  if (result.result.status !== "success") {
+    return { totalTrades: 0, successfulTrades: 0, disputesCount: 0 };
   }
-  return [];
-}
-
-/** Returns true if the offer is completed on-chain (for rating enforcement). */
-export async function isCompletedTradeOnChain(offerId: string): Promise<boolean> {
-  const trade = await getCompletedTrade(offerId);
-  return trade != null;
+  const o = result.result.data as Record<string, unknown> | null;
+  if (!o) return { totalTrades: 0, successfulTrades: 0, disputesCount: 0 };
+  return {
+    totalTrades: Number(o.totalTrades) || 0,
+    successfulTrades: Number(o.successfulTrades) || 0,
+    disputesCount: Number(o.disputesCount) || 0,
+  };
 }
 
 export async function disconnectEckoWallet(): Promise<void> {

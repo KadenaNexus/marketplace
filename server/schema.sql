@@ -14,6 +14,21 @@ CREATE TABLE IF NOT EXISTS profiles (
 -- Create unique index on wallet (already primary key, but explicit for clarity)
 CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_wallet ON profiles(wallet);
 
+-- Offer details (off-chain: price, limits, payment method; contract stores only trustless data)
+CREATE TABLE IF NOT EXISTS offer_details (
+    offer_id VARCHAR(255) PRIMARY KEY,
+    creator VARCHAR(255) NOT NULL,
+    amount DECIMAL NOT NULL,
+    side VARCHAR(10) NOT NULL CHECK (side IN ('BUY', 'SELL')),
+    price DECIMAL NOT NULL,
+    min_amount DECIMAL NOT NULL,
+    max_amount DECIMAL NOT NULL,
+    payment_method TEXT NOT NULL DEFAULT '[]',
+    fiat_currency VARCHAR(10) NOT NULL DEFAULT 'USD',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_offer_details_creator ON offer_details(creator);
+
 -- Disputes table (OPEN | UNDER_REVIEW | CLOSED)
 CREATE TABLE IF NOT EXISTS disputes (
     id SERIAL PRIMARY KEY,

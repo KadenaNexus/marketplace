@@ -31,7 +31,7 @@ import {
   buildTimeoutPaidDisputeTx,
   buildProfileAuthTx,
   getTxExplorerUrl,
-  getEscrowEvents,
+  getReputation,
   signTransaction,
   submitTransaction,
   pollTransaction,
@@ -39,8 +39,8 @@ import {
   T2_SECONDS,
   T3_SECONDS,
   type Escrow,
-  type EscrowEvent,
 } from "@/lib/kadena";
+import { getOfferDetails } from "@/lib/offerDetailsApi";
 import { TradeTimer, isStepExpired } from "./TradeTimer";
 import type { OfferFilters } from "./OfferFilters";
 import { 
@@ -58,7 +58,6 @@ import {
   FileText,
   MessageCircle,
   Star,
-  History,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -182,17 +181,45 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
     return filtered;
   }, [allEscrows, filters, role, account?.account]);
 
-  const selectedEscrow = escrows.find((e) => e.offerId === selectedOfferId) ?? null;
+  // Off-chain offer details (price, limits, payment); merge with chain data for display
+  const offerIds = useMemo(() => [...new Set(allEscrows.map((e) => e.offerId))], [allEscrows]);
+  const { data: offerDetailsMap = {} } = useQuery({
+    queryKey: ["offer-details", offerIds.sort().join(",")],
+    queryFn: async () => {
+      const map: Record<string, Awaited<ReturnType<typeof getOfferDetails>>> = {};
+      await Promise.all(
+        offerIds.map(async (id) => {
+          const d = await getOfferDetails(id);
+          if (d) map[id] = d;
+        })
+      );
+      return map;
+    },
+    enabled: offerIds.length > 0,
+  });
+
+  const escrowsWithDetails = useMemo(
+    () =>
+      escrows.map((e) => {
+        const details = offerDetailsMap[e.offerId];
+        return details
+          ? { ...e, price: details.price, minAmount: details.minAmount, maxAmount: details.maxAmount, paymentMethod: details.paymentMethod, fiatCurrency: details.fiatCurrency }
+          : e;
+      }),
+    [escrows, offerDetailsMap]
+  );
+
+  const selectedEscrow = escrowsWithDetails.find((e) => e.offerId === selectedOfferId) ?? null;
 
   const allWallets = useMemo(() => {
     const set = new Set<string>();
-    escrows.forEach((e) => {
+    escrowsWithDetails.forEach((e) => {
       set.add(e.seller);
       if (e.buyer) set.add(e.buyer);
       set.add(e.arbiter);
     });
     return Array.from(set);
-  }, [escrows]);
+  }, [escrowsWithDetails]);
 
   const { data: profileMap = {} } = useQuery<Record<string, ProfileSummary>>({
     queryKey: ["profiles-bulk", allWallets.join(",")],
@@ -220,11 +247,16 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
     enabled: allWallets.length > 0,
   });
 
-  // On-chain events for selected offer (activity log)
-  const { data: escrowEvents = [], isLoading: eventsLoading } = useQuery<EscrowEvent[]>({
-    queryKey: ["escrow-events", selectedEscrow?.offerId],
-    queryFn: () => (selectedEscrow ? getEscrowEvents(selectedEscrow.offerId) : []),
-    enabled: !!selectedEscrow?.offerId,
+  // On-chain reputation (minimal counters; score calculation off-chain)
+  const { data: sellerRep } = useQuery({
+    queryKey: ["reputation", selectedEscrow?.seller ?? ""],
+    queryFn: () => getReputation(selectedEscrow!.seller),
+    enabled: !!selectedEscrow?.seller,
+  });
+  const { data: buyerRep } = useQuery({
+    queryKey: ["reputation", selectedEscrow?.buyer ?? ""],
+    queryFn: () => getReputation(selectedEscrow!.buyer),
+    enabled: !!selectedEscrow?.buyer,
   });
 
   // Can current user rate the selected COMPLETED trade?
@@ -486,7 +518,7 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
             </p>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {escrows.map((e) => (
+              {escrowsWithDetails.map((e) => (
                 <OfferCard
                   key={e.offerId}
                   escrow={e}
@@ -515,10 +547,6 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
             <Tabs value={disputeTab} onValueChange={setDisputeTab}>
               <TabsList>
                 <TabsTrigger value="details">Details</TabsTrigger>
-                <TabsTrigger value="activity" className="gap-2">
-                  <History className="h-4 w-4" />
-                  Activity
-                </TabsTrigger>
                 <TabsTrigger value="chat" className="gap-2">
                   <MessageCircle className="h-4 w-4" />
                   Chat
@@ -589,6 +617,11 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
               <div>
                 <Label className="text-muted-foreground">Seller</Label>
                 <ProfileSummaryView wallet={selectedEscrow.seller} summary={profileMap[selectedEscrow.seller]} />
+                {sellerRep && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    On-chain: {sellerRep.successfulTrades}/{sellerRep.totalTrades} completed, {sellerRep.disputesCount} disputes
+                  </p>
+                )}
                 <RatingDisplay summary={ratingSummaryMap[selectedEscrow.seller]} variant="full" className="mt-2" />
               </div>
               <div>
@@ -596,6 +629,11 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
                 {selectedEscrow.buyer ? (
                   <>
                     <ProfileSummaryView wallet={selectedEscrow.buyer} summary={profileMap[selectedEscrow.buyer]} />
+                    {buyerRep && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        On-chain: {buyerRep.successfulTrades}/{buyerRep.totalTrades} completed, {buyerRep.disputesCount} disputes
+                      </p>
+                    )}
                     <RatingDisplay summary={ratingSummaryMap[selectedEscrow.buyer]} variant="full" className="mt-2" />
                   </>
                 ) : (
@@ -831,40 +869,6 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
                 Connect your wallet to interact with this escrow
               </div>
             )}
-              </TabsContent>
-
-              <TabsContent value="activity" className="mt-4 space-y-4">
-                <p className="text-sm text-muted-foreground">On-chain state transitions (contract events).</p>
-                {eventsLoading ? (
-                  <div className="flex justify-center py-6">
-                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                  </div>
-                ) : escrowEvents.length === 0 ? (
-                  <p className="text-sm text-muted-foreground py-4">No events yet (or events table not initialized).</p>
-                ) : (
-                  <ul className="space-y-2">
-                    {escrowEvents.map((evt, i) => (
-                      <li key={evt.txHash + i} className="flex flex-wrap items-center gap-2 rounded-lg border p-3 text-sm">
-                        <Badge variant="outline">{evt.eventType}</Badge>
-                        {evt.fromState && evt.toState && (
-                          <span className="text-muted-foreground">
-                            {evt.fromState} → {evt.toState}
-                          </span>
-                        )}
-                        <span>by {evt.actor.slice(0, 10)}…</span>
-                        <span className="text-muted-foreground">{evt.blockTime ? new Date(evt.blockTime).toLocaleString() : ""}</span>
-                        <a
-                          href={getTxExplorerUrl(evt.txHash)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-primary hover:underline"
-                        >
-                          Tx <ExternalLink className="h-3 w-3" />
-                        </a>
-                      </li>
-                    ))}
-                  </ul>
-                )}
               </TabsContent>
 
               <TabsContent value="chat" className="mt-4">
