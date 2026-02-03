@@ -374,8 +374,9 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
 
   const handleRelease = () => {
     if (!account || !selectedEscrow) return;
-    executeAction("Release", () => 
-      buildReleaseTx(selectedEscrow.offerId, account.account, account.publicKey, selectedEscrow.buyer!, selectedEscrow.amount)
+    const releaseRecipient = selectedEscrow.side === "SELL" ? selectedEscrow.buyer! : selectedEscrow.creator;
+    executeAction("Release", () =>
+      buildReleaseTx(selectedEscrow.offerId, account.account, account.publicKey, releaseRecipient, selectedEscrow.amount)
     );
   };
 
@@ -388,8 +389,8 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
 
   const handleCloseOffer = () => {
     if (!account || !selectedEscrow) return;
-    executeAction("Close Offer", () => 
-      buildCloseOfferTx(selectedEscrow.offerId, selectedEscrow.creator, account.publicKey)
+    executeAction("Close Offer", () =>
+      buildCloseOfferTx(selectedEscrow.offerId, account.account, account.publicKey)
     );
   };
 
@@ -416,7 +417,8 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
 
   const canAccept = selectedEscrow?.state === "CREATED" && account?.account !== selectedEscrow?.creator;
   const canDeposit = selectedEscrow?.state === "ACCEPTED" && account?.account === selectedEscrow?.seller;
-  const canMarkPaid = selectedEscrow?.state === "FUNDED" && account?.account === selectedEscrow?.buyer;
+  const canMarkPaid = selectedEscrow?.state === "FUNDED" &&
+    (selectedEscrow?.side === "SELL" ? account?.account === selectedEscrow?.buyer : account?.account === selectedEscrow?.creator);
   const canRelease = (selectedEscrow?.state === "PAID" || selectedEscrow?.state === "DISPUTED") &&
     (account?.account === selectedEscrow?.seller || account?.account === selectedEscrow?.arbiter) &&
     (selectedEscrow?.state !== "DISPUTED" || account?.account === selectedEscrow?.arbiter);

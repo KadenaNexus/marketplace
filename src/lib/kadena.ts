@@ -298,13 +298,13 @@ export function buildMarkPaidTx(
     .createTransaction();
 }
 
-/* ---------- RELEASE (seller or arbiter; contract does coin.transfer VAULT_ACCOUNT buyer amt) ---------- */
+/* ---------- RELEASE (KDA holder or arbiter; DISPUTED only arbiter; contract: SELL -> transfer to buyer, BUY -> transfer to creator) ---------- */
 
 export function buildReleaseTx(
   offerId: string,
   callerAccount: string,
   callerPubKey: string,
-  buyerFromEscrow: string,
+  recipientAccount: string,
   amountFromEscrow: number
 ) {
   const amt = { decimal: amountFromEscrow.toFixed(8) };
@@ -313,7 +313,7 @@ export function buildReleaseTx(
     .addData("sender", callerAccount)
     .addSigner(callerPubKey, (s) => [
       s("coin.GAS"),
-      s("coin.TRANSFER", "p2p-escrow-vault", buyerFromEscrow, amt),
+      s("coin.TRANSFER", "p2p-escrow-vault", recipientAccount, amt),
     ])
     .setMeta({
       chainId: CHAIN_ID,
@@ -326,7 +326,7 @@ export function buildReleaseTx(
     .createTransaction();
 }
 
-/* ---------- REFUND (ARBITER; from FUNDED or PAID; contract does coin.transfer VAULT_ACCOUNT seller amt) ---------- */
+/* ---------- REFUND (ARBITER only; FUNDED/PAID/DISPUTED; contract: SELL -> refund creator, BUY -> refund buyer) ---------- */
 
 export function buildRefundTx(
   offerId: string,
@@ -398,7 +398,7 @@ export function buildInitAllTx(senderAccount: string, senderPubKey: string) {
     .createTransaction();
 }
 
-/* ---------- CLOSE OFFER (creator only, CREATED state; SELL=seller, BUY=buyer) ---------- */
+/* ---------- CLOSE OFFER (creator only, CREATED state; sender must be creator) ---------- */
 
 export function buildCloseOfferTx(
   offerId: string,

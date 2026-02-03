@@ -114,6 +114,14 @@ After deploying the module, run **one** init transaction (signed by the deployer
 
 The dApp **Initialize** action may fail with “Module admin is necessary” because only the deployer can create tables. Use your deployment tooling or sign `buildInitAllTx` with the deployer key.
 
+### Initialize tables only (small contract)
+
+To deploy a **minimal** module that only creates and initializes the tables (no business logic):
+
+1. **Deploy** `p2p-escrow-init.pact` as module `free.p2p-escrow`. This small contract contains only: schemas, tables, `init-config`, `set-config`, and getters (`get-arbiter`, `get-t1`–`get-t3`, `get-reputation`, `get-escrow`, `list-escrow-ids`).
+2. **Run init** — Sign and submit `buildInitAllTx(adminAccount, adminPubKey)` (from `src/lib/kadena.ts`). This creates `escrows`, `reputation`, and `config` and runs `init-config`. Tables are then ready and empty.
+3. **Optional: upgrade to full logic** — Deploy `p2p-escrow.pact` (same module name `free.p2p-escrow`) to add create-offer, deposit, release, refund, timeouts, etc. Tables already exist; no need to run init again.
+
 ## Configuration
 
 - **Network:** `mainnet01`, **Chain:** `1`
@@ -133,7 +141,8 @@ src/
 server/
   index.js            # Profile API: GET/PUT /api/profiles, POST /api/profiles/bulk; PostgreSQL (profiles only); verifies signed proof
   schema.sql          # PostgreSQL database schema initialization
-p2p-escrow.pact       # Pact module
+p2p-escrow.pact       # Full Pact module (business logic)
+p2p-escrow-init.pact  # Minimal module (tables + init only; deploy first to init empty)
 vite.config.ts        # Proxy for /chainweb-proxy and /api in dev
 ```
 
