@@ -1,6 +1,6 @@
 (namespace "free")
 
-(module p2p-escrow GOVERNANCE
+(module p2p-escrow-test GOVERNANCE
   (defcap GOVERNANCE () true)
   (defconst VAULT_ACCOUNT "p2p-escrow-vault")
   (defconst PLATFORM_ARBITER "k:665976b8f985c0119c3afa74115fde19f71309cc85428a7104dc2648252b593e")

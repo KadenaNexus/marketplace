@@ -17,7 +17,7 @@ export const API_HOST =
 
 // Must match deployment: (describe-module "{ns}.{mod}") or deployment logs.
 export const CONTRACT_NAMESPACE = "free";
-export const CONTRACT_MODULE = "p2p-escrow";
+export const CONTRACT_MODULE = "p2p-escrow-test";
 
 export const kadenaClient = createClient(API_HOST);
 
@@ -212,7 +212,7 @@ export function buildCreateOfferTx(
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: creatorAccount,
-      gasLimit: 25000,
+      gasLimit: 50000,
       gasPrice: 0.00001,
       ttl: 600,
     })
@@ -234,7 +234,7 @@ export function buildAcceptOfferTx(
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: buyerAccount,
-      gasLimit: 25000,
+      gasLimit: 50000,
       gasPrice: 0.00001,
       ttl: 600,
     })
@@ -268,7 +268,7 @@ export function buildDepositTx(
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: depositorAccount,
-      gasLimit: 25000,
+      gasLimit: 50000,
       gasPrice: 0.00001,
       ttl: 600,
     })
@@ -290,7 +290,7 @@ export function buildMarkPaidTx(
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: buyerAccount,
-      gasLimit: 25000,
+      gasLimit: 50000,
       gasPrice: 0.00001,
       ttl: 600,
     })
@@ -318,7 +318,7 @@ export function buildReleaseTx(
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: callerAccount,
-      gasLimit: 25000,
+      gasLimit: 50000,
       gasPrice: 0.00001,
       ttl: 600,
     })
@@ -346,7 +346,7 @@ export function buildRefundTx(
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: arbiterAccount,
-      gasLimit: 25000,
+      gasLimit: 50000,
       gasPrice: 0.00001,
       ttl: 600,
     })
@@ -366,7 +366,7 @@ export function buildInitTx(senderAccount: string, senderPubKey: string) {
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount,
-      gasLimit: 25000,
+      gasLimit: 50000,
       gasPrice: 0.00001,
       ttl: 600,
     })
@@ -412,7 +412,7 @@ export function buildCloseOfferTx(
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: creatorAccount,
-      gasLimit: 25000,
+      gasLimit: 50000,
       gasPrice: 0.00001,
       ttl: 600,
     })
@@ -433,7 +433,7 @@ export function buildTimeoutAcceptedCloseTx(
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: callerAccount,
-      gasLimit: 25000,
+      gasLimit: 50000,
       gasPrice: 0.00001,
       ttl: 600,
     })
@@ -459,7 +459,7 @@ export function buildTimeoutFundedRefundTx(
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: sellerAccount,
-      gasLimit: 25000,
+      gasLimit: 50000,
       gasPrice: 0.00001,
       ttl: 600,
     })
@@ -480,7 +480,7 @@ export function buildTimeoutPaidDisputeTx(
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: callerAccount,
-      gasLimit: 25000,
+      gasLimit: 50000,
       gasPrice: 0.00001,
       ttl: 600,
     })
@@ -503,7 +503,7 @@ export function buildInitConfigTx(senderAccount: string, senderPubKey: string) {
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount,
-      gasLimit: 25000,
+      gasLimit: 50000,
       gasPrice: 0.00001,
       ttl: 600,
     })
@@ -528,7 +528,7 @@ export function buildSetConfigTx(
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: adminAccount,
-      gasLimit: 25000,
+      gasLimit: 50000,
       gasPrice: 0.00001,
       ttl: 600,
     })
@@ -548,7 +548,7 @@ export async function readEscrow(offerId: string): Promise<Escrow | null> {
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: "free",
-      gasLimit: 25000,
+      gasLimit: 50000,
       gasPrice: 0.00001,
       ttl: 600,
     })
@@ -673,7 +673,7 @@ export async function getReputation(wallet: string): Promise<ChainReputation> {
   const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.get-reputation "${wallet}")`;
   const command = Pact.builder
     .execution(pactCode)
-    .setMeta({ chainId: CHAIN_ID, senderAccount: "free", gasLimit: 25000, gasPrice: 0.00001, ttl: 600 })
+    .setMeta({ chainId: CHAIN_ID, senderAccount: "free", gasLimit: 50000, gasPrice: 0.00001, ttl: 600 })
     .setNetworkId(NETWORK_ID)
     .createTransaction();
   const result = await kadenaClient.local(
