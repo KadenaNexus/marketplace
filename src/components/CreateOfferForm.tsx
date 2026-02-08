@@ -7,10 +7,13 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useWallet } from "@/hooks/useWallet";
 import { 
+  CONTRACT_NAMESPACE,
+  CONTRACT_MODULE,
   buildCreateOfferTx, 
   signTransaction, 
   submitTransaction,
   pollTransaction,
+  getChainwebDebugInfo,
 } from "@/lib/kadena";
 import { putOfferDetails } from "@/lib/offerDetailsApi";
 import { Plus, Loader2, ShoppingCart, Store } from "lucide-react";
@@ -96,21 +99,7 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
     setIsLoading(true);
 
     try {
-      // Save off-chain offer details (price, limits, payment method); contract stores only trustless data
-      const paymentMethodJson = JSON.stringify(paymentMethods);
-      await putOfferDetails({
-        offerId,
-        creator: account.account,
-        amount: amountNum,
-        side,
-        price: priceNum,
-        minAmount: minAmountNum,
-        maxAmount: maxAmountNum,
-        paymentMethod: paymentMethodJson,
-        fiatCurrency,
-      });
-
-      // On-chain: create-offer (id, creator, amount, side only)
+      // On-chain first: create-offer (id, creator, amount, side only)
       const tx = buildCreateOfferTx(
         offerId,
         amountNum,
@@ -119,17 +108,11 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
         side
       );
 
-      console.log("Built transaction:", tx);
-      console.log("Transaction type:", typeof tx);
-      console.log("Transaction keys:", Object.keys(tx || {}));
-
-      // Sign with wallet
       const signedTx = await signTransaction(tx);
-
-      // Submit to chain
+      console.debug("[CreateOffer] Sending create-offer tx — API:", getChainwebDebugInfo());
       const requestKey = await submitTransaction(signedTx);
+      console.debug("[CreateOffer] Send OK, requestKey:", requestKey);
 
-      // Wait for tx to be included in a block and check on-chain result
       const txResult = await pollTransaction(requestKey);
       const res = txResult?.result;
       if (res?.status === "failure") {
@@ -140,11 +123,37 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
           const o = e as Record<string, unknown>;
           errMsg = String(o.message ?? o.msg ?? o.info ?? o.detail ?? errMsg);
         }
-        throw new Error(errMsg);
+        // Debug: full chain response and API used (for "read-only" / node issues)
+        console.error("[CreateOffer] On-chain failure — full poll result:", JSON.stringify(txResult, null, 2));
+        console.error("[CreateOffer] Chain API used:", getChainwebDebugInfo());
+        throw new Error(`On-chain: ${errMsg}`);
+      }
+
+      // Then save off-chain offer details (price, limits, payment method)
+      let offChainSaved = true;
+      const paymentMethodJson = JSON.stringify(paymentMethods);
+      try {
+        await putOfferDetails({
+          offerId,
+          creator: account.account,
+          amount: amountNum,
+          side,
+          price: priceNum,
+          minAmount: minAmountNum,
+          maxAmount: maxAmountNum,
+          paymentMethod: paymentMethodJson,
+          fiatCurrency,
+        });
+      } catch (apiErr) {
+        offChainSaved = false;
+        console.warn("Off-chain offer details save failed:", apiErr);
+        toast.warning("Offer created on-chain. Server could not save price/payment details (check DB write access).");
       }
 
       toast.success("Offer created!", {
-        description: `Request Key: ${requestKey.slice(0, 16)}...`,
+        description: offChainSaved
+          ? `Request Key: ${requestKey.slice(0, 16)}...`
+          : `On-chain only. Request Key: ${requestKey.slice(0, 16)}...`,
       });
 
       onSuccess?.(offerId, requestKey);
@@ -157,9 +166,16 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
       setPaymentMethods([]);
     } catch (error) {
       console.error("Create offer error:", error);
-      toast.error("Failed to create offer", {
-        description: error instanceof Error ? error.message : "Unknown error",
-      });
+      console.error("[CreateOffer] Chain API at time of error:", getChainwebDebugInfo());
+      const msg = error instanceof Error ? error.message : "Unknown error";
+      const isReadOnly = /read-only|system-only|database operation/.test(msg);
+      const isChain = /Send failed|On-chain:|requestKey|Transaction failed/.test(msg) || isReadOnly;
+      const hint = isReadOnly
+        ? `The Chainweb API is in read-only mode (no table writes). Use a write-capable API: set VITE_CHAINWEB_API to the full Pact URL (e.g. https://api.chainweb.com/chainweb/0.0/mainnet01/chain/1/pact) and restart. Current API: ${getChainwebDebugInfo().apiHost}`
+        : isChain
+          ? "Chain/node: " + msg
+          : msg;
+      toast.error("Failed to create offer", { description: hint });
     } finally {
       setIsLoading(false);
     }
@@ -316,7 +332,7 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
           </p>
           <p className="text-xs text-amber-600 dark:text-amber-500">
             If Create Offer fails with &quot;table not found&quot;, the escrows table was not created. The deployer must run{" "}
-            <code className="rounded bg-muted px-0.5">(create-table free.p2p-escrow.escrows)</code> in the deployment tx. See{" "}
+            <code className="rounded bg-muted px-0.5">(create-table {CONTRACT_NAMESPACE}.{CONTRACT_MODULE}.escrows)</code> in the deployment tx. See{" "}
             <code>DEPLOY.md</code>.
           </p>
 
@@ -340,6 +356,15 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
               Connect your wallet to create offers
             </p>
           )}
+
+          {import.meta.env.DEV && (() => {
+            const info = getChainwebDebugInfo();
+            return (
+              <p className="text-xs text-muted-foreground border-t pt-2 mt-2" title="For read-only errors: check this API supports writes">
+                Chain API: {info.apiHost} (network: {info.networkId}, chain: {info.chainId})
+              </p>
+            );
+          })()}
         </form>
       </CardContent>
     </Card>

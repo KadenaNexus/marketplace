@@ -31,6 +31,16 @@ export async function putOfferDetails(details: Omit<OfferDetails, "createdAt">):
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(details),
   });
-  if (!res.ok) throw new Error(await res.text().catch(() => res.statusText));
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText);
+    let msg = text;
+    try {
+      const j = JSON.parse(text) as { error?: string; message?: string };
+      msg = j.error ?? j.message ?? text;
+    } catch {
+      /* use text as-is */
+    }
+    throw new Error(msg);
+  }
   return res.json();
 }

@@ -9,10 +9,22 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useState } from "react";
 import { useWallet } from "@/hooks/useWallet";
 import { fetchProfile } from "@/lib/profileApi";
-import { CHAIN_ID, NETWORK_ID, listAllEscrows } from "@/lib/kadena";
-import { ShieldCheck, LogOut, Shield } from "lucide-react";
+import {
+  CHAIN_ID,
+  NETWORK_ID,
+  CONTRACT_NAMESPACE,
+  CONTRACT_MODULE,
+  listAllEscrows,
+  buildInitAllTx,
+  signTransaction,
+  submitTransaction,
+  pollTransaction,
+} from "@/lib/kadena";
+import { ShieldCheck, LogOut, Shield, Loader2, Database } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { toast } from "sonner";
 
 type UserRole = "buyer" | "seller" | null;
 
@@ -20,6 +32,7 @@ const Index = () => {
   const { account, isConnected } = useWallet();
   const [role, setRole] = useState<UserRole>(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [initLoading, setInitLoading] = useState(false);
 
   const { data: profile } = useQuery({
     queryKey: ["profile", account?.account],
@@ -45,6 +58,30 @@ const Index = () => {
 
   const handleOfferCreated = () => {
     setRefreshTrigger((r) => r + 1);
+  };
+
+  const handleRunInit = async () => {
+    if (!account) return;
+    setInitLoading(true);
+    try {
+      const tx = buildInitAllTx(account.account, account.publicKey);
+      const signed = await signTransaction(tx);
+      const requestKey = await submitTransaction(signed);
+      const result = await pollTransaction(requestKey);
+      const res = result?.result;
+      if (res?.status === "failure") {
+        const e = res.error;
+        const msg = typeof e === "string" ? e : (e && typeof e === "object" && (e as { message?: string }).message) || "Init failed";
+        throw new Error(msg);
+      }
+      toast.success("Contract initialized", { description: `Tables created. Request key: ${requestKey.slice(0, 16)}...` });
+      setRefreshTrigger((r) => r + 1);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast.error("Init failed", { description: msg });
+    } finally {
+      setInitLoading(false);
+    }
   };
 
   return (
@@ -111,6 +148,27 @@ const Index = () => {
               <SellerView refreshTrigger={refreshTrigger} />
             )}
           </div>
+        )}
+
+        {/* Initialize contract (deployers only): run once after deploy. The app builds the tx with GOVERNANCE cap so your wallet signs for it. */}
+        {isConnected && account && (
+          <Card className="mt-8 border-dashed">
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <Database className="h-4 w-4" />
+                Initialize contract (deployers only)
+              </CardTitle>
+              <CardDescription>
+                Run once after deploying the module. Creates tables and config. You must sign with the <strong>same key that deployed</strong> the module. The wallet will ask you to approve the capability <code className="text-xs">{CONTRACT_NAMESPACE}.{CONTRACT_MODULE}.GOVERNANCE</code> — that is &quot;granting&quot; the capability; approve it.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button onClick={handleRunInit} disabled={initLoading} variant="outline" className="gap-2">
+                {initLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
+                {initLoading ? "Initializing..." : "Run init (create tables + config)"}
+              </Button>
+            </CardContent>
+          </Card>
         )}
       </main>
 

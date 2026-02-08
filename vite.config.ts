@@ -8,33 +8,49 @@ export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
     port: 8080,
-    proxy: {
-      // Bypass CORS: browser calls same-origin /chainweb-proxy, Vite forwards to Chainweb.
-      // Chaddex returns 500 on /send. Default: us-e1 (Kadena). If ENOTFOUND or 404, add to .env:
-      // VITE_CHAINWEB_PROXY_TARGET=https://chainweb.chaddex.com
-      "/chainweb-proxy": {
-        target: process.env.VITE_CHAINWEB_PROXY_TARGET || "https://chainweb.chaddex.com",
-        changeOrigin: true,
-        rewrite: (path) =>
-          path.replace(/^\/chainweb-proxy/, "/chainweb/0.0/mainnet01/chain/1/pact"),
-      },
-      // Profile API: run "npm run dev:server" and proxy /api to it
-      "/api": {
-        target: process.env.VITE_PROFILE_API || "http://localhost:3001",
-        changeOrigin: true,
-      },
-      // WebSocket proxy for Socket.IO
-      "/socket.io": {
-        target: process.env.VITE_PROFILE_API || "http://localhost:3001",
-        changeOrigin: true,
-        ws: true,
-      },
-      // Uploaded files (profiles and evidence)
-      "/uploads": {
-        target: process.env.VITE_PROFILE_API || "http://localhost:3001",
-        changeOrigin: true,
-      },
-    },
+    proxy: (() => {
+      // Use 127.0.0.1 to avoid IPv6/localhost EACCES on Windows when dev:server isn't running.
+      // "ws proxy error: ECONNREFUSED 127.0.0.1:3001" is normal when the profile API isn't running — run "npm run dev:server" in another terminal.
+      const profileTarget = process.env.VITE_PROFILE_API || "http://127.0.0.1:3001";
+      const proxyError = (err: NodeJS.ErrnoException & { message?: string }, _req: unknown, _res: unknown) => {
+        const code = err.code ?? (err as { cause?: { code?: string } }).cause?.code;
+        const msg = err.message ?? "";
+        if (
+          code === "ECONNRESET" ||
+          code === "ECONNREFUSED" ||
+          code === "EACCES" ||
+          msg.includes("ECONNREFUSED") ||
+          msg.includes("ECONNRESET") ||
+          msg.includes("EACCES")
+        )
+          return;
+        console.error("[vite] proxy error:", err.message);
+      };
+      return {
+        "/api": {
+          target: profileTarget,
+          changeOrigin: true,
+          configure: (proxy: { on: (ev: string, fn: (...a: unknown[]) => void) => void }) => {
+            proxy.on("error", proxyError);
+          },
+        },
+        "/socket.io": {
+          target: profileTarget,
+          changeOrigin: true,
+          ws: true,
+          configure: (proxy: { on: (ev: string, fn: (...a: unknown[]) => void) => void }) => {
+            proxy.on("error", proxyError);
+          },
+        },
+        "/uploads": {
+          target: profileTarget,
+          changeOrigin: true,
+          configure: (proxy: { on: (ev: string, fn: (...a: unknown[]) => void) => void }) => {
+            proxy.on("error", proxyError);
+          },
+        },
+      };
+    })(),
   },
   plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
   resolve: {

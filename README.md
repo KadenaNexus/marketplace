@@ -77,15 +77,15 @@ DATABASE_URL=postgresql://user:password@host:port/kadena_nexus npm run dev:serve
   - Format: `postgresql://[user[:password]@][host][:port][/database]`
   - Example: `postgresql://postgres:postgres@localhost:5432/kadena_nexus`
 
-This starts the profile API on port 3001. The Vite dev server proxies `/api` to it.
+This starts the profile API on port 3001. The Vite dev server proxies `/api` and `/socket.io` (WebSocket) to it. If you see **ws proxy error: ECONNRESET** in the Vite terminal, run `npm run dev:server` in another terminal so the profile API is up.
 
-App runs at `http://localhost:8080`. In dev, Chainweb calls go through a Vite proxy (`/chainweb-proxy` → `chainweb.chaddex.com`) to avoid CORS. Override with:
+App runs at `http://localhost:8080`. Chainweb is called **directly** (no proxy): the app uses `VITE_CHAINWEB_API` or the default API base (e.g. `https://chainweb.chaddex.com`). Override with:
 
 ```sh
-VITE_CHAINWEB_PROXY_TARGET=https://chainweb.chaddex.com npm run dev
+VITE_CHAINWEB_API=https://api.chainweb.com/chainweb/0.0/mainnet01/chain/1/pact npm run dev
 ```
 
-(Prod uses `https://chainweb.chaddex.com` directly.)
+If you see CORS errors in the browser, the API may not allow requests from your origin; you can try another API or run a small proxy yourself.
 
 ## Scripts
 
@@ -99,35 +99,86 @@ VITE_CHAINWEB_PROXY_TARGET=https://chainweb.chaddex.com npm run dev
 
 ## Contract Deployment
 
-The Pact module `free.p2p-escrow` is production-ready with:
+The Pact module is `free.p2p-escrow-again` (see `CONTRACT_MODULE` in `src/lib/kadena.ts`). It provides:
 
 - **Strict state machine** — CREATED → ACCEPTED → FUNDED → PAID → COMPLETED (or REFUNDED/CLOSED/DISPUTED via timeouts or arbiter).
-- **Timed transitions** — T1/T2/T3 (default 10 min each); timeouts auto-close, refund, or escalate to DISPUTED.
-- **Events** — Every state change is logged (offerId, eventType, fromState, toState, actor, blockTime) for UI activity and audit.
-- **Completed trades** — On release, the contract writes to `completed-trades`; rating enforcement can use `get-completed-trade` / `list-completed-offer-ids`.
-- **Admin** — `init-config` and `set-config(arbiter, t1, t2, t3)` (GOVERNANCE) to set arbiter and timeout seconds.
+- **Timed transitions** — T1/T2/T3 (default 10 min each).
+- **Admin** — `init-config` and `set-config(arbiter, t1, t2, t3)` (GOVERNANCE).
 
-After deploying the module, run **one** init transaction (signed by the deployer with GOVERNANCE):
+### One-transaction deploy (recommended)
 
-- **Minimal:** `buildInitTx` — creates only `escrows`.
-- **Full (recommended):** `buildInitAllTx` — creates `escrows`, `events`, `completed-trades`, `config`, `offer-event-ids` and runs `init-config`.
+`p2p-escrow.pact` ends with an **init block** that runs in the **same transaction** as the module load. One deploy = module + create tables + init config.
 
-The dApp **Initialize** action may fail with “Module admin is necessary” because only the deployer can create tables. Use your deployment tooling or sign `buildInitAllTx` with the deployer key.
+1. Deploy the **entire** `p2p-escrow.pact` file (module + the block at the end) in one transaction.
+2. When signing the deploy tx you **must grant** the capability `free.p2p-escrow-again.GOVERNANCE`:
+   - **Chainweaver:** When you sign the deploy transaction, add the capability `free.p2p-escrow-again.GOVERNANCE` to the signer (e.g. in "Capabilities" or "Signing"). If you don't add it, you get "Module admin is necessary but has not been acquired."
+3. For **upgrades** (tables already exist), remove or comment out the block at the end of the file to avoid "table already exists."
 
-### Initialize tables only (small contract)
+### Tables and init in same tx
 
-To deploy a **minimal** module that only creates and initializes the tables (no business logic):
+The init block at the end of `p2p-escrow.pact` uses top-level `create-table` (allowed only at tx top level) and then `init-config`. It runs in the same transaction as the module load, so you don't need a separate init step — as long as you grant GOVERNANCE when signing the deploy tx.
 
-1. **Deploy** `p2p-escrow-init.pact` as module `free.p2p-escrow`. This small contract contains only: schemas, tables, `init-config`, `set-config`, and getters (`get-arbiter`, `get-t1`–`get-t3`, `get-reputation`, `get-escrow`, `list-escrow-ids`).
-2. **Run init** — Sign and submit `buildInitAllTx(adminAccount, adminPubKey)` (from `src/lib/kadena.ts`). This creates `escrows`, `reputation`, and `config` and runs `init-config`. Tables are then ready and empty.
-3. **Optional: upgrade to full logic** — Deploy `p2p-escrow.pact` (same module name `free.p2p-escrow`) to add create-offer, deposit, release, refund, timeouts, etc. Tables already exist; no need to run init again.
+After deploying the module (with the init block), you do **not** need a separate init. If you used a two-step deploy (no init block), run **one** init (see **One function in Chainweaver after deploy** below).
+
+The dApp **Initialize** action may fail with “Module admin is necessary” if you never ran init (or didn't grant GOVERNANCE when deploying). If you see "Operation is not allowed in read-only or system-only mode" when creating an offer, the contract tables were likely never created—run init once (Chainweaver or `buildInitAllTx`) with the GOVERNANCE key, or redeploy with GOVERNANCE granted.
+
+### Two-step deploy (optional)
+
+If you deploy **without** the init block at the end of `p2p-escrow.pact`, deploying only loads the code. You must create tables by calling `create-table` (via the init block or `p2p-escrow-deploy-init.pact`) in a **separate** transaction. You cannot create tables by “just” deploying.
+
+### One function in Chainweaver after deploy
+
+After you deploy `p2p-escrow.pact`, run **one** transaction to create tables and set config:
+
+1. Open **Chainweaver** and connect to the same network/chain you deployed to (e.g. mainnet01, chain 1).
+2. Go to **Interact** (or the Pact REPL / “Run” screen).
+3. In the **Pact code** field, paste the full block from `p2p-escrow-deploy-init.pact` (with-capability + create-table x3 + init-config). Do not use init-all alone — tables must be created at tx top level.
+4. Set **Sender** to the account that deployed the module (the one that has GOVERNANCE).
+5. Add the **GOVERNANCE** capability when signing (sign with the deployer key so `free.p2p-escrow-again.GOVERNANCE` is granted).
+6. Send the transaction.
+
+Run init in a **separate** transaction after deploy (two-step deploy). Use the block from `p2p-escrow-deploy-init.pact` or `buildInitAllTx` — this creates tables and sets config. After it succeeds, `create-offer` will work (if the node allows writes).
+
+### Init from the dApp
+
+Call `buildInitAllTx(governanceAccount, governancePubKey)` (in `src/lib/kadena.ts`), sign with the GOVERNANCE key, and submit. Same effect as running the block from `p2p-escrow-deploy-init.pact` in Chainweaver.
+
+### "Module admin is necessary but has not been acquired"
+
+This happens when you run the init transaction (p2p-escrow-deploy-init.pact) but the **GOVERNANCE** capability was not granted. Fix:
+
+1. **Sign with the same key that deployed the module** — The account/key that deployed `p2p-escrow.pact` is the "module admin" and the only one who can grant GOVERNANCE.
+2. **Grant the capability when signing** — In Chainweaver, when you sign the init tx, you must **add** the capability `free.p2p-escrow-again.GOVERNANCE` (or your module name) to the signer so you are granting it. If you don't add it, the capability is not acquired and you get this error.
+
+So: **Sender** = deployer account, **Signer** = deployer key, and when signing add the capability **free.p2p-escrow-again.GOVERNANCE**.
+
+### "Operation is not allowed in read-only or system-only mode" (mainnet chain 1)
+
+Your console shows: tx **mined** (blockHeight, events), but **result.status: "failure"** at the `insert escrows` step. The **node** that executed the tx (e.g. chainweb.chaddex.com on mainnet) is **read-only for user table writes** — the contract and frontend are correct.
+
+**For mainnet chain 1 only:** You need a **write-capable** node. The public community API may be read-only for user tables. Options:
+
+1. **Run your own Chainweb node** on mainnet (chain 1), then in `.env` set `VITE_CHAINWEB_API` to the full Pact URL (e.g. `https://YOUR_NODE_HOST/chainweb/0.0/mainnet01/chain/1/pact`). Your node will have write capability.
+2. Use another mainnet API that supports writes, if available, and point the app to it the same way.
+
+**Debug:** Browser console shows `[CreateOffer] Chain API used:` and the full poll result. Dev UI shows **Chain API:** at the bottom of the Create Offer form. If tables were never initialized, run init once with GOVERNANCE.
 
 ## Configuration
 
 - **Network:** `mainnet01`, **Chain:** `1`
-- **Contract:** `free.p2p-escrow` (`CONTRACT_NAMESPACE`, `CONTRACT_MODULE` in `src/lib/kadena.ts`)
+- **Contract:** `free.p2p-escrow-again` by default (`CONTRACT_NAMESPACE`, `CONTRACT_MODULE` in `src/lib/kadena.ts`; overridable via `VITE_CONTRACT_NAMESPACE`, `VITE_CONTRACT_MODULE`)
 - **Arbiter:** Set in the Pact constant `PLATFORM_ARBITER` before deployment
 - **PostgreSQL (profiles only):** `DATABASE_URL` — offers/escrows are **not** in PostgreSQL; they stay on-chain (Pact)
+
+### Custom namespace and "Namespace not found"
+
+If you see **"Namespace not found: saudi"** (or any name), that namespace does **not** exist on the chain. Kadena does not create namespaces automatically.
+
+- **Use `free` (recommended):** The namespace `free` exists on mainnet. Keep `(namespace "free")` in `p2p-escrow.pact` and set `VITE_CONTRACT_NAMESPACE=free` (or leave unset). No extra steps.
+- **Vanity names (e.g. `saudi`, `mycompany`):** These only work if they were already registered on the chain (historically via Kadena). You cannot invent a new vanity name without it existing first.
+- **Principal namespace:** You can create a namespace derived from your keyset: call `ns.create-principal-namespace (read-keyset "admin-keyset")` in a tx; it returns an opaque name like `n_c1a583206e24450af26de41110042b019695db8c`. Then use that string in `(namespace "n_...")` and in the init block. See [Kadena’s namespace guide](https://www.kadena.io/perspectives/an-introductory-guide-to-kadena-namespaces).
+
+If you change namespace or module name in the Pact file, update the **init block at the end** of `p2p-escrow.pact` to use the same `{namespace}.{module}.GOVERNANCE` (and table names), and set `VITE_CONTRACT_NAMESPACE` and `VITE_CONTRACT_MODULE` in `.env` to match.
 
 ## Project Structure
 
@@ -143,7 +194,7 @@ server/
   schema.sql          # PostgreSQL database schema initialization
 p2p-escrow.pact       # Full Pact module (business logic)
 p2p-escrow-init.pact  # Minimal module (tables + init only; deploy first to init empty)
-vite.config.ts        # Proxy for /chainweb-proxy and /api in dev
+vite.config.ts        # Proxy for /api and /socket.io (profile server) in dev
 ```
 
 ## License

@@ -1,6 +1,11 @@
+;; NAMESPACE: Use "free" (pre-existing on mainnet). Custom names like "saudi" must be created first (see README "Custom namespace").
+;; If you use a principal namespace (n_xxx from ns.create-principal-namespace), set it here and in the init block below.
 (namespace "free")
+;; DEPLOY (one transaction): Deploy this ENTIRE file — module + init block at the end run in the SAME tx.
+;; When signing the deploy tx you MUST grant the capability {namespace}.{module}.GOVERNANCE (e.g. free.p2p-escrow-again.GOVERNANCE).
+;; For upgrades (tables already exist), remove or comment out the block at the end to avoid "table already exists".
 
-(module p2p-escrow-test GOVERNANCE
+(module p2p-escrow3 GOVERNANCE
   (defcap GOVERNANCE () true)
   (defconst VAULT_ACCOUNT "p2p-escrow-vault")
   (defconst PLATFORM_ARBITER "k:665976b8f985c0119c3afa74115fde19f71309cc85428a7104dc2648252b593e")
@@ -29,6 +34,12 @@
   (deftable escrows:{escrow})
   (deftable reputation:{reputation-row})
   (deftable config:{config-row})
+  ;; Tables must be created at TRANSACTION top level (create-table cannot be used inside module). Use the block at end of this file on first deploy.
+  ;; init-all: insert config only (same as init-config). Table creation is done by the top-level block after the module.
+  (defun init-all ()
+    (with-capability (GOVERNANCE)
+      (insert config "global"
+        { "arbiter": PLATFORM_ARBITER, "t1": T1_SECONDS, "t2": T2_SECONDS, "t3": T3_SECONDS })))
   (defun init-config ()
     (with-capability (GOVERNANCE)
       (insert config "global"
@@ -50,17 +61,18 @@
   (defun get-t3 ()
     (with-read config "global" { "t3" := t } t))
   (defun inc-reputation (wallet success)
-    (let ((row (if (contains wallet (keys reputation)) (read reputation wallet) {"totalTrades": 0, "successfulTrades": 0, "disputesCount": 0}))
-          (total (at "totalTrades" row))
-          (ok (at "successfulTrades" row))
-          (disputes (at "disputesCount" row)))
+    (with-default-read reputation wallet { "totalTrades": 0, "successfulTrades": 0, "disputesCount": 0 }
+      { "totalTrades" := total, "successfulTrades" := ok, "disputesCount" := disputes }
       (write reputation wallet
-        {"totalTrades": (+ total 1), "successfulTrades": (if success (+ ok 1) ok), "disputesCount": (if success disputes (+ disputes 1))})))
+        { "totalTrades": (+ total 1), "successfulTrades": (if success (+ ok 1) ok), "disputesCount": (if success disputes (+ disputes 1)) })))
   (defun get-reputation (wallet)
-    (if (contains wallet (keys reputation)) (read reputation wallet) {"totalTrades": 0, "successfulTrades": 0, "disputesCount": 0}))
+    (with-default-read reputation wallet { "totalTrades": 0, "successfulTrades": 0, "disputesCount": 0 }
+      { "totalTrades" := total, "successfulTrades" := ok, "disputesCount" := disputes }
+      { "totalTrades": total, "successfulTrades": ok, "disputesCount": disputes }))
   (defun create-offer (id creator amount side)
     (enforce (= (read-msg "sender") creator) "Creator must be the transaction sender")
-    (enforce (not (contains id (keys escrows))) "Escrow exists")
+    (with-default-read escrows id { "creator": "" } { "creator" := c }
+      (enforce (= (length c) 0) "Escrow exists"))
     (enforce (> amount 0.0) "Amount must be > 0")
     (enforce (> (length creator) 0) "Creator required")
     (enforce (!= creator (get-arbiter)) "Creator and arbiter must be different")
@@ -187,3 +199,13 @@
   (defun list-escrow-ids ()
     (keys escrows))
 )
+;; ========== INIT IN SAME TRANSACTION (run when you deploy this file) ==========
+;; create-table is only allowed at tx top level. This block creates tables and sets config.
+;; You MUST sign the deploy tx with the capability {namespace}.{module}.GOVERNANCE granted (e.g. free.p2p-escrow-again.GOVERNANCE).
+;; If you changed (namespace "free") or the module name above, replace "free" and "p2p-escrow3" in the 5 lines below to match.
+;; For module upgrades (tables exist), comment out or delete the block below.
+(with-capability (free.p2p-escrow3.GOVERNANCE)
+  (create-table free.p2p-escrow3.escrows)
+  (create-table free.p2p-escrow3.reputation)
+  (create-table free.p2p-escrow3.config)
+  (free.p2p-escrow3.init-config))

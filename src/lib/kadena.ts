@@ -1,25 +1,51 @@
-import { IUnsignedCommand, Pact, createClient, createSignWithEckoWallet } from "@kadena/client";
+import {
+  type ChainId,
+  IUnsignedCommand,
+  Pact,
+  createClient,
+  createSignWithEckoWallet,
+} from "@kadena/client";
 
 /* ============================================================
    NETWORK CONFIG
 ============================================================ */
 
-export const NETWORK_ID = "mainnet01";
-export const CHAIN_ID = "1";
+export const NETWORK_ID =
+  (typeof import.meta.env?.VITE_NETWORK_ID === "string" && import.meta.env.VITE_NETWORK_ID) || "mainnet01";
+const CHAIN_ID_RAW =
+  (typeof import.meta.env?.VITE_CHAIN_ID === "string" && import.meta.env.VITE_CHAIN_ID) || "1";
+export const CHAIN_ID: ChainId = CHAIN_ID_RAW as ChainId;
 
-// Chaddex blocks CORS from browser. In dev we use a Vite proxy; in prod we use the official API.
-const API_CHAINWEB_PACT = `https://chainweb.chaddex.com/chainweb/0.0/${NETWORK_ID}/chain/${CHAIN_ID}/pact`;
+// VITE_CHAINWEB_API overrides. Else: testnet → api.testnet.chainweb.com (often allows writes); mainnet → chainweb.chaddex.com (mainnet nodes may be read-only for user tables).
+const DEFAULT_API_BASE =
+  NETWORK_ID.startsWith("testnet")
+    ? "https://api.testnet.chainweb.com"
+    : "https://chainweb.chaddex.com";
+// Direct Chainweb Pact API (no proxy). Set VITE_CHAINWEB_API to override base URL.
+const API_CHAINWEB_PACT =
+  typeof import.meta.env?.VITE_CHAINWEB_API === "string" && import.meta.env.VITE_CHAINWEB_API
+    ? import.meta.env.VITE_CHAINWEB_API
+    : `${DEFAULT_API_BASE}/chainweb/0.0/${NETWORK_ID}/chain/${CHAIN_ID}/pact`;
 
-export const API_HOST =
-  import.meta.env.DEV && typeof window !== "undefined"
-    ? `${window.location.origin}/chainweb-proxy`
-    : API_CHAINWEB_PACT;
+export const API_HOST = API_CHAINWEB_PACT;
 
-// Must match deployment: (describe-module "{ns}.{mod}") or deployment logs.
-export const CONTRACT_NAMESPACE = "free";
-export const CONTRACT_MODULE = "p2p-escrow-test";
+// Must match p2p-escrow.pact: (namespace "X") and (module Y ...). Override via env for custom namespace.
+export const CONTRACT_NAMESPACE =
+  (typeof import.meta.env?.VITE_CONTRACT_NAMESPACE === "string" && import.meta.env.VITE_CONTRACT_NAMESPACE) || "free";
+export const CONTRACT_MODULE =
+  (typeof import.meta.env?.VITE_CONTRACT_MODULE === "string" && import.meta.env.VITE_CONTRACT_MODULE) || "p2p-escrow-again";
 
 export const kadenaClient = createClient(API_HOST);
+
+/** Debug: effective Chainweb API base and send URL (for "read-only" troubleshooting). */
+export function getChainwebDebugInfo(): { apiHost: string; sendUrl: string; networkId: string; chainId: string } {
+  return {
+    apiHost: API_HOST,
+    sendUrl: `${API_HOST}/api/v1/send`,
+    networkId: NETWORK_ID,
+    chainId: CHAIN_ID,
+  };
+}
 
 /* ============================================================
    TYPES
@@ -126,6 +152,9 @@ export async function submitTransaction(signedCmd: any): Promise<string> {
   const cmd = signedCmd?.signedCmd ?? signedCmd;
   const body = { cmds: Array.isArray(cmd) ? cmd : [cmd] };
   const url = `${API_HOST}/api/v1/send`;
+  if (typeof console !== "undefined" && console.debug) {
+    console.debug("[Chainweb] POST", url, getChainwebDebugInfo());
+  }
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -374,18 +403,18 @@ export function buildInitTx(senderAccount: string, senderPubKey: string) {
     .createTransaction();
 }
 
-/** Initialize all tables (escrows, reputation, config) and run init-config. Run once after deploy. */
+/** Initialize all tables and config. create-table is only allowed at tx top level; use this block once after deploy with GOVERNANCE key. */
 export function buildInitAllTx(senderAccount: string, senderPubKey: string) {
   const govCap = `${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.GOVERNANCE`;
   const ns = CONTRACT_NAMESPACE;
   const mod = CONTRACT_MODULE;
-  const code = `(with-capability (${govCap})
-    (create-table ${ns}.${mod}.escrows)
-    (create-table ${ns}.${mod}.reputation)
-    (create-table ${ns}.${mod}.config)
-    (${ns}.${mod}.init-config))`;
+  const pactCode = `(with-capability (${govCap})
+  (create-table ${ns}.${mod}.escrows)
+  (create-table ${ns}.${mod}.reputation)
+  (create-table ${ns}.${mod}.config)
+  (${ns}.${mod}.init-config))`;
   return Pact.builder
-    .execution(code)
+    .execution(pactCode)
     .addSigner(senderPubKey, (s) => [s("coin.GAS"), s(govCap)])
     .setMeta({
       chainId: CHAIN_ID,
