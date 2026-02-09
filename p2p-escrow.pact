@@ -5,7 +5,7 @@
 ;; When signing the deploy tx you MUST grant the capability {namespace}.{module}.GOVERNANCE (e.g. free.p2p-escrow-again.GOVERNANCE).
 ;; For upgrades (tables already exist), remove or comment out the block at the end to avoid "table already exists".
 
-(module p2p-escrow3 GOVERNANCE
+(module p2p-escrow4 GOVERNANCE
   (defcap GOVERNANCE () true)
   (defconst VAULT_ACCOUNT "p2p-escrow-vault")
   (defconst PLATFORM_ARBITER "k:665976b8f985c0119c3afa74115fde19f71309cc85428a7104dc2648252b593e")
@@ -202,10 +202,10 @@
 ;; ========== INIT IN SAME TRANSACTION (run when you deploy this file) ==========
 ;; create-table is only allowed at tx top level. This block creates tables and sets config.
 ;; You MUST sign the deploy tx with the capability {namespace}.{module}.GOVERNANCE granted (e.g. free.p2p-escrow-again.GOVERNANCE).
-;; If you changed (namespace "free") or the module name above, replace "free" and "p2p-escrow3" in the 5 lines below to match.
+;; If you changed (namespace "free") or the module name above, replace "free" and "p2p-escrow4" in the 5 lines below to match.
 ;; For module upgrades (tables exist), comment out or delete the block below.
-(with-capability (free.p2p-escrow3.GOVERNANCE)
-  (create-table free.p2p-escrow3.escrows)
-  (create-table free.p2p-escrow3.reputation)
-  (create-table free.p2p-escrow3.config)
-  (free.p2p-escrow3.init-config))
+(with-capability (free.p2p-escrow4.GOVERNANCE)
+  (create-table free.p2p-escrow4.escrows)
+  (create-table free.p2p-escrow4.reputation)
+  (create-table free.p2p-escrow4.config)
+  (free.p2p-escrow4.init-config))
