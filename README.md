@@ -163,6 +163,8 @@ Your console shows: tx **mined** (blockHeight, events), but **result.status: "fa
 
 **Debug:** Browser console shows `[CreateOffer] Chain API used:` and the full poll result. Dev UI shows **Chain API:** at the bottom of the Create Offer form. If tables were never initialized, run init once with GOVERNANCE.
 
+**Best practice:** Run your own write-capable Chainweb node, or use a provider that supports writes. Keep `VITE_CHAINWEB_API` configurable (already supported via `.env`) so you can point the app at your node or a write-capable API without code changes.
+
 ### "Insert failed because of a schema mismatch with free.p2p-escrow4.escrow"
 
 The on-chain table for that module was created with an **older schema** (e.g. different field types). Pact tables keep their schema forever; upgrading the module code does not change the existing table.
@@ -172,6 +174,7 @@ The on-chain table for that module was created with an **older schema** (e.g. di
 ## Configuration
 
 - **Network:** `mainnet01`, **Chain:** `1`
+- **Chainweb API:** `VITE_CHAINWEB_API` — configurable (e.g. in `.env`). Use a write-capable node or provider for mainnet; some public endpoints are read-only for user table writes. Default may be a community API; override to point at your node or a write-capable provider.
 - **Contract:** `free.p2p-escrow5` by default (`CONTRACT_NAMESPACE`, `CONTRACT_MODULE` in `src/lib/kadena.ts`; overridable via `VITE_CONTRACT_NAMESPACE`, `VITE_CONTRACT_MODULE`. Must match the module name in `p2p-escrow.pact`.)
 - **Arbiter:** Set in the Pact constant `PLATFORM_ARBITER` before deployment
 - **PostgreSQL (profiles only):** `DATABASE_URL` — offers/escrows are **not** in PostgreSQL; they stay on-chain (Pact)

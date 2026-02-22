@@ -770,12 +770,23 @@ export async function getAccountInfo() {
    PROFILE – WALLET OWNERSHIP PROOF (SIGNED MESSAGE)
    Builds a non-submitted pact command; user signs to prove control.
    Backend verifies signature and data["profile-auth"] before allowing create/update.
+
+   Security depends on the server enforcing wallet <-> pubKey binding:
+   only k: accounts and wallet === k:pubKey. Without that, an attacker could
+   claim any wallet with their own key; the client builder alone is not sufficient.
 ============================================================ */
 
 const PROFILE_AUTH_PURPOSE = "Kadena P2P Escrow Profile";
 
 /** Builds an ownership-proof command. Do NOT submit; only sign and send signedCmd to the profile API. */
 export function buildProfileAuthTx(wallet: string, publicKey: string) {
+  // Enforce same wallet <-> pubKey binding as server: only k: accounts, wallet must equal k:pubKey
+  if (!wallet.startsWith("k:")) {
+    throw new Error("Only k: accounts are supported for profile auth");
+  }
+  if (wallet !== `k:${publicKey}`) {
+    throw new Error("wallet must match k:pubKey");
+  }
   const nonce = Date.now();
   return Pact.builder
     .execution("(identity true)")

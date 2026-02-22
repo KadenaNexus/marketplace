@@ -40,9 +40,22 @@ export async function sendMessage(params: SendMessageParams): Promise<UserMessag
   return res.json();
 }
 
-export async function getMessages(otherWallet: string, wallet: string): Promise<UserMessage[]> {
-  const url = `${API}/api/messages/${encodeURIComponent(otherWallet)}?wallet=${encodeURIComponent(wallet)}`;
-  console.log("[getMessages] Fetching:", url);
+export interface GetMessagesParams {
+  otherWallet: string;
+  wallet: string;
+  publicKey: string;
+  signedCmd: unknown;
+}
+
+export async function getMessages(params: GetMessagesParams): Promise<UserMessage[]> {
+  const { otherWallet, wallet, publicKey, signedCmd } = params;
+  const q = new URLSearchParams({
+    wallet,
+    publicKey,
+    signedCmd: typeof signedCmd === "string" ? signedCmd : JSON.stringify(signedCmd),
+  });
+  const url = `${API}/api/messages/${encodeURIComponent(otherWallet)}?${q.toString()}`;
+  console.log("[getMessages] Fetching:", url.replace(/signedCmd=[^&]+/, "signedCmd=..."));
   const res = await fetch(url);
   if (!res.ok) {
     const errorText = await res.text().catch(() => res.statusText);
@@ -76,8 +89,20 @@ export async function markMessageAsRead(
   return res.json();
 }
 
-export async function getUnreadCount(wallet: string): Promise<{ unreadCount: number }> {
-  const res = await fetch(`${API}/api/messages/unread-count?wallet=${encodeURIComponent(wallet)}`);
+export interface GetUnreadCountParams {
+  wallet: string;
+  publicKey: string;
+  signedCmd: unknown;
+}
+
+export async function getUnreadCount(params: GetUnreadCountParams): Promise<{ unreadCount: number }> {
+  const { wallet, publicKey, signedCmd } = params;
+  const q = new URLSearchParams({
+    wallet,
+    publicKey,
+    signedCmd: typeof signedCmd === "string" ? signedCmd : JSON.stringify(signedCmd),
+  });
+  const res = await fetch(`${API}/api/messages/unread-count?${q.toString()}`);
   if (!res.ok) {
     throw new Error(await res.text().catch(() => res.statusText));
   }

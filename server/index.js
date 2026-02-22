@@ -5,6 +5,7 @@
  * In dev, Vite proxies /api to this server.
  *
  * Env: DATABASE_URL (default postgresql://localhost:5432/kadena_nexus)
+ *       CORS_ORIGINS – comma-separated allowed origins (e.g. https://marketplace.kadena.ws,https://kadena.ws). If unset, any origin allowed (dev).
  */
 
 import "dotenv/config";
@@ -27,7 +28,17 @@ const __dirname = path.dirname(__filename);
 
 const PROFILE_AUTH_PURPOSE = "Kadena P2P Escrow Profile";
 const NONCE_TOLERANCE_MS = 5 * 60 * 1000; // 5 minutes
-const AVATAR_MAX_BYTES = 20 * 1024 * 1024; // 20MB
+const AVATAR_MAX_BYTES = 5 * 1024 * 1024; // 5MB
+
+// Replay protection: recently used (wallet, nonce); value = expiry time (TTL)
+const usedNonces = new Map(); // key: "wallet:nonce", value: expiryMs
+function pruneUsedNonces() {
+  const now = Date.now();
+  for (const [key, expiry] of usedNonces.entries()) {
+    if (expiry <= now) usedNonces.delete(key);
+  }
+}
+setInterval(pruneUsedNonces, 60 * 1000); // prune every minute
 
 // PostgreSQL configuration from environment variables
 // Can use either DATABASE_URL (full connection string) or individual components
@@ -40,6 +51,12 @@ const DB_NAME = process.env.DB_NAME || "kadena_nexus";
 // Build connection string from components if DATABASE_URL is not provided
 const DATABASE_URL = process.env.DATABASE_URL || 
   `postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}`;
+
+// CORS: if CORS_ORIGINS set, allow only those origins; otherwise allow any (dev)
+const CORS_ORIGINS_RAW = process.env.CORS_ORIGINS;
+const CORS_ALLOWED_ORIGINS = CORS_ORIGINS_RAW
+  ? CORS_ORIGINS_RAW.split(",").map((s) => s.trim()).filter(Boolean)
+  : null;
 
 const UPLOADS_DIR = path.join(__dirname, "uploads", "profiles");
 const EVIDENCE_DIR = path.join(__dirname, "uploads", "evidence");
@@ -112,7 +129,9 @@ const uploadEvidence = multer({
 });
 
 const app = express();
-app.use(cors({ origin: true }));
+app.use(cors({
+  origin: CORS_ALLOWED_ORIGINS?.length ? CORS_ALLOWED_ORIGINS : true,
+}));
 app.use(express.json({ limit: "256kb" }));
 
 // Debug middleware to log all requests
@@ -135,7 +154,7 @@ let pool;
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
-    origin: true,
+    origin: CORS_ALLOWED_ORIGINS?.length ? CORS_ALLOWED_ORIGINS : true,
     methods: ["GET", "POST"],
   },
 });
@@ -398,6 +417,13 @@ function verifyProfileAuth(signedCmd, expectedWallet, bodyPublicKey) {
     return { ok: false, reason: "Nonce expired" };
   }
 
+  // Replay protection: reject if (wallet, nonce) was already used
+  const nonceKey = `${expectedWallet}:${nonce}`;
+  if (usedNonces.has(nonceKey)) {
+    return { ok: false, reason: "Nonce already used (replay)" };
+  }
+  usedNonces.set(nonceKey, now + NONCE_TOLERANCE_MS);
+
   return { ok: true };
 }
 
@@ -406,7 +432,7 @@ app.post("/api/profiles/upload-avatar", (req, res, next) => {
   upload.single("image")(req, res, (err) => {
     if (err) {
       if (err.code === "LIMIT_FILE_SIZE") {
-        return res.status(400).json({ error: "File too large (max 2MB)" });
+        return res.status(400).json({ error: "File too large (max 5MB)" });
       }
       if (err.code === "LIMIT_UNEXPECTED_FILE") {
         return res.status(400).json({ error: "Unexpected file field" });

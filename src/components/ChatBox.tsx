@@ -52,9 +52,28 @@ export function ChatBox({ otherWallet, otherProfile, onClose, className, context
   const signedProofCacheRef = useRef<{ signedCmd: unknown; ts: number } | null>(null);
   const PROOF_CACHE_MS = 60_000;
 
+  /** Get signed proof (cached or fresh) for read endpoints. */
+  const getProofForRead = async (): Promise<unknown> => {
+    if (!account?.account || !account?.publicKey) throw new Error("No account");
+    const cached = signedProofCacheRef.current;
+    if (cached && Date.now() - cached.ts < PROOF_CACHE_MS) return cached.signedCmd;
+    const tx = buildProfileAuthTx(account.account, account.publicKey) as IUnsignedCommand;
+    const raw = await signTransaction(tx) as unknown;
+    const signedCmd = normalizeSignedCmd(raw);
+    const sigs = Array.isArray(signedCmd?.sigs) ? signedCmd.sigs : [];
+    if (sigs[0] && !sigs[0].pubKey) sigs[0] = { ...sigs[0], pubKey: account.publicKey };
+    if (sigs[0] && (sigs[0].signature != null) && !sigs[0].sig) sigs[0] = { ...sigs[0], sig: sigs[0].signature };
+    signedProofCacheRef.current = { signedCmd, ts: Date.now() };
+    return signedCmd;
+  };
+
   const { data: messages = [], refetch } = useQuery({
     queryKey: ["messages", otherWallet, account?.account],
-    queryFn: () => getMessages(otherWallet, account?.account || ""),
+    queryFn: async () => {
+      if (!account?.account || !account?.publicKey) return [];
+      const signedCmd = await getProofForRead();
+      return getMessages({ otherWallet, wallet: account.account, publicKey: account.publicKey, signedCmd });
+    },
     enabled: !!account && isConnected && !!otherWallet,
     refetchInterval: 5000, // Poll every 5 seconds as fallback
   });
