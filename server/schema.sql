@@ -28,6 +28,8 @@ CREATE TABLE IF NOT EXISTS offer_details (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_offer_details_creator ON offer_details(creator);
+-- List/filter offers by creator and time (Deliverable 5)
+CREATE INDEX IF NOT EXISTS idx_offer_details_creator_created_at ON offer_details(creator, created_at);
 
 -- Disputes table (OPEN | UNDER_REVIEW | CLOSED)
 CREATE TABLE IF NOT EXISTS disputes (
@@ -72,13 +74,13 @@ CREATE TABLE IF NOT EXISTS evidence (
 CREATE INDEX IF NOT EXISTS idx_evidence_offer_id ON evidence(offer_id);
 CREATE INDEX IF NOT EXISTS idx_evidence_submitted_by ON evidence(submitted_by);
 
--- Dispute messages table
+-- Dispute messages table (Deliverable 5: message length 2000, NOT NULL created_at)
 CREATE TABLE IF NOT EXISTS dispute_messages (
     id SERIAL PRIMARY KEY,
     offer_id VARCHAR(255) NOT NULL,
     from_wallet VARCHAR(255) NOT NULL,
-    message TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    message TEXT NOT NULL CHECK (char_length(message) <= 2000),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Indexes for dispute messages
@@ -87,14 +89,14 @@ CREATE INDEX IF NOT EXISTS idx_dispute_messages_created_at ON dispute_messages(c
 
 -- User messages table (chat between users, not tied to specific offers)
 -- Messages are identified by user pairs (from_wallet, to_wallet) sorted alphabetically
+-- Deliverable 5: message length limit 2000 (matches API validation), NOT NULL on required fields
 CREATE TABLE IF NOT EXISTS user_messages (
     id SERIAL PRIMARY KEY,
     from_wallet VARCHAR(255) NOT NULL,
     to_wallet VARCHAR(255) NOT NULL,
-    message TEXT NOT NULL,
+    message TEXT NOT NULL CHECK (char_length(message) <= 2000),
     read_at TIMESTAMP WITH TIME ZONE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    -- Optional: reference to offer that triggered the conversation (for context, not required)
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     context_offer_id VARCHAR(255)
 );
 
@@ -109,17 +111,21 @@ CREATE INDEX IF NOT EXISTS idx_user_messages_conversation ON user_messages(
     created_at
 );
 CREATE INDEX IF NOT EXISTS idx_user_messages_context_offer ON user_messages(context_offer_id);
+-- Deliverable 5: (from_wallet, to_wallet, created_at) for conversation ordering
+CREATE INDEX IF NOT EXISTS idx_user_messages_from_to_created ON user_messages(from_wallet, to_wallet, created_at);
+-- Unread count: to_wallet + read_at (read_at IS NULL = unread)
+CREATE INDEX IF NOT EXISTS idx_user_messages_to_wallet_read_at ON user_messages(to_wallet, read_at);
 
 -- Legacy offer_messages table (keep for backwards compatibility, but new messages go to user_messages)
--- We'll migrate existing data if needed
+-- Deliverable 5: message length limit 2000, NOT NULL where required
 CREATE TABLE IF NOT EXISTS offer_messages (
     id SERIAL PRIMARY KEY,
     offer_id VARCHAR(255) NOT NULL,
     from_wallet VARCHAR(255) NOT NULL,
     to_wallet VARCHAR(255) NOT NULL,
-    message TEXT NOT NULL,
+    message TEXT NOT NULL CHECK (char_length(message) <= 2000),
     read_at TIMESTAMP WITH TIME ZONE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Indexes for offer messages (legacy)
@@ -128,6 +134,8 @@ CREATE INDEX IF NOT EXISTS idx_offer_messages_from_wallet ON offer_messages(from
 CREATE INDEX IF NOT EXISTS idx_offer_messages_to_wallet ON offer_messages(to_wallet);
 CREATE INDEX IF NOT EXISTS idx_offer_messages_created_at ON offer_messages(created_at);
 CREATE INDEX IF NOT EXISTS idx_offer_messages_conversation ON offer_messages(offer_id, from_wallet, to_wallet);
+CREATE INDEX IF NOT EXISTS idx_offer_messages_from_to_created ON offer_messages(from_wallet, to_wallet, created_at);
+CREATE INDEX IF NOT EXISTS idx_offer_messages_to_wallet_read_at ON offer_messages(to_wallet, read_at);
 
 -- =============================================================================
 -- RATINGS & REPUTATION (integrity rules)
@@ -173,4 +181,65 @@ BEGIN
     ) THEN
         ALTER TABLE profiles ADD COLUMN last_seen TIMESTAMP WITH TIME ZONE;
     END IF;
+END $$;
+
+-- =============================================================================
+-- Deliverable 5 — Database hardening: indexes and constraints (idempotent)
+-- Run this block on existing DBs to add new indexes and message length checks.
+-- =============================================================================
+
+-- Indexes (safe to run multiple times)
+CREATE INDEX IF NOT EXISTS idx_offer_details_creator_created_at ON offer_details(creator, created_at);
+CREATE INDEX IF NOT EXISTS idx_user_messages_from_to_created ON user_messages(from_wallet, to_wallet, created_at);
+CREATE INDEX IF NOT EXISTS idx_user_messages_to_wallet_read_at ON user_messages(to_wallet, read_at);
+CREATE INDEX IF NOT EXISTS idx_offer_messages_from_to_created ON offer_messages(from_wallet, to_wallet, created_at);
+CREATE INDEX IF NOT EXISTS idx_offer_messages_to_wallet_read_at ON offer_messages(to_wallet, read_at);
+
+-- Message length constraint (only add if missing)
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'user_messages'::regclass AND conname = 'chk_user_messages_message_len') THEN
+        ALTER TABLE user_messages ADD CONSTRAINT chk_user_messages_message_len CHECK (char_length(message) <= 2000);
+    END IF;
+EXCEPTION WHEN undefined_table THEN NULL;
+END $$;
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'offer_messages'::regclass AND conname = 'chk_offer_messages_message_len') THEN
+        ALTER TABLE offer_messages ADD CONSTRAINT chk_offer_messages_message_len CHECK (char_length(message) <= 2000);
+    END IF;
+EXCEPTION WHEN undefined_table THEN NULL;
+END $$;
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'dispute_messages'::regclass AND conname = 'chk_dispute_messages_message_len') THEN
+        ALTER TABLE dispute_messages ADD CONSTRAINT chk_dispute_messages_message_len CHECK (char_length(message) <= 2000);
+    END IF;
+EXCEPTION WHEN undefined_table THEN NULL;
+END $$;
+
+-- NOT NULL on created_at where we have default (only if column is nullable)
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'user_messages' AND column_name = 'created_at' AND is_nullable = 'YES') THEN
+        UPDATE user_messages SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL;
+        ALTER TABLE user_messages ALTER COLUMN created_at SET NOT NULL;
+    END IF;
+EXCEPTION WHEN undefined_table THEN NULL;
+END $$;
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'offer_messages' AND column_name = 'created_at' AND is_nullable = 'YES') THEN
+        UPDATE offer_messages SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL;
+        ALTER TABLE offer_messages ALTER COLUMN created_at SET NOT NULL;
+    END IF;
+EXCEPTION WHEN undefined_table THEN NULL;
+END $$;
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'dispute_messages' AND column_name = 'created_at' AND is_nullable = 'YES') THEN
+        UPDATE dispute_messages SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL;
+        ALTER TABLE dispute_messages ALTER COLUMN created_at SET NOT NULL;
+    END IF;
+EXCEPTION WHEN undefined_table THEN NULL;
 END $$;

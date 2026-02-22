@@ -10,6 +10,7 @@
 
 import "dotenv/config";
 import express from "express";
+import rateLimit from "express-rate-limit";
 import cors from "cors";
 import path from "path";
 import fs from "fs";
@@ -20,6 +21,32 @@ import multer from "multer";
 import { hash, base64UrlDecodeArr, hexToBin, verifySig } from "@kadena/cryptography-utils";
 import { createServer } from "http";
 import { Server } from "socket.io";
+import {
+  validateBody,
+  validateQuery,
+  validateParams,
+  walletParamSchema,
+  otherWalletParamSchema,
+  offerIdParamSchema,
+  messageIdParamSchema,
+  profilePutBodySchema,
+  profileUploadAvatarBodySchema,
+  profilesBulkBodySchema,
+  profilesStatusBulkBodySchema,
+  offersPutBodySchema,
+  messagesPostBodySchema,
+  messagesReadQuerySchema,
+  messageIdReadBodySchema,
+  disputeEvidenceBodySchema,
+  disputesPostBodySchema,
+  disputeMessageBodySchema,
+  disputeActionBodySchema,
+  completedOffersBodySchema,
+  ratingsPostBodySchema,
+  ratingsCheckQuerySchema,
+  ratingsSummaryBulkBodySchema,
+  offerMessagesLegacyQuerySchema,
+} from "./validation.js";
 
 const { Pool } = pg;
 
@@ -28,7 +55,50 @@ const __dirname = path.dirname(__filename);
 
 const PROFILE_AUTH_PURPOSE = "Kadena P2P Escrow Profile";
 const NONCE_TOLERANCE_MS = 5 * 60 * 1000; // 5 minutes
+// Avatar: 2–5MB limit (oversized upload must fail)
 const AVATAR_MAX_BYTES = 5 * 1024 * 1024; // 5MB
+const AVATAR_MIN_BYTES = 1; // avoid empty files
+
+/** Check file content matches allowed image types (magic bytes). Rejects renamed executables etc. */
+function isAllowedImageMagic(filePath) {
+  const buf = Buffer.alloc(12);
+  let n;
+  try {
+    const fd = fs.openSync(filePath, "r");
+    n = fs.readSync(fd, buf, 0, 12, 0);
+    fs.closeSync(fd);
+  } catch (e) {
+    return false;
+  }
+  if (n < 3) return false;
+  // JPEG: FF D8 FF
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return true;
+  // PNG: 89 50 4E 47 0D 0A 1A 0A
+  if (n >= 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return true;
+  // GIF87a / GIF89a: 47 49 46 38 [37|39] 61
+  if (n >= 6 && buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38) return true;
+  // WebP: RIFF....WEBP (bytes 0–3 RIFF, 8–11 WEBP)
+  if (n >= 12 && buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 && buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return true;
+  return false;
+}
+
+/** Check file content matches allowed evidence type (image or PDF magic bytes). */
+function isAllowedEvidenceMagic(filePath, mimetype) {
+  const buf = Buffer.alloc(12);
+  let n;
+  try {
+    const fd = fs.openSync(filePath, "r");
+    n = fs.readSync(fd, buf, 0, 12, 0);
+    fs.closeSync(fd);
+  } catch (e) {
+    return false;
+  }
+  if (n < 4) return false;
+  if (mimetype === "application/pdf") {
+    return buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46; // %PDF
+  }
+  return isAllowedImageMagic(filePath);
+}
 
 // Replay protection: recently used (wallet, nonce); value = expiry time (TTL)
 const usedNonces = new Map(); // key: "wallet:nonce", value: expiryMs
@@ -85,21 +155,21 @@ const upload = multer({
         cb(new Error(`Failed to create upload directory: ${e.message}`), null);
       }
     },
-    filename: (_req, file, cb) => {
-      const ext = path.extname(file.originalname)?.toLowerCase() || ".jpg";
-      const allowed = [".jpg", ".jpeg", ".png", ".gif", ".webp"];
-      const e = allowed.includes(ext) ? ext : ".jpg";
-      cb(null, crypto.randomUUID() + e);
+    // Generated filenames only (no trust of client originalname for storage)
+    filename: (_req, _file, cb) => {
+      cb(null, crypto.randomUUID() + ".jpg");
     },
   }),
   limits: { fileSize: AVATAR_MAX_BYTES },
   fileFilter: (_req, file, cb) => {
-    if (!file.mimetype.startsWith("image/")) return cb(new Error("Only images allowed"), false);
+    // MIME check (client can lie; magic bytes checked after upload)
+    const allowed = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+    if (!allowed.includes(file.mimetype)) return cb(new Error("Only images allowed (JPEG, PNG, GIF, WebP)"), false);
     cb(null, true);
   },
 });
 
-// Evidence upload (images and PDFs, max 10MB)
+// Evidence upload (images and PDFs, max 10MB); generated filenames only
 const EVIDENCE_MAX_BYTES = 10 * 1024 * 1024; // 10MB
 const uploadEvidence = multer({
   storage: multer.diskStorage({
@@ -112,10 +182,8 @@ const uploadEvidence = multer({
       }
     },
     filename: (_req, file, cb) => {
-      const ext = path.extname(file.originalname)?.toLowerCase() || "";
-      const allowed = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".pdf"];
-      const e = allowed.includes(ext) ? ext : "";
-      cb(null, crypto.randomUUID() + e);
+      const ext = file.mimetype === "application/pdf" ? ".pdf" : ".jpg";
+      cb(null, crypto.randomUUID() + ext);
     },
   }),
   limits: { fileSize: EVIDENCE_MAX_BYTES },
@@ -134,6 +202,25 @@ app.use(cors({
 }));
 app.use(express.json({ limit: "256kb" }));
 
+// Rate limiting: 50 req/s per IP on /api/* (50+ → 429)
+const apiLimiter = rateLimit({
+  windowMs: 1000,
+  max: 50,
+  message: { error: "Too many requests, please try again later." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+// Stricter limit for messaging: throttle rapid message spam
+const messagesLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  message: { error: "Too many message requests, please slow down." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use("/api/messages", messagesLimiter);
+app.use("/api", apiLimiter);
+
 // Debug middleware to log all requests
 app.use((req, res, next) => {
   if (req.path?.includes("messages")) {
@@ -142,10 +229,15 @@ app.use((req, res, next) => {
   next();
 });
 
-// Serve uploaded profile images
-app.use("/uploads/profiles", express.static(UPLOADS_DIR));
-// Serve uploaded evidence files
-app.use("/uploads/evidence", express.static(EVIDENCE_DIR));
+// Serve uploads with safe headers (nosniff to prevent MIME sniffing)
+app.use("/uploads/profiles", (req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  next();
+}, express.static(UPLOADS_DIR));
+app.use("/uploads/evidence", (req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  next();
+}, express.static(EVIDENCE_DIR));
 
 /** @type {pg.Pool} */
 let pool;
@@ -161,6 +253,10 @@ const io = new Server(httpServer, {
 
 // Track online users: Map<wallet, { socketId, lastSeen }>
 const onlineUsers = new Map();
+
+// Socket throttling (per-socket)
+const SOCKET_IDENTIFY_MIN_MS = 10 * 1000;   // 1 identify per 10s
+const SOCKET_HEARTBEAT_MIN_MS = 2 * 1000;   // 1 heartbeat per 2s
 
 // Cleanup interval: mark users offline if no heartbeat for 60 seconds
 const HEARTBEAT_TIMEOUT = 60 * 1000; // 60 seconds
@@ -189,6 +285,13 @@ io.on("connection", (socket) => {
 
   // User identifies themselves with signed proof (same profile-auth as API); verified before marking online
   socket.on("identify", async ({ wallet, publicKey, signedCmd }) => {
+    const now = Date.now();
+    if (socket.data.lastIdentifyAt != null && now - socket.data.lastIdentifyAt < SOCKET_IDENTIFY_MIN_MS) {
+      socket.emit("error", { message: "Identify throttled; try again later." });
+      return;
+    }
+    socket.data.lastIdentifyAt = now;
+
     if (!wallet || typeof wallet !== "string") {
       socket.emit("error", { message: "Invalid wallet" });
       return;
@@ -254,8 +357,14 @@ io.on("connection", (socket) => {
     io.emit("user-online", { wallet });
   });
 
-  // Heartbeat to keep connection alive
+  // Heartbeat to keep connection alive (throttled)
   socket.on("heartbeat", ({ wallet }) => {
+    const now = Date.now();
+    if (socket.data.lastHeartbeatAt != null && now - socket.data.lastHeartbeatAt < SOCKET_HEARTBEAT_MIN_MS) {
+      return;
+    }
+    socket.data.lastHeartbeatAt = now;
+
     if (wallet && socket.data.wallet === wallet) {
       const userData = onlineUsers.get(wallet);
       if (userData) {
@@ -427,6 +536,45 @@ function verifyProfileAuth(signedCmd, expectedWallet, bodyPublicKey) {
   return { ok: true };
 }
 
+/**
+ * Require authenticated wallet from signed proof (body or query).
+ * Use auth.wallet as the canonical identity; prevents wallet swap.
+ * @param {object} req - Express request
+ * @param {"body"|"query"} from - where to read wallet, publicKey, signedCmd
+ * @returns {{ ok: true, wallet: string } | { ok: false, status: number, error: string, reason?: string }}
+ */
+function requireAuth(req, from = "body") {
+  const data = from === "query" ? req.query : req.body;
+  const wallet = data?.wallet;
+  const publicKey = data?.publicKey;
+  let signedCmd = data?.signedCmd;
+  if (!wallet || typeof wallet !== "string") {
+    return { ok: false, status: 400, error: "Missing wallet" };
+  }
+  if (!publicKey || typeof publicKey !== "string") {
+    return { ok: false, status: 400, error: "Missing publicKey (required for proof of ownership)" };
+  }
+  if (signedCmd == null) {
+    return { ok: false, status: 400, error: "Missing signedCmd (required for proof of ownership)" };
+  }
+  if (typeof signedCmd === "string") {
+    try {
+      signedCmd = JSON.parse(signedCmd);
+    } catch (e) {
+      return { ok: false, status: 400, error: "Invalid signedCmd JSON" };
+    }
+  }
+  const v = verifyProfileAuth(signedCmd, wallet, publicKey);
+  if (!v.ok) {
+    return { ok: false, status: 403, error: "Proof of ownership failed", reason: v.reason };
+  }
+  return { ok: true, wallet };
+}
+
+function sendAuthError(res, auth) {
+  return res.status(auth.status).json({ error: auth.error, ...(auth.reason && { reason: auth.reason }) });
+}
+
 // POST /api/profiles/upload-avatar – multipart: image (file), wallet, publicKey, signedCmd (JSON string). Returns { url }.
 app.post("/api/profiles/upload-avatar", (req, res, next) => {
   upload.single("image")(req, res, (err) => {
@@ -441,33 +589,24 @@ app.post("/api/profiles/upload-avatar", (req, res, next) => {
     }
     next();
   });
-}, async (req, res) => {
+}, validateBody(profileUploadAvatarBodySchema), async (req, res) => {
   try {
     if (!req.file) {
       console.error("POST /api/profiles/upload-avatar: No file in request");
       return res.status(400).json({ error: "Missing image file" });
     }
-    const wallet = req.body?.wallet;
-    const publicKey = req.body?.publicKey;
-    let signedCmd = req.body?.signedCmd;
-    if (typeof signedCmd === "string") {
-      try {
-        signedCmd = JSON.parse(signedCmd);
-      } catch (e) {
-        console.error("POST /api/profiles/upload-avatar: Invalid signedCmd JSON", e.message);
-        return res.status(400).json({ error: "Invalid signedCmd JSON" });
-      }
+    // Validate magic bytes (reject renamed executables / wrong content)
+    if (!isAllowedImageMagic(req.file.path)) {
+      try { fs.unlinkSync(req.file.path); } catch (e) { /* ignore */ }
+      return res.status(400).json({ error: "Invalid image file (content does not match image type)" });
     }
-    if (!wallet || typeof wallet !== "string") {
-      return res.status(400).json({ error: "Missing wallet" });
-    }
-    const v = verifyProfileAuth(signedCmd, wallet, publicKey);
-    if (!v.ok) {
-      console.error("POST /api/profiles/upload-avatar: Verification failed", v.reason);
-      return res.status(403).json({ error: "Proof of ownership failed", reason: v.reason });
+    const auth = requireAuth(req);
+    if (!auth.ok) {
+      try { fs.unlinkSync(req.file.path); } catch (e) { /* ignore */ }
+      return sendAuthError(res, auth);
     }
     const url = "/uploads/profiles/" + req.file.filename;
-    console.log(`Avatar uploaded: ${url} for wallet ${wallet}`);
+    console.log(`Avatar uploaded: ${url} for wallet ${auth.wallet}`);
     return res.json({ url });
   } catch (err) {
     console.error("POST /api/profiles/upload-avatar error:", err);
@@ -476,11 +615,8 @@ app.post("/api/profiles/upload-avatar", (req, res, next) => {
 });
 
 // GET /api/profiles/:wallet
-app.get("/api/profiles/:wallet", async (req, res) => {
-  const wallet = req.params.wallet?.trim();
-  if (!wallet) {
-    return res.status(400).json({ error: "Missing wallet" });
-  }
+app.get("/api/profiles/:wallet", validateParams(walletParamSchema), async (req, res) => {
+  const wallet = req.params.wallet;
   try {
     // Try to select with last_seen, fallback to without if column doesn't exist
     let result;
@@ -512,19 +648,18 @@ app.get("/api/profiles/:wallet", async (req, res) => {
 });
 
 // PUT /api/profiles – create/update; requires { username, avatar?, bio?, wallet, publicKey, signedCmd }. avatar: URL (uploaded or external) or null to clear.
-app.put("/api/profiles", async (req, res) => {
-  const { username, avatar, bio, wallet, publicKey, signedCmd } = req.body ?? {};
-  if (!wallet || typeof wallet !== "string") {
-    return res.status(400).json({ error: "Missing wallet" });
+app.put("/api/profiles", validateBody(profilePutBodySchema), async (req, res) => {
+  const auth = requireAuth(req);
+  if (!auth.ok) return sendAuthError(res, auth);
+  if (req.body.wallet !== auth.wallet) {
+    return res.status(400).json({ error: "Wallet must match authenticated wallet" });
   }
-  const v = verifyProfileAuth(signedCmd, wallet, publicKey);
-  if (!v.ok) {
-    return res.status(403).json({ error: "Proof of ownership failed", reason: v.reason });
-  }
+  const wallet = auth.wallet;
+  const { username, avatar, bio } = req.body;
 
-  const name = typeof username === "string" ? username.trim().slice(0, 64) : "";
-  const av = (typeof avatar === "string" ? avatar.trim().slice(0, 512) : "") || null;
-  const b = typeof bio === "string" ? bio.trim().slice(0, 500) : "";
+  const name = (username != null && username !== "") ? String(username).trim().slice(0, 60) : null;
+  const av = (avatar != null && avatar !== "") ? String(avatar).trim().slice(0, 2048) : null;
+  const b = (bio != null && bio !== "") ? String(bio).trim().slice(0, 500) : null;
 
   const profile = {
     username: name || null,
@@ -565,9 +700,8 @@ app.put("/api/profiles", async (req, res) => {
 });
 
 // GET /api/offers/:offerId – off-chain offer details (price, limits, payment method). Contract stores only trustless data.
-app.get("/api/offers/:offerId", async (req, res) => {
-  const offerId = req.params.offerId?.trim();
-  if (!offerId) return res.status(400).json({ error: "Missing offerId" });
+app.get("/api/offers/:offerId", validateParams(offerIdParamSchema), async (req, res) => {
+  const offerId = req.params.offerId;
   try {
     const result = await pool.query(
       "SELECT offer_id, creator, amount, side, price, min_amount, max_amount, payment_method, fiat_currency, created_at FROM offer_details WHERE offer_id = $1",
@@ -592,15 +726,10 @@ app.get("/api/offers/:offerId", async (req, res) => {
 });
 
 // PUT /api/offers – upsert off-chain offer details (call before or after create-offer on chain)
-app.put("/api/offers", async (req, res) => {
-  const { offerId, creator, amount, side, price, paymentMethod, fiatCurrency } = req.body ?? {};
-  if (!offerId || typeof offerId !== "string") return res.status(400).json({ error: "Missing offerId" });
-  if (!creator || typeof creator !== "string") return res.status(400).json({ error: "Missing creator" });
-  const amt = Number(amount);
-  if (!Number.isFinite(amt) || amt <= 0) return res.status(400).json({ error: "Invalid amount" });
-  if (side !== "BUY" && side !== "SELL") return res.status(400).json({ error: "Invalid side" });
-  const pr = Number(price);
-  if (!Number.isFinite(pr) || pr <= 0) return res.status(400).json({ error: "Invalid price" });
+app.put("/api/offers", validateBody(offersPutBodySchema), async (req, res) => {
+  const { offerId, creator, amount, side, price, paymentMethod, fiatCurrency } = req.body;
+  const amt = amount;
+  const pr = price;
   const pm = typeof paymentMethod === "string" ? paymentMethod : "[]";
   const fc = typeof fiatCurrency === "string" ? fiatCurrency.trim().slice(0, 10) : "USD";
   try {
@@ -621,13 +750,8 @@ app.put("/api/offers", async (req, res) => {
 });
 
 // POST /api/profiles/bulk – body: { wallets: string[] }; returns { [wallet]: ProfileSummary }
-app.post("/api/profiles/bulk", async (req, res) => {
-  const { wallets } = req.body ?? {};
-  if (!Array.isArray(wallets)) {
-    return res.status(400).json({ error: "wallets must be an array" });
-  }
-  const list = wallets.filter((w) => typeof w === "string").map((w) => w.trim()).filter(Boolean);
-  if (list.length === 0) return res.json({});
+app.post("/api/profiles/bulk", validateBody(profilesBulkBodySchema), async (req, res) => {
+  const list = req.body.wallets;
   try {
     const result = await pool.query(
       "SELECT wallet, username, avatar FROM profiles WHERE wallet = ANY($1)",
@@ -657,22 +781,15 @@ app.post("/api/profiles/bulk", async (req, res) => {
 });
 
 // GET /api/profiles/:wallet/status – get online status of a user
-app.get("/api/profiles/:wallet/status", async (req, res) => {
-  const wallet = req.params.wallet?.trim();
-  if (!wallet) {
-    return res.status(400).json({ error: "Missing wallet" });
-  }
+app.get("/api/profiles/:wallet/status", validateParams(walletParamSchema), async (req, res) => {
+  const wallet = req.params.wallet;
   const isOnline = onlineUsers.has(wallet);
   return res.json({ wallet, isOnline });
 });
 
 // POST /api/profiles/status/bulk – body: { wallets: string[] }; returns { [wallet]: { isOnline: boolean } }
-app.post("/api/profiles/status/bulk", async (req, res) => {
-  const { wallets } = req.body ?? {};
-  if (!Array.isArray(wallets)) {
-    return res.status(400).json({ error: "wallets must be an array" });
-  }
-  const list = wallets.filter((w) => typeof w === "string").map((w) => w.trim()).filter(Boolean);
+app.post("/api/profiles/status/bulk", validateBody(profilesStatusBulkBodySchema), async (req, res) => {
+  const list = req.body.wallets;
   const out = {};
   for (const wallet of list) {
     out[wallet] = { isOnline: onlineUsers.has(wallet) };
@@ -687,29 +804,17 @@ app.post("/api/profiles/status/bulk", async (req, res) => {
 
 // POST /api/messages – send a message to another user (user-to-user conversation)
 // Body: { toWallet, message, wallet, publicKey, signedCmd, contextOfferId? }
-app.post("/api/messages", async (req, res) => {
-  const { message, toWallet, wallet, publicKey, signedCmd, contextOfferId } = req.body ?? {};
-  
+app.post("/api/messages", validateBody(messagesPostBodySchema), async (req, res) => {
+  const auth = requireAuth(req);
+  if (!auth.ok) return sendAuthError(res, auth);
+  if (req.body.wallet !== auth.wallet) {
+    return res.status(400).json({ error: "Wallet must match authenticated wallet" });
+  }
+  const wallet = auth.wallet;
+  const { message, toWallet, contextOfferId } = req.body;
+
   console.log(`[POST /api/messages] from: ${wallet}, to: ${toWallet}, contextOfferId: ${contextOfferId}`);
-  
-  if (!message || typeof message !== "string" || !message.trim()) {
-    return res.status(400).json({ error: "Message is required" });
-  }
-  if (!toWallet || typeof toWallet !== "string") {
-    return res.status(400).json({ error: "Missing toWallet" });
-  }
-  if (!wallet || typeof wallet !== "string") {
-    return res.status(400).json({ error: "Missing wallet" });
-  }
-  if (wallet === toWallet) {
-    return res.status(400).json({ error: "Cannot send message to yourself" });
-  }
-  
-  const v = verifyProfileAuth(signedCmd, wallet, publicKey);
-  if (!v.ok) {
-    return res.status(403).json({ error: "Proof of ownership failed", reason: v.reason });
-  }
-  
+
   try {
     // Ensure pool is initialized
     if (!pool) {
@@ -724,7 +829,7 @@ app.post("/api/messages", async (req, res) => {
         `INSERT INTO user_messages (from_wallet, to_wallet, message, context_offer_id, created_at)
          VALUES ($1, $2, $3, $4, $5)
          RETURNING id, from_wallet, to_wallet, message, created_at, read_at, context_offer_id`,
-        [wallet, toWallet, message.trim().slice(0, 2000), contextOfferId || null, new Date().toISOString()]
+        [wallet, toWallet, message.trim(), contextOfferId ?? null, new Date().toISOString()]
       );
     } catch (tableErr) {
       // If user_messages table doesn't exist, use offer_messages (backwards compatibility)
@@ -734,7 +839,7 @@ app.post("/api/messages", async (req, res) => {
           `INSERT INTO offer_messages (offer_id, from_wallet, to_wallet, message, created_at)
            VALUES ($1, $2, $3, $4, $5)
            RETURNING id, offer_id, from_wallet, to_wallet, message, created_at, read_at`,
-          [contextOfferId || 'general', wallet, toWallet, message.trim().slice(0, 2000), new Date().toISOString()]
+          [contextOfferId || 'general', wallet, toWallet, message.trim(), new Date().toISOString()]
         );
       } else {
         throw tableErr;
@@ -776,31 +881,10 @@ app.post("/api/messages", async (req, res) => {
 
 // GET /api/messages/unread-count – must be before /:otherWallet so "unread-count" is not captured as a wallet
 // Requires wallet, publicKey, signedCmd (query) to prove requester controls wallet; only returns count for that wallet.
-app.get("/api/messages/unread-count", async (req, res) => {
-  const wallet = req.query.wallet?.toString();
-  const publicKey = req.query.publicKey?.toString();
-  let signedCmd = req.query.signedCmd;
-
-  if (!wallet) {
-    return res.status(400).json({ error: "Missing wallet parameter" });
-  }
-  if (!publicKey || typeof publicKey !== "string") {
-    return res.status(400).json({ error: "Missing publicKey (required for proof of ownership)" });
-  }
-  if (signedCmd == null) {
-    return res.status(400).json({ error: "Missing signedCmd (required for proof of ownership)" });
-  }
-  if (typeof signedCmd === "string") {
-    try {
-      signedCmd = JSON.parse(signedCmd);
-    } catch (e) {
-      return res.status(400).json({ error: "Invalid signedCmd JSON" });
-    }
-  }
-  const v = verifyProfileAuth(signedCmd, wallet, publicKey);
-  if (!v.ok) {
-    return res.status(403).json({ error: "Proof of ownership failed", reason: v.reason });
-  }
+app.get("/api/messages/unread-count", validateQuery(messagesReadQuerySchema), async (req, res) => {
+  const auth = requireAuth(req, "query");
+  if (!auth.ok) return sendAuthError(res, auth);
+  const wallet = auth.wallet;
 
   try {
     let result;
@@ -833,37 +917,13 @@ app.get("/api/messages/unread-count", async (req, res) => {
 
 // GET /api/messages/:otherWallet – get all messages between current user and another user
 // Query: wallet, publicKey, signedCmd (required – proof of ownership). Only returns messages where requester is a participant.
-app.get("/api/messages/:otherWallet", async (req, res) => {
-  const otherWallet = req.params.otherWallet?.trim();
-  const wallet = req.query.wallet?.toString();
-  const publicKey = req.query.publicKey?.toString();
-  let signedCmd = req.query.signedCmd;
+app.get("/api/messages/:otherWallet", validateParams(otherWalletParamSchema), validateQuery(messagesReadQuerySchema), async (req, res) => {
+  const auth = requireAuth(req, "query");
+  if (!auth.ok) return sendAuthError(res, auth);
+  const wallet = auth.wallet;
+  const otherWallet = req.params.otherWallet;
 
   console.log(`[GET /api/messages/:otherWallet] wallet: ${wallet}, otherWallet: ${otherWallet}`);
-
-  if (!otherWallet) {
-    return res.status(400).json({ error: "Missing otherWallet" });
-  }
-  if (!wallet) {
-    return res.status(400).json({ error: "Missing wallet parameter" });
-  }
-  if (!publicKey || typeof publicKey !== "string") {
-    return res.status(400).json({ error: "Missing publicKey (required for proof of ownership)" });
-  }
-  if (signedCmd == null) {
-    return res.status(400).json({ error: "Missing signedCmd (required for proof of ownership)" });
-  }
-  if (typeof signedCmd === "string") {
-    try {
-      signedCmd = JSON.parse(signedCmd);
-    } catch (e) {
-      return res.status(400).json({ error: "Invalid signedCmd JSON" });
-    }
-  }
-  const v = verifyProfileAuth(signedCmd, wallet, publicKey);
-  if (!v.ok) {
-    return res.status(403).json({ error: "Proof of ownership failed", reason: v.reason });
-  }
 
   try {
     // Ensure pool is initialized
@@ -917,22 +977,15 @@ app.get("/api/messages/:otherWallet", async (req, res) => {
 });
 
 // PUT /api/messages/:messageId/read – mark message as read
-app.put("/api/messages/:messageId/read", async (req, res) => {
-  const messageId = parseInt(req.params.messageId);
-  const { wallet, publicKey, signedCmd } = req.body ?? {};
-  
-  if (!messageId || isNaN(messageId)) {
-    return res.status(400).json({ error: "Invalid messageId" });
+app.put("/api/messages/:messageId/read", validateParams(messageIdParamSchema), validateBody(messageIdReadBodySchema), async (req, res) => {
+  const auth = requireAuth(req);
+  if (!auth.ok) return sendAuthError(res, auth);
+  if (req.body.wallet !== auth.wallet) {
+    return res.status(400).json({ error: "Wallet must match authenticated wallet" });
   }
-  if (!wallet || typeof wallet !== "string") {
-    return res.status(400).json({ error: "Missing wallet" });
-  }
-  
-  const v = verifyProfileAuth(signedCmd, wallet, publicKey);
-  if (!v.ok) {
-    return res.status(403).json({ error: "Proof of ownership failed", reason: v.reason });
-  }
-  
+  const wallet = auth.wallet;
+  const messageId = req.params.messageId;
+
   try {
     // Try user_messages first, fallback to offer_messages
     let result;
@@ -980,14 +1033,12 @@ app.post("/api/offers/:offerId/messages", async (req, res) => {
 
 // Legacy endpoint: GET /api/offers/:offerId/messages (for backwards compatibility)
 // Gets messages between buyer and seller of the offer
-app.get("/api/offers/:offerId/messages", async (req, res) => {
-  const offerId = req.params.offerId?.trim();
-  const wallet = req.query.wallet?.toString();
-  
-  if (!offerId || !wallet) {
-    return res.status(400).json({ error: "Missing offerId or wallet" });
-  }
-  
+app.get("/api/offers/:offerId/messages", validateParams(offerIdParamSchema), validateQuery(offerMessagesLegacyQuerySchema), async (req, res) => {
+  const auth = requireAuth(req, "query");
+  if (!auth.ok) return sendAuthError(res, auth);
+  const wallet = auth.wallet;
+  const offerId = req.params.offerId;
+
   // We need to find the other wallet from the offer
   // For now, we'll get all messages for this user and filter by context
   // In a real implementation, you'd query the escrow contract to get buyer/seller
@@ -1035,21 +1086,14 @@ app.get("/api/offers/:offerId/messages", async (req, res) => {
 ============================================================ */
 
 // POST /api/disputes – open a dispute. Body: { offerId, openedBy (buyer/seller), reason, wallet, publicKey, signedCmd }
-app.post("/api/disputes", async (req, res) => {
-  const { offerId, openedBy, reason, wallet, publicKey, signedCmd } = req.body ?? {};
-  if (!offerId || typeof offerId !== "string") {
-    return res.status(400).json({ error: "Missing offerId" });
+app.post("/api/disputes", validateBody(disputesPostBodySchema), async (req, res) => {
+  const auth = requireAuth(req);
+  if (!auth.ok) return sendAuthError(res, auth);
+  if (req.body.wallet !== auth.wallet) {
+    return res.status(400).json({ error: "Wallet must match authenticated wallet" });
   }
-  if (!openedBy || (openedBy !== "buyer" && openedBy !== "seller")) {
-    return res.status(400).json({ error: "openedBy must be 'buyer' or 'seller'" });
-  }
-  if (!wallet || typeof wallet !== "string") {
-    return res.status(400).json({ error: "Missing wallet" });
-  }
-  const v = verifyProfileAuth(signedCmd, wallet, publicKey);
-  if (!v.ok) {
-    return res.status(403).json({ error: "Proof of ownership failed", reason: v.reason });
-  }
+  const wallet = auth.wallet;
+  const { offerId, openedBy, reason } = req.body;
   try {
     const existingResult = await pool.query(
       "SELECT id FROM disputes WHERE offer_id = $1 AND status = $2",
@@ -1125,11 +1169,8 @@ app.get("/api/disputes", async (req, res) => {
 });
 
 // GET /api/disputes/:offerId – get dispute for an offer
-app.get("/api/disputes/:offerId", async (req, res) => {
-  const offerId = req.params.offerId?.trim();
-  if (!offerId) {
-    return res.status(400).json({ error: "Missing offerId" });
-  }
+app.get("/api/disputes/:offerId", validateParams(offerIdParamSchema), async (req, res) => {
+  const offerId = req.params.offerId;
   try {
     let result;
     try {
@@ -1167,7 +1208,7 @@ app.get("/api/disputes/:offerId", async (req, res) => {
 });
 
 // POST /api/disputes/:offerId/evidence – submit evidence. Multipart: file(s), explanation, wallet, publicKey, signedCmd
-app.post("/api/disputes/:offerId/evidence", (req, res, next) => {
+app.post("/api/disputes/:offerId/evidence", validateParams(offerIdParamSchema), (req, res, next) => {
   uploadEvidence.array("files", 10)(req, res, (err) => {
     if (err) {
       if (err.code === "LIMIT_FILE_SIZE") {
@@ -1183,32 +1224,37 @@ app.post("/api/disputes/:offerId/evidence", (req, res, next) => {
     }
     next();
   });
-}, async (req, res) => {
+}, validateBody(disputeEvidenceBodySchema), async (req, res) => {
   try {
-    const offerId = req.params.offerId?.trim();
-    if (!offerId) {
-      return res.status(400).json({ error: "Missing offerId" });
-    }
+    const offerId = req.params.offerId;
     const files = req.files || [];
     if (files.length === 0) {
       return res.status(400).json({ error: "No files uploaded" });
     }
-    const { explanation, wallet, publicKey } = req.body ?? {};
-    let signedCmd = req.body?.signedCmd;
-    if (typeof signedCmd === "string") {
-      try {
-        signedCmd = JSON.parse(signedCmd);
-      } catch (e) {
-        return res.status(400).json({ error: "Invalid signedCmd JSON" });
+    // Validate magic bytes for each file (reject renamed executables / wrong content)
+    for (const f of files) {
+      if (!isAllowedEvidenceMagic(f.path, f.mimetype)) {
+        for (const x of files) {
+          try { fs.unlinkSync(x.path); } catch (e) { /* ignore */ }
+        }
+        return res.status(400).json({ error: "Invalid file (content does not match declared type)" });
       }
     }
-    if (!wallet || typeof wallet !== "string") {
-      return res.status(400).json({ error: "Missing wallet" });
+    const auth = requireAuth(req);
+    if (!auth.ok) {
+      for (const f of files) {
+        try { fs.unlinkSync(f.path); } catch (e) { /* ignore */ }
+      }
+      return sendAuthError(res, auth);
     }
-    const v = verifyProfileAuth(signedCmd, wallet, publicKey);
-    if (!v.ok) {
-      return res.status(403).json({ error: "Proof of ownership failed", reason: v.reason });
+    if (req.body.wallet !== auth.wallet) {
+      for (const f of files) {
+        try { fs.unlinkSync(f.path); } catch (e) { /* ignore */ }
+      }
+      return res.status(400).json({ error: "Wallet must match authenticated wallet" });
     }
+    const wallet = auth.wallet;
+    const { explanation } = req.body;
     // Check if dispute exists
     const disputeResult = await pool.query("SELECT id FROM disputes WHERE offer_id = $1", [offerId]);
     if (disputeResult.rows.length === 0) {
@@ -1231,7 +1277,7 @@ app.post("/api/disputes/:offerId/evidence", (req, res, next) => {
       [
         offerId,
         wallet,
-        typeof explanation === "string" ? explanation.trim().slice(0, 2000) : "",
+        (explanation != null && String(explanation).trim()) ? String(explanation).trim().slice(0, 2000) : "",
         JSON.stringify(evidenceFiles),
         new Date().toISOString(),
       ]
@@ -1257,12 +1303,9 @@ app.post("/api/disputes/:offerId/evidence", (req, res, next) => {
 });
 
 // GET /api/disputes/:offerId/evidence – get all evidence for a dispute. Query: ?wallet=<wallet> (for authorization check)
-app.get("/api/disputes/:offerId/evidence", async (req, res) => {
-  const offerId = req.params.offerId?.trim();
+app.get("/api/disputes/:offerId/evidence", validateParams(offerIdParamSchema), async (req, res) => {
+  const offerId = req.params.offerId;
   const wallet = req.query.wallet?.toString();
-  if (!offerId) {
-    return res.status(400).json({ error: "Missing offerId" });
-  }
   try {
     const disputeResult = await pool.query("SELECT id FROM disputes WHERE offer_id = $1", [offerId]);
     if (disputeResult.rows.length === 0) {
@@ -1290,22 +1333,15 @@ app.get("/api/disputes/:offerId/evidence", async (req, res) => {
 });
 
 // POST /api/disputes/:offerId/messages – send a message in dispute. Body: { message, wallet, publicKey, signedCmd }
-app.post("/api/disputes/:offerId/messages", async (req, res) => {
-  const offerId = req.params.offerId?.trim();
-  const { message, wallet, publicKey, signedCmd } = req.body ?? {};
-  if (!offerId) {
-    return res.status(400).json({ error: "Missing offerId" });
+app.post("/api/disputes/:offerId/messages", validateParams(offerIdParamSchema), validateBody(disputeMessageBodySchema), async (req, res) => {
+  const auth = requireAuth(req);
+  if (!auth.ok) return sendAuthError(res, auth);
+  if (req.body.wallet !== auth.wallet) {
+    return res.status(400).json({ error: "Wallet must match authenticated wallet" });
   }
-  if (!message || typeof message !== "string" || !message.trim()) {
-    return res.status(400).json({ error: "Message is required" });
-  }
-  if (!wallet || typeof wallet !== "string") {
-    return res.status(400).json({ error: "Missing wallet" });
-  }
-  const v = verifyProfileAuth(signedCmd, wallet, publicKey);
-  if (!v.ok) {
-    return res.status(403).json({ error: "Proof of ownership failed", reason: v.reason });
-  }
+  const wallet = auth.wallet;
+  const offerId = req.params.offerId;
+  const { message } = req.body;
   try {
     const disputeResult = await pool.query("SELECT id FROM disputes WHERE offer_id = $1", [offerId]);
     if (disputeResult.rows.length === 0) {
@@ -1316,7 +1352,7 @@ app.post("/api/disputes/:offerId/messages", async (req, res) => {
       `INSERT INTO dispute_messages (offer_id, from_wallet, message, created_at)
        VALUES ($1, $2, $3, $4)
        RETURNING id, offer_id, from_wallet, message, created_at`,
-      [offerId, wallet, message.trim().slice(0, 2000), new Date().toISOString()]
+      [offerId, wallet, message.trim(), new Date().toISOString()]
     );
     
     await pool.query(
@@ -1338,12 +1374,9 @@ app.post("/api/disputes/:offerId/messages", async (req, res) => {
 });
 
 // GET /api/disputes/:offerId/messages – get all messages in dispute
-app.get("/api/disputes/:offerId/messages", async (req, res) => {
-  const offerId = req.params.offerId?.trim();
+app.get("/api/disputes/:offerId/messages", validateParams(offerIdParamSchema), async (req, res) => {
+  const offerId = req.params.offerId;
   console.log(`[GET /api/disputes/:offerId/messages] Matched! offerId: ${offerId}, path: ${req.path}`);
-  if (!offerId) {
-    return res.status(400).json({ error: "Missing offerId" });
-  }
   try {
     const disputeResult = await pool.query("SELECT id FROM disputes WHERE offer_id = $1", [offerId]);
     if (disputeResult.rows.length === 0) {
@@ -1371,9 +1404,8 @@ app.get("/api/disputes/:offerId/messages", async (req, res) => {
 });
 
 // GET /api/disputes/:offerId/actions – action log for admin (request_info, under_review, resolved)
-app.get("/api/disputes/:offerId/actions", async (req, res) => {
-  const offerId = req.params.offerId?.trim();
-  if (!offerId) return res.status(400).json({ error: "Missing offerId" });
+app.get("/api/disputes/:offerId/actions", validateParams(offerIdParamSchema), async (req, res) => {
+  const offerId = req.params.offerId;
   try {
     const result = await pool.query(
       "SELECT id, offer_id, action_type, by_wallet, payload, created_at FROM dispute_actions WHERE offer_id = $1 ORDER BY created_at ASC",
@@ -1398,13 +1430,14 @@ app.get("/api/disputes/:offerId/actions", async (req, res) => {
 });
 
 // PUT /api/disputes/:offerId/review – arbiter marks dispute under review. Body: { wallet, publicKey, signedCmd }
-app.put("/api/disputes/:offerId/review", async (req, res) => {
-  const offerId = req.params.offerId?.trim();
-  const { wallet, publicKey, signedCmd } = req.body ?? {};
-  if (!offerId) return res.status(400).json({ error: "Missing offerId" });
-  if (!wallet || typeof wallet !== "string") return res.status(400).json({ error: "Missing wallet" });
-  const v = verifyProfileAuth(signedCmd, wallet, publicKey);
-  if (!v.ok) return res.status(403).json({ error: "Proof of ownership failed", reason: v.reason });
+app.put("/api/disputes/:offerId/review", validateParams(offerIdParamSchema), validateBody(disputeActionBodySchema), async (req, res) => {
+  const auth = requireAuth(req);
+  if (!auth.ok) return sendAuthError(res, auth);
+  if (req.body.wallet !== auth.wallet) {
+    return res.status(400).json({ error: "Wallet must match authenticated wallet" });
+  }
+  const wallet = auth.wallet;
+  const offerId = req.params.offerId;
   try {
     const disputeResult = await pool.query("SELECT status FROM disputes WHERE offer_id = $1", [offerId]);
     if (disputeResult.rows.length === 0) return res.status(404).json({ error: "Dispute not found" });
@@ -1428,13 +1461,15 @@ app.put("/api/disputes/:offerId/review", async (req, res) => {
 });
 
 // POST /api/disputes/:offerId/request-info – arbiter requests more info. Body: { message?, wallet, publicKey, signedCmd }
-app.post("/api/disputes/:offerId/request-info", async (req, res) => {
-  const offerId = req.params.offerId?.trim();
-  const { message, wallet, publicKey, signedCmd } = req.body ?? {};
-  if (!offerId) return res.status(400).json({ error: "Missing offerId" });
-  if (!wallet || typeof wallet !== "string") return res.status(400).json({ error: "Missing wallet" });
-  const v = verifyProfileAuth(signedCmd, wallet, publicKey);
-  if (!v.ok) return res.status(403).json({ error: "Proof of ownership failed", reason: v.reason });
+app.post("/api/disputes/:offerId/request-info", validateParams(offerIdParamSchema), validateBody(disputeActionBodySchema), async (req, res) => {
+  const auth = requireAuth(req);
+  if (!auth.ok) return sendAuthError(res, auth);
+  if (req.body.wallet !== auth.wallet) {
+    return res.status(400).json({ error: "Wallet must match authenticated wallet" });
+  }
+  const wallet = auth.wallet;
+  const offerId = req.params.offerId;
+  const { message } = req.body;
   try {
     const disputeResult = await pool.query("SELECT id FROM disputes WHERE offer_id = $1", [offerId]);
     if (disputeResult.rows.length === 0) return res.status(404).json({ error: "Dispute not found" });
@@ -1458,19 +1493,14 @@ app.post("/api/disputes/:offerId/request-info", async (req, res) => {
 });
 
 // PUT /api/disputes/:offerId/close – arbiter closes dispute. Body: { wallet, publicKey, signedCmd }
-app.put("/api/disputes/:offerId/close", async (req, res) => {
-  const offerId = req.params.offerId?.trim();
-  const { wallet, publicKey, signedCmd } = req.body ?? {};
-  if (!offerId) {
-    return res.status(400).json({ error: "Missing offerId" });
+app.put("/api/disputes/:offerId/close", validateParams(offerIdParamSchema), validateBody(disputeActionBodySchema), async (req, res) => {
+  const auth = requireAuth(req);
+  if (!auth.ok) return sendAuthError(res, auth);
+  if (req.body.wallet !== auth.wallet) {
+    return res.status(400).json({ error: "Wallet must match authenticated wallet" });
   }
-  if (!wallet || typeof wallet !== "string") {
-    return res.status(400).json({ error: "Missing wallet" });
-  }
-  const v = verifyProfileAuth(signedCmd, wallet, publicKey);
-  if (!v.ok) {
-    return res.status(403).json({ error: "Proof of ownership failed", reason: v.reason });
-  }
+  const wallet = auth.wallet;
+  const offerId = req.params.offerId;
   try {
     const disputeResult = await pool.query("SELECT status FROM disputes WHERE offer_id = $1", [offerId]);
     if (disputeResult.rows.length === 0) {
@@ -1505,21 +1535,14 @@ app.put("/api/disputes/:offerId/close", async (req, res) => {
 ============================================================ */
 
 // POST /api/completed-offers – register a completed trade (buyer or seller). Body: { offerId, buyerWallet, sellerWallet, wallet, publicKey, signedCmd }
-app.post("/api/completed-offers", async (req, res) => {
-  const { offerId, buyerWallet, sellerWallet, wallet, publicKey, signedCmd } = req.body ?? {};
-  if (!offerId || typeof offerId !== "string") {
-    return res.status(400).json({ error: "Missing offerId" });
+app.post("/api/completed-offers", validateBody(completedOffersBodySchema), async (req, res) => {
+  const auth = requireAuth(req);
+  if (!auth.ok) return sendAuthError(res, auth);
+  if (req.body.wallet !== auth.wallet) {
+    return res.status(400).json({ error: "Wallet must match authenticated wallet" });
   }
-  if (!buyerWallet || typeof buyerWallet !== "string" || !sellerWallet || typeof sellerWallet !== "string") {
-    return res.status(400).json({ error: "Missing buyerWallet or sellerWallet" });
-  }
-  if (!wallet || typeof wallet !== "string") {
-    return res.status(400).json({ error: "Missing wallet" });
-  }
-  const v = verifyProfileAuth(signedCmd, wallet, publicKey);
-  if (!v.ok) {
-    return res.status(403).json({ error: "Proof of ownership failed", reason: v.reason });
-  }
+  const wallet = auth.wallet;
+  const { offerId, buyerWallet, sellerWallet } = req.body;
   if (wallet !== buyerWallet && wallet !== sellerWallet) {
     return res.status(403).json({ error: "Wallet must be buyer or seller for this offer" });
   }
@@ -1538,25 +1561,15 @@ app.post("/api/completed-offers", async (req, res) => {
 });
 
 // POST /api/ratings – submit a rating (enforcement: completed trade only, one per party, no self-rating)
-app.post("/api/ratings", async (req, res) => {
-  const { offerId, ratedWallet, rating, comment, wallet, publicKey, signedCmd } = req.body ?? {};
-  if (!offerId || typeof offerId !== "string") {
-    return res.status(400).json({ error: "Missing offerId" });
+app.post("/api/ratings", validateBody(ratingsPostBodySchema), async (req, res) => {
+  const auth = requireAuth(req);
+  if (!auth.ok) return sendAuthError(res, auth);
+  if (req.body.wallet !== auth.wallet) {
+    return res.status(400).json({ error: "Wallet must match authenticated wallet" });
   }
-  if (!ratedWallet || typeof ratedWallet !== "string") {
-    return res.status(400).json({ error: "Missing ratedWallet" });
-  }
-  const r = Number(rating);
-  if (!Number.isFinite(r) || r < 1 || r > 5) {
-    return res.status(400).json({ error: "rating must be 1–5" });
-  }
-  if (!wallet || typeof wallet !== "string") {
-    return res.status(400).json({ error: "Missing wallet" });
-  }
-  const v = verifyProfileAuth(signedCmd, wallet, publicKey);
-  if (!v.ok) {
-    return res.status(403).json({ error: "Proof of ownership failed", reason: v.reason });
-  }
+  const wallet = auth.wallet;
+  const { offerId, ratedWallet, rating, comment } = req.body;
+  const r = rating;
   try {
     // Enforcement: only allow rating after a completed trade
     const row = await pool.query(
@@ -1592,11 +1605,8 @@ app.post("/api/ratings", async (req, res) => {
 });
 
 // GET /api/ratings/trade/:offerId – per-trade ratings for UI/integrity (trade counts, who rated whom)
-app.get("/api/ratings/trade/:offerId", async (req, res) => {
-  const offerId = req.params.offerId?.trim();
-  if (!offerId) {
-    return res.status(400).json({ error: "Missing offerId" });
-  }
+app.get("/api/ratings/trade/:offerId", validateParams(offerIdParamSchema), async (req, res) => {
+  const offerId = req.params.offerId;
   try {
     const completed = await pool.query(
       "SELECT offer_id, buyer_wallet, seller_wallet, completed_at FROM completed_offers WHERE offer_id = $1",
@@ -1627,11 +1637,8 @@ app.get("/api/ratings/trade/:offerId", async (req, res) => {
 });
 
 // GET /api/ratings/summary/:wallet – UI/hybrid: trade counts, completion counts, dispute counts, rating aggregates
-app.get("/api/ratings/summary/:wallet", async (req, res) => {
-  const wallet = req.params.wallet?.trim();
-  if (!wallet) {
-    return res.status(400).json({ error: "Missing wallet" });
-  }
+app.get("/api/ratings/summary/:wallet", validateParams(walletParamSchema), async (req, res) => {
+  const wallet = req.params.wallet;
   try {
     const completed = await pool.query(
       "SELECT COUNT(*) AS cnt FROM completed_offers WHERE buyer_wallet = $1 OR seller_wallet = $1",
@@ -1674,12 +1681,8 @@ app.get("/api/ratings/summary/:wallet", async (req, res) => {
 });
 
 // POST /api/ratings/summary/bulk – body: { wallets: string[] }; returns { [wallet]: { averageRating, totalRatings, completedTrades, disputedCount, completionRate } }
-app.post("/api/ratings/summary/bulk", async (req, res) => {
-  const { wallets } = req.body ?? {};
-  if (!Array.isArray(wallets)) {
-    return res.status(400).json({ error: "wallets must be an array" });
-  }
-  const list = wallets.filter((w) => typeof w === "string").map((w) => w.trim()).filter(Boolean);
+app.post("/api/ratings/summary/bulk", validateBody(ratingsSummaryBulkBodySchema), async (req, res) => {
+  const list = req.body.wallets;
   if (list.length === 0) return res.json({});
   try {
     const out = {};
@@ -1722,12 +1725,9 @@ app.post("/api/ratings/summary/bulk", async (req, res) => {
 });
 
 // GET /api/ratings/check – query: offerId, wallet – returns { canRate: boolean, alreadyRated: boolean }
-app.get("/api/ratings/check", async (req, res) => {
-  const offerId = req.query.offerId?.trim();
-  const wallet = req.query.wallet?.trim();
-  if (!offerId || !wallet) {
-    return res.status(400).json({ error: "Missing offerId or wallet" });
-  }
+app.get("/api/ratings/check", validateQuery(ratingsCheckQuerySchema), async (req, res) => {
+  const offerId = req.query.offerId;
+  const wallet = req.query.wallet;
   try {
     const completed = await pool.query(
       "SELECT 1 FROM completed_offers WHERE offer_id = $1 AND (buyer_wallet = $2 OR seller_wallet = $2)",
@@ -1846,9 +1846,9 @@ async function initializeSchema() {
           id SERIAL PRIMARY KEY,
           from_wallet VARCHAR(255) NOT NULL,
           to_wallet VARCHAR(255) NOT NULL,
-          message TEXT NOT NULL,
+          message TEXT NOT NULL CHECK (char_length(message) <= 2000),
           read_at TIMESTAMP WITH TIME ZONE,
-          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
           context_offer_id VARCHAR(255)
         )
       `);
@@ -1856,7 +1856,8 @@ async function initializeSchema() {
       await pool.query(`CREATE INDEX idx_user_messages_to_wallet ON user_messages(to_wallet)`);
       await pool.query(`CREATE INDEX idx_user_messages_created_at ON user_messages(created_at)`);
       await pool.query(`CREATE INDEX idx_user_messages_context_offer ON user_messages(context_offer_id)`);
-      // Composite index for efficient conversation queries
+      await pool.query(`CREATE INDEX idx_user_messages_from_to_created ON user_messages(from_wallet, to_wallet, created_at)`);
+      await pool.query(`CREATE INDEX idx_user_messages_to_wallet_read_at ON user_messages(to_wallet, read_at)`);
       await pool.query(`
         CREATE INDEX idx_user_messages_conversation ON user_messages(
           LEAST(from_wallet, to_wallet), 
@@ -1888,9 +1889,9 @@ async function initializeSchema() {
           offer_id VARCHAR(255) NOT NULL,
           from_wallet VARCHAR(255) NOT NULL,
           to_wallet VARCHAR(255) NOT NULL,
-          message TEXT NOT NULL,
+          message TEXT NOT NULL CHECK (char_length(message) <= 2000),
           read_at TIMESTAMP WITH TIME ZONE,
-          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+          created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
       `);
       await pool.query(`CREATE INDEX idx_offer_messages_offer_id ON offer_messages(offer_id)`);
@@ -1898,6 +1899,8 @@ async function initializeSchema() {
       await pool.query(`CREATE INDEX idx_offer_messages_to_wallet ON offer_messages(to_wallet)`);
       await pool.query(`CREATE INDEX idx_offer_messages_created_at ON offer_messages(created_at)`);
       await pool.query(`CREATE INDEX idx_offer_messages_conversation ON offer_messages(offer_id, from_wallet, to_wallet)`);
+      await pool.query(`CREATE INDEX idx_offer_messages_from_to_created ON offer_messages(from_wallet, to_wallet, created_at)`);
+      await pool.query(`CREATE INDEX idx_offer_messages_to_wallet_read_at ON offer_messages(to_wallet, read_at)`);
       console.log("  ✓ Created offer_messages table (legacy)");
     } else {
       console.log("  ⊙ offer_messages table already exists");
@@ -1955,7 +1958,43 @@ async function initializeSchema() {
   } catch (err) {
     console.error("  ✗ Disputes migration:", err.message);
   }
-  
+
+  // Deliverable 5 — Database hardening: indexes and constraints (idempotent for existing DBs)
+  try {
+    await pool.query("CREATE INDEX IF NOT EXISTS idx_offer_details_creator_created_at ON offer_details(creator, created_at)");
+    await pool.query("CREATE INDEX IF NOT EXISTS idx_user_messages_from_to_created ON user_messages(from_wallet, to_wallet, created_at)");
+    await pool.query("CREATE INDEX IF NOT EXISTS idx_user_messages_to_wallet_read_at ON user_messages(to_wallet, read_at)");
+    await pool.query("CREATE INDEX IF NOT EXISTS idx_offer_messages_from_to_created ON offer_messages(from_wallet, to_wallet, created_at)");
+    await pool.query("CREATE INDEX IF NOT EXISTS idx_offer_messages_to_wallet_read_at ON offer_messages(to_wallet, read_at)");
+    const addMsgConstraint = async (table, conname) => {
+      const r = await pool.query(
+        "SELECT 1 FROM pg_constraint WHERE conname = $1",
+        [conname]
+      );
+      if (r.rows.length === 0) {
+        await pool.query(
+          `ALTER TABLE ${table} ADD CONSTRAINT ${conname} CHECK (char_length(message) <= 2000)`
+        );
+      }
+    };
+    await addMsgConstraint("user_messages", "chk_user_messages_message_len").catch(() => {});
+    await addMsgConstraint("offer_messages", "chk_offer_messages_message_len").catch(() => {});
+    await addMsgConstraint("dispute_messages", "chk_dispute_messages_message_len").catch(() => {});
+    for (const table of ["user_messages", "offer_messages", "dispute_messages"]) {
+      const col = await pool.query(
+        "SELECT is_nullable FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1 AND column_name = 'created_at'",
+        [table]
+      );
+      if (col.rows.length > 0 && col.rows[0].is_nullable === "YES") {
+        await pool.query(`UPDATE ${table} SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL`);
+        await pool.query(`ALTER TABLE ${table} ALTER COLUMN created_at SET NOT NULL`);
+      }
+    }
+    console.log("  ✓ Deliverable 5 DB indexes and constraints applied");
+  } catch (err) {
+    console.error("  ✗ Deliverable 5 migration (non-fatal):", err.message);
+  }
+
   console.log("Database schema initialized successfully");
 }
 
