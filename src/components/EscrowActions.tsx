@@ -203,7 +203,7 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
       escrows.map((e) => {
         const details = offerDetailsMap[e.offerId];
         return details
-          ? { ...e, price: details.price, minAmount: details.minAmount, maxAmount: details.maxAmount, paymentMethod: details.paymentMethod, fiatCurrency: details.fiatCurrency }
+          ? { ...e, price: details.price, paymentMethod: details.paymentMethod, fiatCurrency: details.fiatCurrency }
           : e;
       }),
     [escrows, offerDetailsMap]
@@ -285,10 +285,11 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
         setSelectedOfferId(null);
       }
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("[EscrowActions] loadAll failed:", error);
       toast.error("Failed to load offers", {
-        description: error instanceof Error ? error.message : undefined,
+        description: message.length > 80 ? `${message.slice(0, 80)}…` : message,
       });
-      console.error(error);
       setAllEscrows([]);
     } finally {
       setIsLoading(false);
@@ -594,12 +595,8 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
                 </p>
               </div>
               <div>
-                <Label className="text-muted-foreground">Transaction Limits</Label>
-                <p className="text-sm">
-                  Min: <span className="font-mono">{selectedEscrow.minAmount.toFixed(4)}</span> KDA
-                  <br />
-                  Max: <span className="font-mono">{selectedEscrow.maxAmount.toFixed(4)}</span> KDA
-                </p>
+                <Label className="text-muted-foreground">Amount</Label>
+                <p className="text-sm font-mono">{selectedEscrow.amount.toFixed(4)} KDA</p>
               </div>
               <div>
                 <Label className="text-muted-foreground">Payment Methods</Label>

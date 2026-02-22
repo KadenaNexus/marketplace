@@ -32,8 +32,7 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
   const [offerId, setOfferId] = useState("");
   const [side, setSide] = useState<"BUY" | "SELL">(role === "buyer" ? "BUY" : "SELL");
   const [price, setPrice] = useState("");
-  const [minAmount, setMinAmount] = useState("");
-  const [maxAmount, setMaxAmount] = useState("");
+  const [amount, setAmount] = useState("");
   const [paymentMethods, setPaymentMethods] = useState<string[]>([]);
   const [fiatCurrency, setFiatCurrency] = useState("USD");
   const [isLoading, setIsLoading] = useState(false);
@@ -59,7 +58,7 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
       return;
     }
 
-    if (!offerId || !price || !minAmount || !maxAmount) {
+    if (!offerId || !price || !amount) {
       toast.error("Please fill in all required fields");
       return;
     }
@@ -70,31 +69,17 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
     }
 
     const priceNum = parseFloat(price);
-    const minAmountNum = parseFloat(minAmount);
-    const maxAmountNum = parseFloat(maxAmount);
+    const amountNum = parseFloat(amount);
 
     if (isNaN(priceNum) || priceNum <= 0) {
       toast.error("Please enter a valid price");
       return;
     }
 
-    if (isNaN(minAmountNum) || minAmountNum <= 0) {
-      toast.error("Please enter a valid minimum amount");
+    if (isNaN(amountNum) || amountNum <= 0) {
+      toast.error("Please enter a valid amount (KDA)");
       return;
     }
-
-    if (isNaN(maxAmountNum) || maxAmountNum <= 0) {
-      toast.error("Please enter a valid maximum amount");
-      return;
-    }
-
-    if (maxAmountNum < minAmountNum) {
-      toast.error("Maximum amount must be greater than or equal to minimum amount");
-      return;
-    }
-
-    // Use maxAmount as the available amount
-    const amountNum = maxAmountNum;
 
     setIsLoading(true);
 
@@ -139,8 +124,6 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
           amount: amountNum,
           side,
           price: priceNum,
-          minAmount: minAmountNum,
-          maxAmount: maxAmountNum,
           paymentMethod: paymentMethodJson,
           fiatCurrency,
         });
@@ -161,8 +144,7 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
       // Reset form
       setOfferId("");
       setPrice("");
-      setMinAmount("");
-      setMaxAmount("");
+      setAmount("");
       setPaymentMethods([]);
     } catch (error) {
       console.error("Create offer error:", error);
@@ -257,34 +239,19 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
             />
           </div>
 
-          {/* Min/Max Limits */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="minAmount">Min Transaction (KDA)</Label>
-              <Input
-                id="minAmount"
-                type="number"
-                step="0.00000001"
-                min="0"
-                value={minAmount}
-                onChange={(e) => setMinAmount(e.target.value)}
-                placeholder="0.00"
-                className="font-mono"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="maxAmount">Max Transaction (KDA)</Label>
-              <Input
-                id="maxAmount"
-                type="number"
-                step="0.00000001"
-                min="0"
-                value={maxAmount}
-                onChange={(e) => setMaxAmount(e.target.value)}
-                placeholder="0.00"
-                className="font-mono"
-              />
-            </div>
+          {/* Amount (KDA) — required; one fixed amount per offer */}
+          <div className="space-y-2">
+            <Label htmlFor="amount">Amount (KDA)</Label>
+            <Input
+              id="amount"
+              type="number"
+              step="0.00000001"
+              min="0"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="0.00"
+              className="font-mono"
+            />
           </div>
 
           {/* Fiat Currency */}

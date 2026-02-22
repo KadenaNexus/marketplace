@@ -11,8 +11,6 @@ export interface OfferDetails {
   amount: number;
   side: "BUY" | "SELL";
   price: number;
-  minAmount: number;
-  maxAmount: number;
   paymentMethod: string;
   fiatCurrency: string;
   createdAt?: string;

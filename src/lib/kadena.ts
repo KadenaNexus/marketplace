@@ -87,8 +87,6 @@ export interface Escrow {
   // Binance P2P style fields
   side: "BUY" | "SELL";
   price: number;
-  minAmount: number;
-  maxAmount: number;
   paymentMethod: string; // JSON string array
   fiatCurrency: string;
 }
@@ -612,10 +610,8 @@ export async function readEscrow(offerId: string): Promise<Escrow | null> {
   const seller = side === "SELL" ? creator : (buyerField ?? "");
   const buyer = side === "SELL" ? buyerField : (creator || null);
 
-  // Contract stores only trustless data; price/limits/payment come from off-chain offer_details (merge in UI)
+  // Contract stores only trustless data; price/payment come from off-chain offer_details (merge in UI)
   const price = typeof o.price === "number" ? o.price : (typeof o.price === "string" ? Number(o.price) : 0);
-  const minAmount = typeof o.minAmount === "number" ? o.minAmount : (typeof o.minAmount === "string" ? Number(o.minAmount) : amt);
-  const maxAmount = typeof o.maxAmount === "number" ? o.maxAmount : (typeof o.maxAmount === "string" ? Number(o.maxAmount) : amt);
   const paymentMethod = typeof o.paymentMethod === "string" ? o.paymentMethod : "[]";
   const fiatCurrency = typeof o.fiatCurrency === "string" ? o.fiatCurrency : "USD";
 
@@ -633,8 +629,6 @@ export async function readEscrow(offerId: string): Promise<Escrow | null> {
     paidAt,
     side,
     price,
-    minAmount,
-    maxAmount,
     paymentMethod,
     fiatCurrency,
   };
@@ -675,8 +669,9 @@ export async function listEscrowIds(): Promise<string[]> {
       errStr = String(o.message ?? o.msg ?? o.info ?? o.detail ?? o.type ?? JSON.stringify(o));
     }
     if (!errStr) errStr = JSON.stringify(r);
+    // Contract not deployed yet: return empty list so UI shows "no offers" instead of error
     if (/Table access failed|table.*was not found|_escrows was not found/i.test(errStr)) {
-      throw new Error("TABLE_NOT_FOUND");
+      return [];
     }
     throw new Error(errStr);
   }
@@ -690,11 +685,23 @@ export async function listEscrowIds(): Promise<string[]> {
   return [];
 }
 
-/** Fetches all escrows by listing IDs then reading each. */
+/** Fetches all escrows by listing IDs then reading each. Resilient: one failed read does not fail the whole list. */
 export async function listAllEscrows(): Promise<Escrow[]> {
-  const ids = await listEscrowIds();
-  const results = await Promise.all(ids.map((id) => readEscrow(id)));
-  return results.filter((e): e is Escrow => e != null);
+  let ids: string[];
+  try {
+    ids = await listEscrowIds();
+  } catch (err) {
+    console.error("[listAllEscrows] listEscrowIds failed:", err);
+    throw err;
+  }
+  const settled = await Promise.allSettled(ids.map((id) => readEscrow(id)));
+  const results: Escrow[] = [];
+  for (let i = 0; i < settled.length; i++) {
+    const s = settled[i];
+    if (s.status === "fulfilled" && s.value != null) results.push(s.value);
+    else if (s.status === "rejected") console.warn("[listAllEscrows] readEscrow failed for id:", ids[i], s.reason);
+  }
+  return results;
 }
 
 /** On-chain reputation counters only (score calculation & UI off-chain). */

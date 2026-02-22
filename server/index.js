@@ -525,8 +525,6 @@ app.get("/api/offers/:offerId", async (req, res) => {
       amount: Number(row.amount),
       side: row.side,
       price: Number(row.price),
-      minAmount: Number(row.min_amount),
-      maxAmount: Number(row.max_amount),
       paymentMethod: row.payment_method,
       fiatCurrency: row.fiat_currency,
       createdAt: row.created_at,
@@ -539,7 +537,7 @@ app.get("/api/offers/:offerId", async (req, res) => {
 
 // PUT /api/offers – upsert off-chain offer details (call before or after create-offer on chain)
 app.put("/api/offers", async (req, res) => {
-  const { offerId, creator, amount, side, price, minAmount, maxAmount, paymentMethod, fiatCurrency } = req.body ?? {};
+  const { offerId, creator, amount, side, price, paymentMethod, fiatCurrency } = req.body ?? {};
   if (!offerId || typeof offerId !== "string") return res.status(400).json({ error: "Missing offerId" });
   if (!creator || typeof creator !== "string") return res.status(400).json({ error: "Missing creator" });
   const amt = Number(amount);
@@ -547,22 +545,17 @@ app.put("/api/offers", async (req, res) => {
   if (side !== "BUY" && side !== "SELL") return res.status(400).json({ error: "Invalid side" });
   const pr = Number(price);
   if (!Number.isFinite(pr) || pr <= 0) return res.status(400).json({ error: "Invalid price" });
-  const minA = Number(minAmount);
-  const maxA = Number(maxAmount);
-  if (!Number.isFinite(minA) || minA <= 0 || !Number.isFinite(maxA) || maxA < minA) {
-    return res.status(400).json({ error: "Invalid minAmount/maxAmount" });
-  }
   const pm = typeof paymentMethod === "string" ? paymentMethod : "[]";
   const fc = typeof fiatCurrency === "string" ? fiatCurrency.trim().slice(0, 10) : "USD";
   try {
     await pool.query(
       `INSERT INTO offer_details (offer_id, creator, amount, side, price, min_amount, max_amount, payment_method, fiat_currency)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       VALUES ($1, $2, $3, $4, $5, $3, $3, $6, $7)
        ON CONFLICT (offer_id) DO UPDATE SET
          creator = EXCLUDED.creator, amount = EXCLUDED.amount, side = EXCLUDED.side,
          price = EXCLUDED.price, min_amount = EXCLUDED.min_amount, max_amount = EXCLUDED.max_amount,
          payment_method = EXCLUDED.payment_method, fiat_currency = EXCLUDED.fiat_currency`,
-      [offerId.trim(), creator.trim(), amt, side, pr, minA, maxA, pm, fc]
+      [offerId.trim(), creator.trim(), amt, side, pr, pm, fc]
     );
     return res.json({ ok: true, offerId: offerId.trim() });
   } catch (err) {
@@ -740,6 +733,43 @@ app.post("/api/messages", async (req, res) => {
   }
 });
 
+// GET /api/messages/unread-count – must be before /:otherWallet so "unread-count" is not captured as a wallet
+app.get("/api/messages/unread-count", async (req, res) => {
+  const wallet = req.query.wallet?.toString();
+
+  if (!wallet) {
+    return res.status(400).json({ error: "Missing wallet parameter" });
+  }
+
+  try {
+    let result;
+    try {
+      result = await pool.query(
+        `SELECT COUNT(*) as count
+         FROM user_messages
+         WHERE to_wallet = $1 AND read_at IS NULL`,
+        [wallet]
+      );
+    } catch (tableErr) {
+      if (tableErr.message?.includes("does not exist") || (tableErr.message?.includes("relation") && tableErr.message?.includes("does not exist"))) {
+        result = await pool.query(
+          `SELECT COUNT(*) as count
+           FROM offer_messages
+           WHERE to_wallet = $1 AND read_at IS NULL`,
+          [wallet]
+        );
+      } else {
+        throw tableErr;
+      }
+    }
+
+    return res.json({ unreadCount: parseInt(result.rows[0].count) || 0 });
+  } catch (err) {
+    console.error("GET /api/messages/unread-count", err);
+    return res.status(500).json({ error: err.message || "Database error" });
+  }
+});
+
 // GET /api/messages/:otherWallet – get all messages between current user and another user
 // Query: ?wallet=<currentUserWallet>
 app.get("/api/messages/:otherWallet", async (req, res) => {
@@ -855,44 +885,6 @@ app.put("/api/messages/:messageId/read", async (req, res) => {
     return res.json({ id: result.rows[0].id, readAt: result.rows[0].read_at });
   } catch (err) {
     console.error("PUT /api/messages/:messageId/read", err);
-    return res.status(500).json({ error: err.message || "Database error" });
-  }
-});
-
-// GET /api/messages/unread-count – get unread message count for a wallet
-app.get("/api/messages/unread-count", async (req, res) => {
-  const wallet = req.query.wallet?.toString();
-  
-  if (!wallet) {
-    return res.status(400).json({ error: "Missing wallet parameter" });
-  }
-  
-  try {
-    // Try user_messages first, fallback to offer_messages
-    let result;
-    try {
-      result = await pool.query(
-        `SELECT COUNT(*) as count
-         FROM user_messages
-         WHERE to_wallet = $1 AND read_at IS NULL`,
-        [wallet]
-      );
-    } catch (tableErr) {
-      if (tableErr.message?.includes("does not exist") || tableErr.message?.includes("relation") && tableErr.message?.includes("does not exist")) {
-        result = await pool.query(
-          `SELECT COUNT(*) as count
-           FROM offer_messages
-           WHERE to_wallet = $1 AND read_at IS NULL`,
-          [wallet]
-        );
-      } else {
-        throw tableErr;
-      }
-    }
-    
-    return res.json({ unreadCount: parseInt(result.rows[0].count) || 0 });
-  } catch (err) {
-    console.error("GET /api/messages/unread-count", err);
     return res.status(500).json({ error: err.message || "Database error" });
   }
 });

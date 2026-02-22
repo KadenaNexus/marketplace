@@ -34,7 +34,8 @@ export async function sendMessage(params: SendMessageParams): Promise<UserMessag
   });
   if (!res.ok) {
     const e = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(e.reason || e.error || "Failed to send message");
+    const msg = e.reason || e.error || (res.status === 404 ? "Chat server not available. Run 'npm run dev:server' in another terminal for profile and chat." : "Failed to send message");
+    throw new Error(msg);
   }
   return res.json();
 }
@@ -46,7 +47,10 @@ export async function getMessages(otherWallet: string, wallet: string): Promise<
   if (!res.ok) {
     const errorText = await res.text().catch(() => res.statusText);
     console.error("[getMessages] Error:", res.status, errorText);
-    throw new Error(errorText || `Failed to fetch messages: ${res.status} ${res.statusText}`);
+    const msg = res.status === 404
+      ? "Chat server not available. Run 'npm run dev:server' in another terminal for profile and chat."
+      : (errorText || `Failed to fetch messages: ${res.status}`);
+    throw new Error(msg);
   }
   return res.json();
 }

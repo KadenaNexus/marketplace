@@ -77,10 +77,9 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, onSelect, role
             </div>
           </div>
 
-          {/* Limits */}
+          {/* Amount */}
           <div className="flex items-center gap-4 text-xs text-muted-foreground">
-            <span>Min: {escrow.minAmount.toFixed(4)} KDA</span>
-            <span>Max: {escrow.maxAmount.toFixed(4)} KDA</span>
+            <span>Amount: <span className="font-mono">{escrow.amount.toFixed(4)}</span> KDA</span>
           </div>
 
           {/* Payment Methods */}
