@@ -33,7 +33,7 @@ export const API_HOST = API_CHAINWEB_PACT;
 export const CONTRACT_NAMESPACE =
   (typeof import.meta.env?.VITE_CONTRACT_NAMESPACE === "string" && import.meta.env.VITE_CONTRACT_NAMESPACE) || "free";
 export const CONTRACT_MODULE =
-  (typeof import.meta.env?.VITE_CONTRACT_MODULE === "string" && import.meta.env.VITE_CONTRACT_MODULE) || "p2p-escrow-again";
+  (typeof import.meta.env?.VITE_CONTRACT_MODULE === "string" && import.meta.env.VITE_CONTRACT_MODULE) || "p2p-escrow5";
 
 export const kadenaClient = createClient(API_HOST);
 

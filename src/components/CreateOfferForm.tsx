@@ -230,7 +230,7 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
             <Input
               id="price"
               type="number"
-              step="0.01"
+              step="any"
               min="0"
               value={price}
               onChange={(e) => setPrice(e.target.value)}

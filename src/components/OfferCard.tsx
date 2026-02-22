@@ -6,6 +6,7 @@ import { ProfileSummaryView } from "./ProfileSummary";
 import { RatingDisplay } from "./RatingDisplay";
 import type { Escrow } from "@/lib/kadena";
 import type { RatingSummary } from "@/lib/ratingApi";
+import { formatFiat } from "@/lib/utils";
 import { ShoppingCart, Store, ArrowRight, CreditCard, MessageCircle } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { useState } from "react";
@@ -67,13 +68,13 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, onSelect, role
           <div className="space-y-1">
             <div className="flex items-baseline gap-2">
               <span className="text-2xl font-bold text-primary">
-                {currencySymbol}{escrow.price.toFixed(2)}
+                {currencySymbol}{formatFiat(escrow.price)}
               </span>
               <span className="text-sm text-muted-foreground">per KDA</span>
             </div>
             <div className="flex items-center gap-4 text-sm text-muted-foreground">
               <span>Available: <span className="font-medium text-foreground">{escrow.amount.toFixed(4)} KDA</span></span>
-              <span>Total: <span className="font-medium text-foreground">{currencySymbol}{totalPrice.toFixed(2)}</span></span>
+              <span>Total: <span className="font-medium text-foreground">{currencySymbol}{formatFiat(totalPrice)}</span></span>
             </div>
           </div>
 

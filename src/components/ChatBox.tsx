@@ -30,6 +30,9 @@ export function ChatBox({ otherWallet, otherProfile, onClose, className, context
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
   const isOtherOnline = useIsOnline(otherWallet);
+  /** Reuse same signed proof for send + mark-as-read so user signs only once. Valid 60s. */
+  const signedProofCacheRef = useRef<{ signedCmd: unknown; ts: number } | null>(null);
+  const PROOF_CACHE_MS = 60_000;
 
   const { data: messages = [], refetch } = useQuery({
     queryKey: ["messages", otherWallet, account?.account],
@@ -38,32 +41,48 @@ export function ChatBox({ otherWallet, otherProfile, onClose, className, context
     refetchInterval: 5000, // Poll every 5 seconds as fallback
   });
 
-  const markAsRead = async (messageId: number) => {
-    if (!account || !isConnected) return;
-    
-    try {
-      const tx = buildProfileAuthTx(account.account, account.publicKey);
-      let signedCmd = await signTransaction(tx);
-      if (signedCmd?.signedCmd && !signedCmd.cmd) signedCmd = signedCmd.signedCmd;
-      const sigs = Array.isArray(signedCmd?.sigs) ? signedCmd.sigs : [];
-      if (sigs[0] && !sigs[0].pubKey) sigs[0] = { ...sigs[0], pubKey: account.publicKey };
-      if (sigs[0]?.signature && !sigs[0].sig) sigs[0] = { ...sigs[0], sig: sigs[0].signature };
-      
-      await markMessageAsRead(messageId, account.account, account.publicKey, signedCmd);
-      queryClient.invalidateQueries({ queryKey: ["messages", otherWallet, account.account] });
-    } catch (err) {
-      console.error("Failed to mark message as read:", err);
+  /** Mark message(s) as read using optional signed proof (no extra sign if provided or cached). */
+  const markAsReadWithProof = async (messageIds: number[], signedCmd?: unknown) => {
+    if (!account || !isConnected || messageIds.length === 0) return;
+    let proof = signedCmd;
+    if (!proof) {
+      const cached = signedProofCacheRef.current;
+      if (cached && Date.now() - cached.ts < PROOF_CACHE_MS) proof = cached.signedCmd;
     }
+    if (!proof) {
+      try {
+        const tx = buildProfileAuthTx(account.account, account.publicKey);
+        let raw = await signTransaction(tx);
+        if (raw?.signedCmd && !raw.cmd) raw = raw.signedCmd;
+        const sigs = Array.isArray(raw?.sigs) ? raw.sigs : [];
+        if (sigs[0] && !sigs[0].pubKey) sigs[0] = { ...sigs[0], pubKey: account.publicKey };
+        if (sigs[0]?.signature && !sigs[0].sig) sigs[0] = { ...sigs[0], sig: sigs[0].signature };
+        proof = raw;
+        signedProofCacheRef.current = { signedCmd: proof, ts: Date.now() };
+      } catch (err) {
+        console.error("Failed to sign for mark-as-read:", err);
+        return;
+      }
+    }
+    for (const id of messageIds) {
+      try {
+        await markMessageAsRead(id, account.account, account.publicKey, proof);
+      } catch (err) {
+        console.error("Failed to mark message as read:", err);
+      }
+    }
+    queryClient.invalidateQueries({ queryKey: ["messages", otherWallet, account.account] });
   };
 
-  // Listen for real-time messages via WebSocket
+  // Listen for real-time messages via WebSocket (no auto mark-as-read here to avoid extra signs)
+  const accountRef = useRef(account?.account);
+  const otherWalletRef = useRef(otherWallet);
+  accountRef.current = account?.account;
+  otherWalletRef.current = otherWallet;
   useEffect(() => {
     if (typeof window === "undefined" || !account) return;
-    
-    // Get socket from global
     const socket = (window as any).__socket;
     if (!socket || !socket.connected) {
-      // Wait a bit for socket to connect
       const timeout = setTimeout(() => {
         const retrySocket = (window as any).__socket;
         if (retrySocket && retrySocket.connected) {
@@ -72,35 +91,27 @@ export function ChatBox({ otherWallet, otherProfile, onClose, className, context
       }, 1000);
       return () => clearTimeout(timeout);
     }
-
     const handleNewMessage = (data: UserMessage) => {
-      // Check if message is between current user and otherWallet
-      if ((data.from === otherWallet && data.to === account.account) || 
-          (data.from === account.account && data.to === otherWallet)) {
-        queryClient.setQueryData<UserMessage[]>(["messages", otherWallet, account.account], (old) => {
+      const myAccount = accountRef.current;
+      const other = otherWalletRef.current;
+      if (!myAccount || !other) return;
+      if ((data.from === other && data.to === myAccount) || (data.from === myAccount && data.to === other)) {
+        queryClient.setQueryData<UserMessage[]>(["messages", other, myAccount], (old) => {
           if (!old) return [data];
-          // Avoid duplicates
           if (old.some((m) => m.id === data.id)) return old;
           return [...old, data];
         });
-        
-        // Mark as read if it's to us (async, don't await)
-        if (data.to === account.account && !data.readAt) {
-          markAsRead(data.id).catch(console.error);
-        }
+        // Do not call markAsRead here — would trigger extra wallet signs when receiving messages.
+        // Unread will be marked when user sends a message (same proof) or on next poll/load.
       }
     };
-
     socket.on("new-message", handleNewMessage);
-    
-    // Join conversation room (user-to-user)
     socket.emit("join-conversation", { otherWallet });
-
     return () => {
       socket.off("new-message", handleNewMessage);
       socket.emit("leave-conversation", { otherWallet });
     };
-  }, [otherWallet, account?.account, queryClient, markAsRead]);
+  }, [otherWallet, account?.account, queryClient]);
 
   // Scroll to bottom when new messages arrive
   useEffect(() => {
@@ -134,6 +145,8 @@ export function ChatBox({ otherWallet, otherProfile, onClose, className, context
       if (sigs[0] && !sigs[0].pubKey) sigs[0] = { ...sigs[0], pubKey: account.publicKey };
       if (sigs[0]?.signature && !sigs[0].sig) sigs[0] = { ...sigs[0], sig: sigs[0].signature };
 
+      signedProofCacheRef.current = { signedCmd, ts: Date.now() };
+
       await sendMutation.mutateAsync({
         toWallet: otherWallet,
         message: messageText.trim(),
@@ -142,6 +155,13 @@ export function ChatBox({ otherWallet, otherProfile, onClose, className, context
         signedCmd,
         contextOfferId: contextOfferId,
       });
+
+      const unreadFromThem = messages.filter(
+        (m) => m.from === otherWallet && m.to === account.account && !m.readAt
+      );
+      if (unreadFromThem.length > 0) {
+        await markAsReadWithProof(unreadFromThem.map((m) => m.id), signedCmd);
+      }
     } catch (err) {
       console.error("Send message error:", err);
     } finally {

@@ -41,6 +41,7 @@ import {
   type Escrow,
 } from "@/lib/kadena";
 import { getOfferDetails } from "@/lib/offerDetailsApi";
+import { formatFiat } from "@/lib/utils";
 import { TradeTimer, isStepExpired } from "./TradeTimer";
 import type { OfferFilters } from "./OfferFilters";
 import { 
@@ -93,8 +94,8 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
 
     // View mode and role-based filtering
     if (viewMode === "my") {
-      // Show only offers created by the current user
-      filtered = filtered.filter((e) => e.seller === account?.account);
+      // Show only offers created by the current user (creator), not just where they are the seller
+      filtered = filtered.filter((e) => e.creator === account?.account);
     } else {
       // Show all offers based on role
       if (role === "buyer") {
@@ -578,7 +579,7 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
                 <Label className="text-muted-foreground">Price</Label>
                 <p className="font-mono text-2xl font-bold text-primary">
                   {selectedEscrow.fiatCurrency === "USD" ? "$" : selectedEscrow.fiatCurrency === "EUR" ? "€" : selectedEscrow.fiatCurrency}
-                  {selectedEscrow.price.toFixed(2)} <span className="text-base">per KDA</span>
+                  {formatFiat(selectedEscrow.price)} <span className="text-base">per KDA</span>
                 </p>
               </div>
               <div>
@@ -591,7 +592,7 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
                 <Label className="text-muted-foreground">Total Value</Label>
                 <p className="font-mono text-xl font-bold">
                   {selectedEscrow.fiatCurrency === "USD" ? "$" : selectedEscrow.fiatCurrency === "EUR" ? "€" : selectedEscrow.fiatCurrency}
-                  {(selectedEscrow.amount * selectedEscrow.price).toFixed(2)}
+                  {formatFiat(selectedEscrow.amount * selectedEscrow.price)}
                 </p>
               </div>
               <div>

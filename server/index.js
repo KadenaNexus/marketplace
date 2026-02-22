@@ -698,26 +698,11 @@ app.post("/api/messages", async (req, res) => {
       contextOfferId: msg.context_offer_id || msg.offer_id || null,
     };
     
-    // Send to conversation room (both users)
+    // Send to conversation room once (both sender and recipient get it if they joined)
     const wallets = [wallet, toWallet].sort();
     const roomName = `conversation:${wallets[0]}:${wallets[1]}`;
     io.to(roomName).emit("new-message", messageData);
-    
-    // Also send directly to both users if they're online (even if not in room)
-    const senderSocket = Array.from(io.sockets.sockets.values()).find(
-      (s) => s.data.wallet === wallet
-    );
-    if (senderSocket) {
-      senderSocket.emit("new-message", messageData);
-    }
-    
-    const recipientSocket = Array.from(io.sockets.sockets.values()).find(
-      (s) => s.data.wallet === toWallet
-    );
-    if (recipientSocket) {
-      recipientSocket.emit("new-message", messageData);
-    }
-    
+
     return res.json({
       id: msg.id,
       from: msg.from_wallet || msg.from_wallet,

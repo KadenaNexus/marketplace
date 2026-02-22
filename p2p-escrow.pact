@@ -2,10 +2,11 @@
 ;; If you use a principal namespace (n_xxx from ns.create-principal-namespace), set it here and in the init block below.
 (namespace "free")
 ;; DEPLOY (one transaction): Deploy this ENTIRE file — module + init block at the end run in the SAME tx.
-;; When signing the deploy tx you MUST grant the capability {namespace}.{module}.GOVERNANCE (e.g. free.p2p-escrow-again.GOVERNANCE).
+;; When signing the deploy tx you MUST grant the capability {namespace}.{module}.GOVERNANCE (e.g. free.p2p-escrow5.GOVERNANCE).
 ;; For upgrades (tables already exist), remove or comment out the block at the end to avoid "table already exists".
+;; Schema mismatch on p2p-escrow5? Use this new module (p2p-escrow5) so create-table runs with the current schema.
 
-(module p2p-escrow4 GOVERNANCE
+(module p2p-escrow5 GOVERNANCE
   (defcap GOVERNANCE () true)
   (defconst VAULT_ACCOUNT "p2p-escrow-vault")
   (defconst PLATFORM_ARBITER "k:665976b8f985c0119c3afa74115fde19f71309cc85428a7104dc2648252b593e")
@@ -81,7 +82,7 @@
       { "creator": creator, "buyer": "", "arbiter": (get-arbiter), "amount": amount, "state": "CREATED", "side": side, "acceptedAt": "", "fundedAt": "", "paidAt": "" }))
   (defun accept-offer (id)
     (let ((accepter (read-msg "sender"))
-          (acceptedAt-str (format-time "%Y-%m-%dT%H:%M:%SZ" (time (at "block-time" (chain-data))))))
+          (acceptedAt-str (format-time "%Y-%m-%dT%H:%M:%SZ" (at "block-time" (chain-data)))))
       (with-read escrows id { "creator" := c, "state" := s }
         (enforce (= s "CREATED") "Invalid state: must be CREATED")
         (enforce (!= accepter c) "Cannot accept your own offer")
@@ -92,7 +93,7 @@
       (enforce (= (read-msg "sender") c) "Only creator can close")
       (update escrows id { "state": "CLOSED" })))
   (defun deposit (id)
-    (let ((now (time (at "block-time" (chain-data))))
+    (let ((now (at "block-time" (chain-data)))
           (t1 (get-t1)))
       (with-read escrows id
         { "creator" := c, "buyer" := b, "amount" := a, "state" := s, "side" := side, "acceptedAt" := acceptedAt }
@@ -106,11 +107,11 @@
               (and (= side "BUY") (= b (read-msg "sender"))))
           "Only KDA holder can deposit")
         (let ((depositor (if (= side "SELL") c b))
-              (fundedAt-str (format-time "%Y-%m-%dT%H:%M:%SZ" (time (at "block-time" (chain-data))))))
+              (fundedAt-str (format-time "%Y-%m-%dT%H:%M:%SZ" (at "block-time" (chain-data)))))
           (coin.transfer-create depositor VAULT_ACCOUNT (read-keyset "vault-guard") a)
           (update escrows id { "state": "FUNDED", "fundedAt": fundedAt-str })))))
   (defun mark-paid (id)
-    (let ((now (time (at "block-time" (chain-data))))
+    (let ((now (at "block-time" (chain-data)))
           (t2 (get-t2)))
       (with-read escrows id
         { "creator" := c, "buyer" := b, "state" := s, "side" := side, "fundedAt" := fundedAt }
@@ -123,10 +124,10 @@
           (or (and (= side "SELL") (= b (read-msg "sender")))
               (and (= side "BUY") (= c (read-msg "sender"))))
           "Only fiat payer can mark paid")
-        (let ((paidAt-str (format-time "%Y-%m-%dT%H:%M:%SZ" (time (at "block-time" (chain-data))))))
+        (let ((paidAt-str (format-time "%Y-%m-%dT%H:%M:%SZ" (at "block-time" (chain-data)))))
           (update escrows id { "state": "PAID", "paidAt": paidAt-str })))))
   (defun release (id)
-    (let ((now (time (at "block-time" (chain-data))))
+    (let ((now (at "block-time" (chain-data)))
           (t3 (get-t3)))
       (with-read escrows id
         { "creator" := c, "buyer" := b, "arbiter" := a, "amount" := amt, "state" := s, "side" := side, "paidAt" := paidAt }
@@ -161,7 +162,7 @@
         (inc-reputation refund-to false)
         (if (> (length other) 0) (inc-reputation other false) true))))
   (defun timeout-accepted-close (id)
-    (let ((now (time (at "block-time" (chain-data))))
+    (let ((now (at "block-time" (chain-data)))
           (t1 (get-t1)))
       (with-read escrows id { "state" := s, "acceptedAt" := acceptedAt }
         (enforce (= s "ACCEPTED") "Invalid state")
@@ -169,7 +170,7 @@
         (enforce (> now (add-time (time acceptedAt) t1)) "Funding period not yet expired")
         (update escrows id { "state": "CLOSED", "buyer": "", "acceptedAt": "" }))))
   (defun timeout-funded-refund (id)
-    (let ((now (time (at "block-time" (chain-data))))
+    (let ((now (at "block-time" (chain-data)))
           (t2 (get-t2)))
       (with-read escrows id
         { "creator" := c, "buyer" := b, "amount" := amt, "state" := s, "side" := side, "fundedAt" := fundedAt }
@@ -187,7 +188,7 @@
           (inc-reputation refund-to false)
           (if (> (length other) 0) (inc-reputation other false) true)))))
   (defun timeout-paid-dispute (id)
-    (let ((now (time (at "block-time" (chain-data))))
+    (let ((now (at "block-time" (chain-data)))
           (t3 (get-t3)))
       (with-read escrows id { "state" := s, "paidAt" := paidAt }
         (enforce (= s "PAID") "Invalid state")
@@ -201,11 +202,11 @@
 )
 ;; ========== INIT IN SAME TRANSACTION (run when you deploy this file) ==========
 ;; create-table is only allowed at tx top level. This block creates tables and sets config.
-;; You MUST sign the deploy tx with the capability {namespace}.{module}.GOVERNANCE granted (e.g. free.p2p-escrow-again.GOVERNANCE).
-;; If you changed (namespace "free") or the module name above, replace "free" and "p2p-escrow4" in the 5 lines below to match.
+;; You MUST sign the deploy tx with the capability {namespace}.{module}.GOVERNANCE granted (e.g. free.p2p-escrow5.GOVERNANCE).
+;; If you changed (namespace "free") or the module name above, replace "free" and "p2p-escrow5" in the 5 lines below to match.
 ;; For module upgrades (tables exist), comment out or delete the block below.
-(with-capability (free.p2p-escrow4.GOVERNANCE)
-  (create-table free.p2p-escrow4.escrows)
-  (create-table free.p2p-escrow4.reputation)
-  (create-table free.p2p-escrow4.config)
-  (free.p2p-escrow4.init-config))
+(with-capability (free.p2p-escrow5.GOVERNANCE)
+  (create-table free.p2p-escrow5.escrows)
+  (create-table free.p2p-escrow5.reputation)
+  (create-table free.p2p-escrow5.config)
+  (free.p2p-escrow5.init-config))
