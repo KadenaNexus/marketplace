@@ -1,6 +1,23 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef } from "react";
 import { io, Socket } from "socket.io-client";
+import type { IUnsignedCommand } from "@kadena/client";
+import { buildProfileAuthTx, signTransaction } from "@/lib/kadena";
 import { useWallet } from "./useWallet";
+
+/** Normalize signed command (unwrap signedCmd, ensure sigs[0].sig) for server. */
+function normalizeSignedCmd(r: unknown): { cmd?: unknown; hash?: string; sigs?: Array<{ pubKey?: string; sig?: string; signature?: string }> } | null {
+  if (r == null) return null;
+  const out = (r as { signedCmd?: unknown; cmd?: unknown }).signedCmd != null && (r as { cmd?: unknown }).cmd == null
+    ? (r as { signedCmd: unknown }).signedCmd
+    : r;
+  const obj = out as { sigs?: Array<{ pubKey?: string; sig?: string; signature?: string }> };
+  const sigs = Array.isArray(obj?.sigs) ? obj.sigs : [];
+  for (let i = 0; i < sigs.length; i++) {
+    const s = sigs[i];
+    if (s?.signature != null && s.sig == null) sigs[i] = { ...s, sig: s.signature };
+  }
+  return obj;
+}
 
 const SOCKET_URL = ""; // Same origin, will connect to the server
 
@@ -94,15 +111,39 @@ function getSocket(): Socket | null {
   return globalSocket;
 }
 
+/** Get signed profile-auth proof and emit identify; server verifies before marking online. */
+async function identifyWithProof(
+  socket: Socket,
+  wallet: string,
+  publicKey: string
+): Promise<void> {
+  try {
+    const tx = buildProfileAuthTx(wallet, publicKey) as IUnsignedCommand;
+    const raw = await signTransaction(tx) as unknown;
+    const signedCmd = normalizeSignedCmd(raw);
+    if (!signedCmd) {
+      console.error("Identify: failed to normalize signed command");
+      return;
+    }
+    socket.emit("identify", { wallet, publicKey, signedCmd });
+    console.log(`Identify sent for wallet: ${wallet}`);
+  } catch (err) {
+    console.error("Identify (proof of ownership) failed:", err);
+  }
+}
+
 /**
  * Hook to manage WebSocket connection and track online status
- * Automatically identifies the user when wallet is connected
- * Socket connects immediately to receive status updates for all users
+ * Automatically identifies the user when wallet is connected (with signed proof).
+ * Socket connects immediately to receive status updates for all users.
  */
 export function useOnlineStatus() {
   const { account, isConnected } = useWallet();
   const [isSocketConnected, setIsSocketConnected] = useState(false);
   const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const prevWalletRef = useRef<string | null>(null);
+  const accountRef = useRef(account);
+  accountRef.current = account;
 
   // Initialize socket connection immediately (not dependent on wallet)
   useEffect(() => {
@@ -111,30 +152,19 @@ export function useOnlineStatus() {
 
     const handleConnect = () => {
       setIsSocketConnected(true);
-      console.log("Socket connected, identifying user...");
-      
-      // Identify user when connected and wallet is available
-      const wallet = account?.account;
-      if (wallet && isConnected) {
-        console.log(`Identifying wallet: ${wallet}`);
-        // Immediately update local status to online (optimistic update)
-        onlineStatusMap.set(wallet, true);
-        statusListeners.forEach((listener) => {
-          try {
-            listener(wallet, true);
-          } catch (err) {
-            console.error("Error in status listener:", err);
-          }
+      console.log("Socket connected, identifying user if wallet connected...");
+      const acc = accountRef.current;
+      if (acc?.account && acc?.publicKey) {
+        console.log(`Identifying wallet: ${acc.account}`);
+        identifyWithProof(socket, acc.account, acc.publicKey).then(() => {
+          prevWalletRef.current = acc.account;
         });
-        socket.emit("identify", { wallet });
-        prevWalletRef.current = wallet;
       }
     };
 
     const handleDisconnect = () => {
       setIsSocketConnected(false);
       console.log("Socket disconnected");
-      // Clear wallet reference on disconnect
       if (prevWalletRef.current) {
         prevWalletRef.current = null;
       }
@@ -143,23 +173,15 @@ export function useOnlineStatus() {
     socket.on("connect", handleConnect);
     socket.on("disconnect", handleDisconnect);
 
-    // Identify on mount if already connected
+    // Identify on mount if already connected (socket + wallet)
     if (socket.connected) {
       setIsSocketConnected(true);
-      const wallet = account?.account;
-      if (wallet && isConnected) {
-        console.log(`Socket already connected, identifying wallet: ${wallet}`);
-        // Immediately update local status to online (optimistic update)
-        onlineStatusMap.set(wallet, true);
-        statusListeners.forEach((listener) => {
-          try {
-            listener(wallet, true);
-          } catch (err) {
-            console.error("Error in status listener:", err);
-          }
+      const acc = accountRef.current;
+      if (acc?.account && acc?.publicKey) {
+        console.log(`Socket already connected, identifying wallet: ${acc.account}`);
+        identifyWithProof(socket, acc.account, acc.publicKey).then(() => {
+          prevWalletRef.current = acc.account;
         });
-        socket.emit("identify", { wallet });
-        prevWalletRef.current = wallet;
       }
     }
 
@@ -169,10 +191,7 @@ export function useOnlineStatus() {
     };
   }, []); // Empty deps - initialize once
 
-  // Track previous wallet to detect logout
-  const prevWalletRef = useRef<string | null>(null);
-
-  // Handle wallet login/logout
+  // Handle wallet login/logout and identify when wallet connects (with proof)
   useEffect(() => {
     const socket = getSocket();
     if (!socket) return;
@@ -180,9 +199,7 @@ export function useOnlineStatus() {
     const currentWallet = account?.account || null;
     const prevWallet = prevWalletRef.current;
 
-    // Wait for socket to be connected before identifying
     if (!isSocketConnected && currentWallet) {
-      // Socket not connected yet, will identify when it connects
       prevWalletRef.current = currentWallet;
       return;
     }
@@ -190,7 +207,6 @@ export function useOnlineStatus() {
     // User logged out (had a wallet, now doesn't)
     if (prevWallet && !currentWallet && isSocketConnected) {
       console.log(`Wallet disconnected, marking offline: ${prevWallet}`);
-      // Immediately update local status to offline
       onlineStatusMap.set(prevWallet, false);
       statusListeners.forEach((listener) => {
         try {
@@ -202,28 +218,17 @@ export function useOnlineStatus() {
       socket.emit("logout", { wallet: prevWallet });
       prevWalletRef.current = null;
     }
-    // User logged in (didn't have wallet, now does) or switched wallets
-    else if (currentWallet && currentWallet !== prevWallet && isSocketConnected) {
-      console.log(`Wallet connected, identifying: ${currentWallet}`);
-      // Immediately update local status to online (optimistic update)
-      onlineStatusMap.set(currentWallet, true);
-      statusListeners.forEach((listener) => {
-        try {
-          listener(currentWallet, true);
-        } catch (err) {
-          console.error("Error in status listener:", err);
-        }
+    // User logged in or switched wallets – identify with signed proof (online set on user-online)
+    else if (currentWallet && account?.publicKey && currentWallet !== prevWallet && isSocketConnected) {
+      console.log(`Wallet connected, identifying with proof: ${currentWallet}`);
+      identifyWithProof(socket, currentWallet, account.publicKey).then(() => {
+        prevWalletRef.current = currentWallet;
       });
-      socket.emit("identify", { wallet: currentWallet });
-      prevWalletRef.current = currentWallet;
     }
-    // User is still connected - don't re-identify unnecessarily
-    // Only re-identify if socket just reconnected (handled in connect handler)
-    // Update ref even if socket not connected yet
     else if (currentWallet && currentWallet !== prevWallet) {
       prevWalletRef.current = currentWallet;
     }
-  }, [account?.account, isConnected, isSocketConnected]);
+  }, [account?.account, account?.publicKey, isConnected, isSocketConnected]);
 
   // Send heartbeat every 10 seconds when connected
   useEffect(() => {

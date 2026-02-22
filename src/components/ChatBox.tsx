@@ -9,7 +9,25 @@ import { useWallet } from "@/hooks/useWallet";
 import { useIsOnline } from "@/hooks/useOnlineStatus";
 import { sendMessage, getMessages, markMessageAsRead, type UserMessage } from "@/lib/messageApi";
 import { buildProfileAuthTx, signTransaction } from "@/lib/kadena";
+import type { IUnsignedCommand } from "@kadena/client";
 import { MessageCircle, Send, X, Clock } from "lucide-react";
+
+/** Wallet may return wrapped { signedCmd } or raw ICommand; normalize for API. */
+type SignedResult = { signedCmd?: unknown; cmd?: unknown; sigs?: Array<{ pubKey?: string; sig?: string; signature?: string }> };
+
+function normalizeSignedCmd(raw: unknown): SignedResult {
+  const r = raw as SignedResult;
+  if (!r) return r;
+  const sigs = Array.isArray(r?.sigs) ? r.sigs : [];
+  for (let i = 0; i < sigs.length; i++) {
+    const s = sigs[i] as { pubKey?: string; sig?: string; signature?: string };
+    if (s && s.signature != null && s.sig == null) sigs[i] = { ...s, sig: s.signature };
+    if (s && s.pubKey == null && (r as any).sigs?.[i]) (sigs[i] as any).pubKey = (r as any).sigs[i].pubKey;
+  }
+  const out = (r.signedCmd != null && r.cmd == null ? r.signedCmd : r) as SignedResult;
+  if (Array.isArray((out as any).sigs)) (out as any).sigs = sigs;
+  return out;
+}
 import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
@@ -51,13 +69,13 @@ export function ChatBox({ otherWallet, otherProfile, onClose, className, context
     }
     if (!proof) {
       try {
-        const tx = buildProfileAuthTx(account.account, account.publicKey);
-        let raw = await signTransaction(tx);
-        if (raw?.signedCmd && !raw.cmd) raw = raw.signedCmd;
-        const sigs = Array.isArray(raw?.sigs) ? raw.sigs : [];
+        const tx = buildProfileAuthTx(account.account, account.publicKey) as IUnsignedCommand;
+        const raw = await signTransaction(tx) as unknown;
+        const normalized = normalizeSignedCmd(raw);
+        const sigs = Array.isArray(normalized?.sigs) ? normalized.sigs : [];
         if (sigs[0] && !sigs[0].pubKey) sigs[0] = { ...sigs[0], pubKey: account.publicKey };
-        if (sigs[0]?.signature && !sigs[0].sig) sigs[0] = { ...sigs[0], sig: sigs[0].signature };
-        proof = raw;
+        if (sigs[0] && (sigs[0].signature != null) && !sigs[0].sig) sigs[0] = { ...sigs[0], sig: sigs[0].signature };
+        proof = normalized;
         signedProofCacheRef.current = { signedCmd: proof, ts: Date.now() };
       } catch (err) {
         console.error("Failed to sign for mark-as-read:", err);
@@ -86,7 +104,7 @@ export function ChatBox({ otherWallet, otherProfile, onClose, className, context
       const timeout = setTimeout(() => {
         const retrySocket = (window as any).__socket;
         if (retrySocket && retrySocket.connected) {
-          retrySocket.emit("join-offer", { offerId });
+          retrySocket.emit("join-conversation", { otherWallet });
         }
       }, 1000);
       return () => clearTimeout(timeout);
@@ -138,12 +156,12 @@ export function ChatBox({ otherWallet, otherProfile, onClose, className, context
 
     setIsSending(true);
     try {
-      const tx = buildProfileAuthTx(account.account, account.publicKey);
-      let signedCmd = await signTransaction(tx);
-      if (signedCmd?.signedCmd && !signedCmd.cmd) signedCmd = signedCmd.signedCmd;
+      const tx = buildProfileAuthTx(account.account, account.publicKey) as IUnsignedCommand;
+      const raw = await signTransaction(tx) as unknown;
+      const signedCmd = normalizeSignedCmd(raw);
       const sigs = Array.isArray(signedCmd?.sigs) ? signedCmd.sigs : [];
       if (sigs[0] && !sigs[0].pubKey) sigs[0] = { ...sigs[0], pubKey: account.publicKey };
-      if (sigs[0]?.signature && !sigs[0].sig) sigs[0] = { ...sigs[0], sig: sigs[0].signature };
+      if (sigs[0] && (sigs[0].signature != null) && !sigs[0].sig) sigs[0] = { ...sigs[0], sig: sigs[0].signature };
 
       signedProofCacheRef.current = { signedCmd, ts: Date.now() };
 

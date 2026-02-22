@@ -168,10 +168,32 @@ setInterval(() => {
 io.on("connection", (socket) => {
   console.log(`Socket connected: ${socket.id}`);
 
-  // User identifies themselves with their wallet
-  socket.on("identify", async ({ wallet }) => {
+  // User identifies themselves with signed proof (same profile-auth as API); verified before marking online
+  socket.on("identify", async ({ wallet, publicKey, signedCmd }) => {
     if (!wallet || typeof wallet !== "string") {
       socket.emit("error", { message: "Invalid wallet" });
+      return;
+    }
+    if (!publicKey || typeof publicKey !== "string") {
+      socket.emit("error", { message: "Missing publicKey (required for proof of ownership)" });
+      return;
+    }
+    if (signedCmd == null) {
+      socket.emit("error", { message: "Missing signedCmd (required for proof of ownership)" });
+      return;
+    }
+    let cmd = signedCmd;
+    if (typeof cmd === "string") {
+      try {
+        cmd = JSON.parse(cmd);
+      } catch (e) {
+        socket.emit("error", { message: "Invalid signedCmd JSON" });
+        return;
+      }
+    }
+    const v = verifyProfileAuth(cmd, wallet, publicKey);
+    if (!v.ok) {
+      socket.emit("error", { message: "Proof of ownership failed", reason: v.reason });
       return;
     }
 
@@ -316,6 +338,14 @@ function verifyProfileAuth(signedCmd, expectedWallet, bodyPublicKey) {
   }
   if (!pubKey) {
     return { ok: false, reason: "Missing pubKey in sigs[0]; include publicKey in request body" };
+  }
+
+  // Only allow k: accounts; wallet must equal k:pubKey so the signer actually owns that account
+  if (!expectedWallet.startsWith("k:")) {
+    return { ok: false, reason: "Only k: accounts are supported for profile auth" };
+  }
+  if (expectedWallet !== `k:${pubKey}`) {
+    return { ok: false, reason: "wallet must match k:pubKey" };
   }
 
   // 1) Hash(cmd) must equal stored hash
@@ -719,11 +749,31 @@ app.post("/api/messages", async (req, res) => {
 });
 
 // GET /api/messages/unread-count – must be before /:otherWallet so "unread-count" is not captured as a wallet
+// Requires wallet, publicKey, signedCmd (query) to prove requester controls wallet; only returns count for that wallet.
 app.get("/api/messages/unread-count", async (req, res) => {
   const wallet = req.query.wallet?.toString();
+  const publicKey = req.query.publicKey?.toString();
+  let signedCmd = req.query.signedCmd;
 
   if (!wallet) {
     return res.status(400).json({ error: "Missing wallet parameter" });
+  }
+  if (!publicKey || typeof publicKey !== "string") {
+    return res.status(400).json({ error: "Missing publicKey (required for proof of ownership)" });
+  }
+  if (signedCmd == null) {
+    return res.status(400).json({ error: "Missing signedCmd (required for proof of ownership)" });
+  }
+  if (typeof signedCmd === "string") {
+    try {
+      signedCmd = JSON.parse(signedCmd);
+    } catch (e) {
+      return res.status(400).json({ error: "Invalid signedCmd JSON" });
+    }
+  }
+  const v = verifyProfileAuth(signedCmd, wallet, publicKey);
+  if (!v.ok) {
+    return res.status(403).json({ error: "Proof of ownership failed", reason: v.reason });
   }
 
   try {
@@ -756,20 +806,39 @@ app.get("/api/messages/unread-count", async (req, res) => {
 });
 
 // GET /api/messages/:otherWallet – get all messages between current user and another user
-// Query: ?wallet=<currentUserWallet>
+// Query: wallet, publicKey, signedCmd (required – proof of ownership). Only returns messages where requester is a participant.
 app.get("/api/messages/:otherWallet", async (req, res) => {
   const otherWallet = req.params.otherWallet?.trim();
   const wallet = req.query.wallet?.toString();
-  
+  const publicKey = req.query.publicKey?.toString();
+  let signedCmd = req.query.signedCmd;
+
   console.log(`[GET /api/messages/:otherWallet] wallet: ${wallet}, otherWallet: ${otherWallet}`);
-  
+
   if (!otherWallet) {
     return res.status(400).json({ error: "Missing otherWallet" });
   }
   if (!wallet) {
     return res.status(400).json({ error: "Missing wallet parameter" });
   }
-  
+  if (!publicKey || typeof publicKey !== "string") {
+    return res.status(400).json({ error: "Missing publicKey (required for proof of ownership)" });
+  }
+  if (signedCmd == null) {
+    return res.status(400).json({ error: "Missing signedCmd (required for proof of ownership)" });
+  }
+  if (typeof signedCmd === "string") {
+    try {
+      signedCmd = JSON.parse(signedCmd);
+    } catch (e) {
+      return res.status(400).json({ error: "Invalid signedCmd JSON" });
+    }
+  }
+  const v = verifyProfileAuth(signedCmd, wallet, publicKey);
+  if (!v.ok) {
+    return res.status(403).json({ error: "Proof of ownership failed", reason: v.reason });
+  }
+
   try {
     // Ensure pool is initialized
     if (!pool) {
