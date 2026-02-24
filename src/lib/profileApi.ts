@@ -1,5 +1,4 @@
-// Use VITE_PROFILE_API when set (e.g. http://localhost:5050 for local API, or full API URL when frontend is on another domain).
-// Empty string = same-origin; /api is proxied in Vite dev to the profile server.
+// Use VITE_PROFILE_API when set (e.g. for dev or when API is on another domain). Otherwise same-origin ("").
 const API =
   typeof import.meta.env?.VITE_PROFILE_API === "string" && import.meta.env.VITE_PROFILE_API.trim() !== ""
     ? import.meta.env.VITE_PROFILE_API.trim().replace(/\/$/, "")

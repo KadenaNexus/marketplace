@@ -19,7 +19,11 @@ function normalizeSignedCmd(r: unknown): { cmd?: unknown; hash?: string; sigs?: 
   return obj;
 }
 
-const SOCKET_URL = ""; // Same origin, will connect to the server
+/** Socket.IO server URL: same origin in production so Nginx can proxy /socket.io to the backend. */
+function getSocketBaseUrl(): string {
+  if (typeof window === "undefined") return "";
+  return window.location.origin;
+}
 
 // Global socket instance to share across components
 let globalSocket: Socket | null = null;
@@ -57,7 +61,7 @@ function getSocket(): Socket | null {
   if (typeof window === "undefined") return null;
   
   if (!globalSocket) {
-    globalSocket = io(SOCKET_URL, {
+    globalSocket = io(getSocketBaseUrl(), {
       transports: ["websocket", "polling"],
       reconnection: true,
       reconnectionDelay: 1000,

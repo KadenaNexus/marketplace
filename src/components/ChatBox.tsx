@@ -50,9 +50,9 @@ export function ChatBox({ otherWallet, otherProfile, onClose, className, context
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
   const isOtherOnline = useIsOnline(otherWallet);
-  /** Reuse same signed proof for send + mark-as-read so user signs only once. Valid 60s. */
+  /** Reuse same signed proof for send + mark-as-read + get messages. User signs once per session window. */
   const signedProofCacheRef = useRef<{ signedCmd: unknown; ts: number } | null>(null);
-  const PROOF_CACHE_MS = 60_000;
+  const PROOF_CACHE_MS = 30 * 60 * 1000; // 30 minutes – one sign per chat session
 
   /** Get signed proof (cached or fresh) for read endpoints. */
   const getProofForRead = async (): Promise<unknown> => {
@@ -178,14 +178,7 @@ export function ChatBox({ otherWallet, otherProfile, onClose, className, context
 
     setIsSending(true);
     try {
-      const tx = buildProfileAuthTx(account.account, account.publicKey) as IUnsignedCommand;
-      const raw = await signTransaction(tx) as unknown;
-      const signedCmd = normalizeSignedCmd(raw);
-      const sigs = Array.isArray(signedCmd?.sigs) ? signedCmd.sigs : [];
-      if (sigs[0] && !sigs[0].pubKey) sigs[0] = { ...sigs[0], pubKey: account.publicKey };
-      if (sigs[0] && (sigs[0].signature != null) && !sigs[0].sig) sigs[0] = { ...sigs[0], sig: sigs[0].signature };
-
-      signedProofCacheRef.current = { signedCmd, ts: Date.now() };
+      const signedCmd = await getProofForRead();
 
       await sendMutation.mutateAsync({
         toWallet: otherWallet,

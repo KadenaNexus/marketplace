@@ -101,11 +101,12 @@ function isAllowedEvidenceMagic(filePath, mimetype) {
   return isAllowedImageMagic(filePath);
 }
 
-// Replay protection: recently used (wallet, nonce); value = expiry time (TTL)
-const usedNonces = new Map(); // key: "wallet:nonce", value: expiryMs
+// Replay protection: recently used (wallet, nonce). value = expiryMs (number) or { expiry, chat?: true } for chat reuse.
+const usedNonces = new Map();
 function pruneUsedNonces() {
   const now = Date.now();
-  for (const [key, expiry] of usedNonces.entries()) {
+  for (const [key, val] of usedNonces.entries()) {
+    const expiry = typeof val === "object" && val != null && "expiry" in val ? val.expiry : val;
     if (expiry <= now) usedNonces.delete(key);
   }
 }
@@ -482,9 +483,12 @@ io.on("connection", (socket) => {
  * @param {object} signedCmd - { cmd, hash, sigs: [{ sig|signature, pubKey? }] }
  * @param {string} expectedWallet
  * @param {string} [bodyPublicKey] - publicKey from request body, used if sigs[0].pubKey is missing
+ * @param {{ allowChatReuse?: boolean, allowProfileReuse?: boolean }} [opts] - allowChatReuse: same nonce for chat; allowProfileReuse: same nonce for upload-avatar + put profile (one sign per save)
  * @returns {{ ok: true } | { ok: false, reason: string }}
  */
-function verifyProfileAuth(signedCmd, expectedWallet, bodyPublicKey) {
+function verifyProfileAuth(signedCmd, expectedWallet, bodyPublicKey, opts = {}) {
+  const allowChatReuse = !!opts.allowChatReuse;
+  const allowProfileReuse = !!opts.allowProfileReuse;
   if (!signedCmd || typeof signedCmd !== "object") {
     return { ok: false, reason: "Missing signedCmd" };
   }
@@ -566,12 +570,18 @@ function verifyProfileAuth(signedCmd, expectedWallet, bodyPublicKey) {
     return { ok: false, reason: "Nonce expired" };
   }
 
-  // Replay protection: reject if (wallet, nonce) was already used
   const nonceKey = `${expectedWallet}:${nonce}`;
-  if (usedNonces.has(nonceKey)) {
+  const existing = usedNonces.get(nonceKey);
+  if (existing !== undefined) {
+    const entry = typeof existing === "object" && existing != null ? existing : { expiry: existing };
+    if (allowChatReuse && entry.chat) return { ok: true };
+    if (allowProfileReuse && entry.profile) return { ok: true };
     return { ok: false, reason: "Nonce already used (replay)" };
   }
-  usedNonces.set(nonceKey, now + NONCE_TOLERANCE_MS);
+  const expiry = now + NONCE_TOLERANCE_MS;
+  usedNonces.set(nonceKey, (allowChatReuse || allowProfileReuse)
+    ? { expiry, ...(allowChatReuse && { chat: true }), ...(allowProfileReuse && { profile: true }) }
+    : expiry);
 
   return { ok: true };
 }
@@ -581,9 +591,10 @@ function verifyProfileAuth(signedCmd, expectedWallet, bodyPublicKey) {
  * Use auth.wallet as the canonical identity; prevents wallet swap.
  * @param {object} req - Express request
  * @param {"body"|"query"} from - where to read wallet, publicKey, signedCmd
+ * @param {{ allowChatReuse?: boolean, allowProfileReuse?: boolean }} [opts] - allowChatReuse / allowProfileReuse for same-nonce reuse on those flows
  * @returns {{ ok: true, wallet: string } | { ok: false, status: number, error: string, reason?: string }}
  */
-function requireAuth(req, from = "body") {
+function requireAuth(req, from = "body", opts = {}) {
   const data = from === "query" ? req.query : req.body;
   const wallet = data?.wallet;
   const publicKey = data?.publicKey;
@@ -604,7 +615,7 @@ function requireAuth(req, from = "body") {
       return { ok: false, status: 400, error: "Invalid signedCmd JSON" };
     }
   }
-  const v = verifyProfileAuth(signedCmd, wallet, publicKey);
+  const v = verifyProfileAuth(signedCmd, wallet, publicKey, opts);
   if (!v.ok) {
     return { ok: false, status: 403, error: "Proof of ownership failed", reason: v.reason };
   }
@@ -640,7 +651,7 @@ app.post("/api/profiles/upload-avatar", (req, res, next) => {
       try { fs.unlinkSync(req.file.path); } catch (e) { /* ignore */ }
       return res.status(400).json({ error: "Invalid image file (content does not match image type)" });
     }
-    const auth = requireAuth(req);
+    const auth = requireAuth(req, "body", { allowProfileReuse: true });
     if (!auth.ok) {
       try { fs.unlinkSync(req.file.path); } catch (e) { /* ignore */ }
       return sendAuthError(res, auth);
@@ -689,7 +700,7 @@ app.get("/api/profiles/:wallet", validateParams(walletParamSchema), async (req, 
 
 // PUT /api/profiles – create/update; requires { username, avatar?, bio?, wallet, publicKey, signedCmd }. avatar: URL (uploaded or external) or null to clear.
 app.put("/api/profiles", validateBody(profilePutBodySchema), async (req, res) => {
-  const auth = requireAuth(req);
+  const auth = requireAuth(req, "body", { allowProfileReuse: true });
   if (!auth.ok) return sendAuthError(res, auth);
   if (req.body.wallet !== auth.wallet) {
     return res.status(400).json({ error: "Wallet must match authenticated wallet" });
@@ -886,7 +897,7 @@ app.post("/api/messages", (req, res, next) => {
     return res.status(400).json({ error: errMsg });
   }
   req.body = bodyResult.data;
-  const auth = requireAuth(req);
+  const auth = requireAuth(req, "body", { allowChatReuse: true });
   if (!auth.ok) {
     if (req.file) {
       try { fs.unlinkSync(req.file.path); } catch (_) {}
@@ -989,7 +1000,7 @@ app.post("/api/messages", (req, res, next) => {
 // GET /api/messages/unread-count – must be before /:otherWallet so "unread-count" is not captured as a wallet
 // Requires wallet, publicKey, signedCmd (query) to prove requester controls wallet; only returns count for that wallet.
 app.get("/api/messages/unread-count", validateQuery(messagesReadQuerySchema), async (req, res) => {
-  const auth = requireAuth(req, "query");
+  const auth = requireAuth(req, "query", { allowChatReuse: true });
   if (!auth.ok) return sendAuthError(res, auth);
   const wallet = auth.wallet;
 
@@ -1025,7 +1036,7 @@ app.get("/api/messages/unread-count", validateQuery(messagesReadQuerySchema), as
 // GET /api/messages/:otherWallet – get all messages between current user and another user
 // Query: wallet, publicKey, signedCmd (required – proof of ownership). Only returns messages where requester is a participant.
 app.get("/api/messages/:otherWallet", validateParams(otherWalletParamSchema), validateQuery(messagesReadQuerySchema), async (req, res) => {
-  const auth = requireAuth(req, "query");
+  const auth = requireAuth(req, "query", { allowChatReuse: true });
   if (!auth.ok) return sendAuthError(res, auth);
   const wallet = auth.wallet;
   const otherWallet = req.params.otherWallet;
@@ -1087,7 +1098,7 @@ app.get("/api/messages/:otherWallet", validateParams(otherWalletParamSchema), va
 
 // PUT /api/messages/:messageId/read – mark message as read
 app.put("/api/messages/:messageId/read", validateParams(messageIdParamSchema), validateBody(messageIdReadBodySchema), async (req, res) => {
-  const auth = requireAuth(req);
+  const auth = requireAuth(req, "body", { allowChatReuse: true });
   if (!auth.ok) return sendAuthError(res, auth);
   if (req.body.wallet !== auth.wallet) {
     return res.status(400).json({ error: "Wallet must match authenticated wallet" });

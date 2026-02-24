@@ -37,6 +37,12 @@ export const CONTRACT_MODULE =
 
 export const kadenaClient = createClient(API_HOST);
 
+/** Gas: lower values = cheaper txs. Mainnet-appropriate defaults. */
+export const GAS_PRICE = 0.0000001; // 1e-7 KDA per unit (was 1e-5)
+export const GAS_LIMIT = 2500; // sufficient for single Pact calls (create, accept, fund, pay, refund, etc.)
+export const GAS_LIMIT_READ = 50000; // list-escrow-ids / get-reputation (list-ids uses ~40k gas)
+export const GAS_LIMIT_PROFILE_AUTH = 5000; // profile proof (signed, not executed on chain)
+
 /** Debug: effective Chainweb API base and send URL (for "read-only" troubleshooting). */
 export function getChainwebDebugInfo(): { apiHost: string; sendUrl: string; networkId: string; chainId: string } {
   return {
@@ -206,8 +212,8 @@ export async function sendTestTransfer(account: string, publicKey: string): Prom
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: account,
-      gasLimit: 2500,
-      gasPrice: 0.00001,
+      gasLimit: GAS_LIMIT,
+      gasPrice: GAS_PRICE,
       ttl: 600,
     })
     .setNetworkId(NETWORK_ID)
@@ -239,8 +245,8 @@ export function buildCreateOfferTx(
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: creatorAccount,
-      gasLimit: 50000,
-      gasPrice: 0.00001,
+      gasLimit: GAS_LIMIT,
+      gasPrice: GAS_PRICE,
       ttl: 600,
     })
     .setNetworkId(NETWORK_ID)
@@ -261,8 +267,8 @@ export function buildAcceptOfferTx(
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: buyerAccount,
-      gasLimit: 50000,
-      gasPrice: 0.00001,
+      gasLimit: GAS_LIMIT,
+      gasPrice: GAS_PRICE,
       ttl: 600,
     })
     .setNetworkId(NETWORK_ID)
@@ -295,8 +301,8 @@ export function buildDepositTx(
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: depositorAccount,
-      gasLimit: 50000,
-      gasPrice: 0.00001,
+      gasLimit: GAS_LIMIT,
+      gasPrice: GAS_PRICE,
       ttl: 600,
     })
     .setNetworkId(NETWORK_ID)
@@ -317,8 +323,8 @@ export function buildMarkPaidTx(
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: buyerAccount,
-      gasLimit: 50000,
-      gasPrice: 0.00001,
+      gasLimit: GAS_LIMIT,
+      gasPrice: GAS_PRICE,
       ttl: 600,
     })
     .setNetworkId(NETWORK_ID)
@@ -345,8 +351,8 @@ export function buildReleaseTx(
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: callerAccount,
-      gasLimit: 50000,
-      gasPrice: 0.00001,
+      gasLimit: GAS_LIMIT,
+      gasPrice: GAS_PRICE,
       ttl: 600,
     })
     .setNetworkId(NETWORK_ID)
@@ -377,8 +383,8 @@ export function buildRefundTx(
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: arbiterAccount,
-      gasLimit: 50000,
-      gasPrice: 0.00001,
+      gasLimit: GAS_LIMIT,
+      gasPrice: GAS_PRICE,
       ttl: 600,
     })
     .setNetworkId(NETWORK_ID)
@@ -397,8 +403,8 @@ export function buildInitTx(senderAccount: string, senderPubKey: string) {
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount,
-      gasLimit: 50000,
-      gasPrice: 0.00001,
+      gasLimit: GAS_LIMIT,
+      gasPrice: GAS_PRICE,
       ttl: 600,
     })
     .setNetworkId(NETWORK_ID)
@@ -421,8 +427,8 @@ export function buildInitAllTx(senderAccount: string, senderPubKey: string) {
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount,
-      gasLimit: 50000,
-      gasPrice: 0.00001,
+      gasLimit: GAS_LIMIT,
+      gasPrice: GAS_PRICE,
       ttl: 600,
     })
     .setNetworkId(NETWORK_ID)
@@ -443,8 +449,8 @@ export function buildCloseOfferTx(
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: creatorAccount,
-      gasLimit: 50000,
-      gasPrice: 0.00001,
+      gasLimit: GAS_LIMIT,
+      gasPrice: GAS_PRICE,
       ttl: 600,
     })
     .setNetworkId(NETWORK_ID)
@@ -464,8 +470,8 @@ export function buildTimeoutAcceptedCloseTx(
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: callerAccount,
-      gasLimit: 50000,
-      gasPrice: 0.00001,
+      gasLimit: GAS_LIMIT,
+      gasPrice: GAS_PRICE,
       ttl: 600,
     })
     .setNetworkId(NETWORK_ID)
@@ -490,8 +496,8 @@ export function buildTimeoutFundedRefundTx(
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: sellerAccount,
-      gasLimit: 50000,
-      gasPrice: 0.00001,
+      gasLimit: GAS_LIMIT,
+      gasPrice: GAS_PRICE,
       ttl: 600,
     })
     .setNetworkId(NETWORK_ID)
@@ -511,8 +517,8 @@ export function buildTimeoutPaidDisputeTx(
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: callerAccount,
-      gasLimit: 50000,
-      gasPrice: 0.00001,
+      gasLimit: GAS_LIMIT,
+      gasPrice: GAS_PRICE,
       ttl: 600,
     })
     .setNetworkId(NETWORK_ID)
@@ -534,8 +540,8 @@ export function buildInitConfigTx(senderAccount: string, senderPubKey: string) {
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount,
-      gasLimit: 50000,
-      gasPrice: 0.00001,
+      gasLimit: GAS_LIMIT,
+      gasPrice: GAS_PRICE,
       ttl: 600,
     })
     .setNetworkId(NETWORK_ID)
@@ -559,8 +565,8 @@ export function buildSetConfigTx(
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: adminAccount,
-      gasLimit: 50000,
-      gasPrice: 0.00001,
+      gasLimit: GAS_LIMIT,
+      gasPrice: GAS_PRICE,
       ttl: 600,
     })
     .setNetworkId(NETWORK_ID)
@@ -579,8 +585,8 @@ export async function readEscrow(offerId: string): Promise<Escrow | null> {
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: "free",
-      gasLimit: 50000,
-      gasPrice: 0.00001,
+      gasLimit: GAS_LIMIT,
+      gasPrice: GAS_PRICE,
       ttl: 600,
     })
     .setNetworkId(NETWORK_ID)
@@ -647,8 +653,8 @@ export async function listEscrowIds(): Promise<string[]> {
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: "free",
-      gasLimit: 100000,
-      gasPrice: 0.00001,
+      gasLimit: GAS_LIMIT_READ,
+      gasPrice: GAS_PRICE,
       ttl: 600,
     })
     .setNetworkId(NETWORK_ID)
@@ -713,7 +719,7 @@ export async function getReputation(wallet: string): Promise<ChainReputation> {
   const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.get-reputation "${wallet}")`;
   const command = Pact.builder
     .execution(pactCode)
-    .setMeta({ chainId: CHAIN_ID, senderAccount: "free", gasLimit: 50000, gasPrice: 0.00001, ttl: 600 })
+    .setMeta({ chainId: CHAIN_ID, senderAccount: "free", gasLimit: GAS_LIMIT_READ, gasPrice: GAS_PRICE, ttl: 600 })
     .setNetworkId(NETWORK_ID)
     .createTransaction();
   const result = await kadenaClient.local(
@@ -803,8 +809,8 @@ export function buildProfileAuthTx(wallet: string, publicKey: string) {
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: wallet,
-      gasLimit: 5000,
-      gasPrice: 0.00001,
+      gasLimit: GAS_LIMIT_PROFILE_AUTH,
+      gasPrice: GAS_PRICE,
       ttl: 600,
     })
     .setNetworkId(NETWORK_ID)
