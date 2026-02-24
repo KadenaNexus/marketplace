@@ -10,7 +10,7 @@ import { useIsOnline } from "@/hooks/useOnlineStatus";
 import { sendMessage, getMessages, markMessageAsRead, type UserMessage } from "@/lib/messageApi";
 import { buildProfileAuthTx, signTransaction } from "@/lib/kadena";
 import type { IUnsignedCommand } from "@kadena/client";
-import { MessageCircle, Send, X, Clock } from "lucide-react";
+import { MessageCircle, Send, X, Clock, Paperclip } from "lucide-react";
 
 /** Wallet may return wrapped { signedCmd } or raw ICommand; normalize for API. */
 type SignedResult = { signedCmd?: unknown; cmd?: unknown; sigs?: Array<{ pubKey?: string; sig?: string; signature?: string }> };
@@ -43,7 +43,9 @@ interface ChatBoxProps {
 export function ChatBox({ otherWallet, otherProfile, onClose, className, contextOfferId }: ChatBoxProps) {
   const { account, isConnected } = useWallet();
   const [messageText, setMessageText] = useState("");
+  const [attachment, setAttachment] = useState<File | null>(null);
   const [isSending, setIsSending] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
@@ -161,6 +163,7 @@ export function ChatBox({ otherWallet, otherProfile, onClose, className, context
     mutationFn: sendMessage,
     onSuccess: () => {
       setMessageText("");
+      setAttachment(null);
       refetch();
     },
     onError: (error: Error) => {
@@ -171,7 +174,7 @@ export function ChatBox({ otherWallet, otherProfile, onClose, className, context
   });
 
   const handleSend = async () => {
-    if (!messageText.trim() || !account || !isConnected || isSending) return;
+    if ((!messageText.trim() && !attachment) || !account || !isConnected || isSending) return;
 
     setIsSending(true);
     try {
@@ -191,6 +194,7 @@ export function ChatBox({ otherWallet, otherProfile, onClose, className, context
         publicKey: account.publicKey,
         signedCmd,
         contextOfferId: contextOfferId,
+        attachment: attachment ?? undefined,
       });
 
       const unreadFromThem = messages.filter(
@@ -288,6 +292,19 @@ export function ChatBox({ otherWallet, otherProfile, onClose, className, context
                     )}
                   >
                     <p className="text-sm whitespace-pre-wrap break-words">{msg.message}</p>
+                    {msg.attachmentUrl && (
+                      <div className="mt-2">
+                        {msg.attachmentUrl.toLowerCase().match(/\.(jpe?g|png|gif|webp)$/) ? (
+                          <a href={msg.attachmentUrl} target="_blank" rel="noopener noreferrer" className="block">
+                            <img src={msg.attachmentUrl} alt={msg.attachmentName || "Attachment"} className="max-w-full max-h-48 rounded object-contain" />
+                          </a>
+                        ) : (
+                          <a href={msg.attachmentUrl} target="_blank" rel="noopener noreferrer" className="text-sm underline break-all">
+                            {msg.attachmentName || "View attachment"}
+                          </a>
+                        )}
+                      </div>
+                    )}
                     <p
                       className={cn(
                         "text-xs mt-1",
@@ -306,7 +323,38 @@ export function ChatBox({ otherWallet, otherProfile, onClose, className, context
       </ScrollArea>
 
       <div className="flex-shrink-0 p-4 border-t">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/jpeg,image/png,image/gif,image/webp,application/pdf"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f && f.size <= 5 * 1024 * 1024) setAttachment(f);
+            else if (f) toast.error("File too large (max 5MB)");
+            e.target.value = "";
+          }}
+        />
+        {attachment && (
+          <div className="flex items-center gap-2 mb-2 text-sm text-muted-foreground">
+            <span className="truncate">{attachment.name}</span>
+            <Button type="button" variant="ghost" size="sm" onClick={() => setAttachment(null)}>
+              <X className="h-3 w-3" />
+            </Button>
+          </div>
+        )}
         <div className="flex gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="flex-shrink-0 self-end"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isSending}
+            title="Attach file (image or PDF, max 5MB)"
+          >
+            <Paperclip className="h-4 w-4" />
+          </Button>
           <Textarea
             value={messageText}
             onChange={(e) => setMessageText(e.target.value)}
@@ -316,12 +364,12 @@ export function ChatBox({ otherWallet, otherProfile, onClose, className, context
                 ? "Type your message..."
                 : "User is offline. Leave a message and they'll see it when online..."
             }
-            className="min-h-[60px] resize-none"
+            className="min-h-[60px] resize-none flex-1"
             disabled={isSending}
           />
           <Button
             onClick={handleSend}
-            disabled={!messageText.trim() || isSending}
+            disabled={(!messageText.trim() && !attachment) || isSending}
             className="self-end"
           >
             <Send className="h-4 w-4" />

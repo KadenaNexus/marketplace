@@ -1,4 +1,9 @@
-const API = ""; // relative; /api is proxied in dev or same-origin in prod
+// Relative "" is proxied in dev. Vite proxy can break multipart/form-data; for attachments use direct backend URL in dev.
+const API = "";
+const API_DIRECT =
+  typeof import.meta !== "undefined" && import.meta.env?.DEV
+    ? (import.meta.env.VITE_PROFILE_API || "http://127.0.0.1:3001")
+    : "";
 
 export interface UserMessage {
   id: number;
@@ -8,6 +13,8 @@ export interface UserMessage {
   createdAt: string;
   readAt: string | null;
   contextOfferId?: string | null; // Optional reference to offer that triggered conversation
+  attachmentUrl?: string | null;
+  attachmentName?: string | null;
 }
 
 export interface SendMessageParams {
@@ -17,9 +24,33 @@ export interface SendMessageParams {
   publicKey: string;
   signedCmd: unknown;
   contextOfferId?: string; // Optional: offer that triggered this message
+  attachment?: File; // Optional file (images or PDF, max 5MB)
 }
 
 export async function sendMessage(params: SendMessageParams): Promise<UserMessage> {
+  const hasFile = !!params.attachment;
+  if (hasFile) {
+    const form = new FormData();
+    form.append("toWallet", params.toWallet);
+    form.append("message", params.message ?? "");
+    form.append("wallet", params.wallet);
+    form.append("publicKey", params.publicKey);
+    form.append("signedCmd", typeof params.signedCmd === "string" ? params.signedCmd : JSON.stringify(params.signedCmd));
+    if (params.contextOfferId) form.append("contextOfferId", params.contextOfferId);
+    form.append("attachment", params.attachment);
+    const base = API_DIRECT || API;
+    const url = base ? `${base.replace(/\/$/, "")}/api/messages` : `${API}/api/messages`;
+    const res = await fetch(url, {
+      method: "POST",
+      body: form,
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({ error: res.statusText }));
+      const msg = e.reason || e.error || (res.status === 404 ? "Chat server not available. Run 'npm run dev:server' in another terminal for profile and chat." : "Failed to send message");
+      throw new Error(msg);
+    }
+    return res.json();
+  }
   const res = await fetch(`${API}/api/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

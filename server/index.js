@@ -35,6 +35,7 @@ import {
   profilesStatusBulkBodySchema,
   offersPutBodySchema,
   messagesPostBodySchema,
+  messagesPostBodySchemaWithFile,
   messagesReadQuerySchema,
   messageIdReadBodySchema,
   disputeEvidenceBodySchema,
@@ -130,11 +131,19 @@ const CORS_ALLOWED_ORIGINS = CORS_ORIGINS_RAW
 
 const UPLOADS_DIR = path.join(__dirname, "uploads", "profiles");
 const EVIDENCE_DIR = path.join(__dirname, "uploads", "evidence");
+const CHAT_UPLOADS_DIR = path.join(__dirname, "uploads", "chat");
 try {
   fs.mkdirSync(EVIDENCE_DIR, { recursive: true });
   console.log(`Evidence directory: ${EVIDENCE_DIR}`);
 } catch (e) {
   console.error("Failed to create evidence directory:", e.message);
+  process.exit(1);
+}
+try {
+  fs.mkdirSync(CHAT_UPLOADS_DIR, { recursive: true });
+  console.log(`Chat uploads directory: ${CHAT_UPLOADS_DIR}`);
+} catch (e) {
+  console.error("Failed to create chat uploads directory:", e.message);
   process.exit(1);
 }
 try {
@@ -196,6 +205,33 @@ const uploadEvidence = multer({
   },
 });
 
+// Chat file upload (images and PDFs, max 5MB); optional attachment per message
+const CHAT_FILE_MAX_BYTES = 5 * 1024 * 1024; // 5MB
+const uploadChatFile = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      try {
+        fs.mkdirSync(CHAT_UPLOADS_DIR, { recursive: true });
+        cb(null, CHAT_UPLOADS_DIR);
+      } catch (e) {
+        cb(new Error(`Failed to create chat upload directory: ${e.message}`), null);
+      }
+    },
+    filename: (_req, file, cb) => {
+      const ext = file.mimetype === "application/pdf" ? ".pdf" : ".jpg";
+      cb(null, crypto.randomUUID() + ext);
+    },
+  }),
+  limits: { fileSize: CHAT_FILE_MAX_BYTES },
+  fileFilter: (_req, file, cb) => {
+    const allowedMimes = ["image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf"];
+    if (!allowedMimes.includes(file.mimetype)) {
+      return cb(new Error("Only images (JPG, PNG, GIF, WebP) and PDFs allowed"), false);
+    }
+    cb(null, true);
+  },
+});
+
 const app = express();
 app.use(cors({
   origin: CORS_ALLOWED_ORIGINS?.length ? CORS_ALLOWED_ORIGINS : true,
@@ -238,6 +274,10 @@ app.use("/uploads/evidence", (req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   next();
 }, express.static(EVIDENCE_DIR));
+app.use("/uploads/chat", (req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  next();
+}, express.static(CHAT_UPLOADS_DIR));
 
 /** @type {pg.Pool} */
 let pool;
@@ -802,78 +842,145 @@ app.post("/api/profiles/status/bulk", validateBody(profilesStatusBulkBodySchema)
    NOTE: Defined before DISPUTE API to avoid route conflicts
 ============================================================ */
 
-// POST /api/messages – send a message to another user (user-to-user conversation)
-// Body: { toWallet, message, wallet, publicKey, signedCmd, contextOfferId? }
-app.post("/api/messages", validateBody(messagesPostBodySchema), async (req, res) => {
+// POST /api/messages – send a message (and optional file) to another user. Accepts JSON or multipart with optional "attachment".
+// Use permissive multipart check so proxy/forwarded requests with boundary in Content-Type are still detected.
+function isMultipartRequest(req) {
+  const ct = req.get("Content-Type") || "";
+  return ct.toLowerCase().includes("multipart/form-data");
+}
+app.post("/api/messages", (req, res, next) => {
+  if (isMultipartRequest(req)) {
+    uploadChatFile.single("attachment")(req, res, (err) => {
+      if (err) {
+        if (err.code === "LIMIT_FILE_SIZE") return res.status(400).json({ error: "File too large (max 5MB)" });
+        return res.status(400).json({ error: err.message || "Upload error" });
+      }
+      next();
+    });
+  } else {
+    next();
+  }
+}, async (req, res) => {
+  const isMultipart = isMultipartRequest(req);
+  if (isMultipart && req.body && typeof req.body.signedCmd === "string") {
+    try {
+      req.body.signedCmd = JSON.parse(req.body.signedCmd);
+    } catch (_) {}
+  }
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+  const bodyResult = (isMultipart ? messagesPostBodySchemaWithFile : messagesPostBodySchema).safeParse(body);
+  if (!bodyResult.success) {
+    if (req.file) {
+      try { fs.unlinkSync(req.file.path); } catch (_) {}
+    }
+    const firstErr = bodyResult.error?.issues?.[0];
+    const bodyKeys = Object.keys(body);
+    const errMsg = firstErr
+      ? firstErr.message
+      : bodyKeys.length === 0 && isMultipart
+        ? "Upload failed: form data was not received. If using dev proxy, the app will send attachments directly to the server."
+        : "Invalid request body";
+    if (isMultipart && bodyKeys.length === 0) {
+      console.warn("[POST /api/messages] multipart request had empty body (proxy may have consumed it). Send attachments directly to backend in dev.");
+    }
+    return res.status(400).json({ error: errMsg });
+  }
+  req.body = bodyResult.data;
   const auth = requireAuth(req);
-  if (!auth.ok) return sendAuthError(res, auth);
+  if (!auth.ok) {
+    if (req.file) {
+      try { fs.unlinkSync(req.file.path); } catch (_) {}
+    }
+    return sendAuthError(res, auth);
+  }
   if (req.body.wallet !== auth.wallet) {
+    if (req.file) {
+      try { fs.unlinkSync(req.file.path); } catch (_) {}
+    }
     return res.status(400).json({ error: "Wallet must match authenticated wallet" });
   }
   const wallet = auth.wallet;
   const { message, toWallet, contextOfferId } = req.body;
+  const messageText = (message != null ? String(message) : "").trim();
+  if (!messageText && !req.file) {
+    if (req.file) {
+      try { fs.unlinkSync(req.file.path); } catch (_) {}
+    }
+    return res.status(400).json({ error: "Message text or file attachment required" });
+  }
 
-  console.log(`[POST /api/messages] from: ${wallet}, to: ${toWallet}, contextOfferId: ${contextOfferId}`);
+  const attachmentUrl = req.file ? "/uploads/chat/" + req.file.filename : null;
+  const attachmentName = req.file && req.file.originalname ? req.file.originalname.slice(0, 255) : null;
+  const insertMessage = messageText || (attachmentName || "Attachment");
+
+  console.log(`[POST /api/messages] from: ${wallet}, to: ${toWallet}, attachment: ${!!req.file}`);
 
   try {
-    // Ensure pool is initialized
     if (!pool) {
-      console.error("Database pool not initialized");
+      if (req.file) {
+        try { fs.unlinkSync(req.file.path); } catch (_) {}
+      }
       return res.status(500).json({ error: "Database not initialized" });
     }
-    
-    // Try user_messages first, fallback to offer_messages if table doesn't exist
     let result;
     try {
       result = await pool.query(
-        `INSERT INTO user_messages (from_wallet, to_wallet, message, context_offer_id, created_at)
-         VALUES ($1, $2, $3, $4, $5)
-         RETURNING id, from_wallet, to_wallet, message, created_at, read_at, context_offer_id`,
-        [wallet, toWallet, message.trim(), contextOfferId ?? null, new Date().toISOString()]
+        `INSERT INTO user_messages (from_wallet, to_wallet, message, context_offer_id, attachment_url, attachment_name, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id, from_wallet, to_wallet, message, created_at, read_at, context_offer_id, attachment_url, attachment_name`,
+        [wallet, toWallet, insertMessage, contextOfferId ?? null, attachmentUrl, attachmentName, new Date().toISOString()]
       );
     } catch (tableErr) {
-      // If user_messages table doesn't exist, use offer_messages (backwards compatibility)
-      if (tableErr.message?.includes("does not exist") || tableErr.message?.includes("relation") && tableErr.message?.includes("does not exist")) {
-        console.log("user_messages table not found, using offer_messages");
+      if (tableErr.message?.includes("does not exist") || (tableErr.message?.includes("relation") && tableErr.message?.includes("does not exist"))) {
+        if (req.file) {
+          try { fs.unlinkSync(req.file.path); } catch (_) {}
+        }
+        console.log("user_messages table not found, using offer_messages (no attachment support)");
         result = await pool.query(
           `INSERT INTO offer_messages (offer_id, from_wallet, to_wallet, message, created_at)
            VALUES ($1, $2, $3, $4, $5)
            RETURNING id, offer_id, from_wallet, to_wallet, message, created_at, read_at`,
-          [contextOfferId || 'general', wallet, toWallet, message.trim(), new Date().toISOString()]
+          [contextOfferId || "general", wallet, toWallet, insertMessage, new Date().toISOString()]
         );
+        result.rows[0].attachment_url = null;
+        result.rows[0].attachment_name = null;
       } else {
+        if (req.file) {
+          try { fs.unlinkSync(req.file.path); } catch (_) {}
+        }
         throw tableErr;
       }
     }
-    
     const msg = result.rows[0];
-    
-    // Emit real-time message via WebSocket to both users
     const messageData = {
       id: msg.id,
-      from: msg.from_wallet || msg.from_wallet,
-      to: msg.to_wallet || msg.to_wallet,
+      from: msg.from_wallet,
+      to: msg.to_wallet,
       message: msg.message,
       createdAt: msg.created_at,
       readAt: msg.read_at || null,
       contextOfferId: msg.context_offer_id || msg.offer_id || null,
+      attachmentUrl: msg.attachment_url || null,
+      attachmentName: msg.attachment_name || null,
     };
-    
-    // Send to conversation room once (both sender and recipient get it if they joined)
     const wallets = [wallet, toWallet].sort();
     const roomName = `conversation:${wallets[0]}:${wallets[1]}`;
     io.to(roomName).emit("new-message", messageData);
-
     return res.json({
       id: msg.id,
-      from: msg.from_wallet || msg.from_wallet,
-      to: msg.to_wallet || msg.to_wallet,
+      from: msg.from_wallet,
+      to: msg.to_wallet,
       message: msg.message,
       createdAt: msg.created_at,
       readAt: msg.read_at || null,
       contextOfferId: msg.context_offer_id || msg.offer_id || null,
+      attachmentUrl: msg.attachment_url || null,
+      attachmentName: msg.attachment_name || null,
     });
   } catch (err) {
+    if (req.file) {
+      try { fs.unlinkSync(req.file.path); } catch (_) {}
+    }
     console.error("POST /api/messages", err);
     return res.status(500).json({ error: err.message || "Database error" });
   }
@@ -936,7 +1043,7 @@ app.get("/api/messages/:otherWallet", validateParams(otherWalletParamSchema), va
     let result;
     try {
       result = await pool.query(
-        `SELECT id, from_wallet, to_wallet, message, created_at, read_at, context_offer_id
+        `SELECT id, from_wallet, to_wallet, message, created_at, read_at, context_offer_id, attachment_url, attachment_name
          FROM user_messages
          WHERE (from_wallet = $1 AND to_wallet = $2) OR (from_wallet = $2 AND to_wallet = $1)
          ORDER BY created_at ASC`,
@@ -966,6 +1073,8 @@ app.get("/api/messages/:otherWallet", validateParams(otherWalletParamSchema), va
       createdAt: row.created_at,
       readAt: row.read_at || null,
       contextOfferId: row.context_offer_id || row.offer_id || null,
+      attachmentUrl: row.attachment_url || null,
+      attachmentName: row.attachment_name || null,
     }));
     
     console.log(`[GET /api/messages/:otherWallet] Returning ${messages.length} messages`);
@@ -1849,7 +1958,9 @@ async function initializeSchema() {
           message TEXT NOT NULL CHECK (char_length(message) <= 2000),
           read_at TIMESTAMP WITH TIME ZONE,
           created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          context_offer_id VARCHAR(255)
+          context_offer_id VARCHAR(255),
+          attachment_url VARCHAR(512),
+          attachment_name VARCHAR(255)
         )
       `);
       await pool.query(`CREATE INDEX idx_user_messages_from_wallet ON user_messages(from_wallet)`);
@@ -1868,6 +1979,13 @@ async function initializeSchema() {
       console.log("  ✓ Created user_messages table");
     } else {
       console.log("  ⊙ user_messages table already exists");
+      // Migration: add attachment columns if missing (for existing installs)
+      try {
+        await pool.query("ALTER TABLE user_messages ADD COLUMN IF NOT EXISTS attachment_url VARCHAR(512)");
+        await pool.query("ALTER TABLE user_messages ADD COLUMN IF NOT EXISTS attachment_name VARCHAR(255)");
+      } catch (migErr) {
+        console.warn("  user_messages attachment columns migration:", migErr.message);
+      }
     }
   } catch (err) {
     console.error("  ✗ Failed to create user_messages table:", err.message);

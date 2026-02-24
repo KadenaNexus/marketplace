@@ -66,6 +66,16 @@ export const messagesPostBodySchema = z.object({
   contextOfferId: z.string().max(256).optional().nullable(),
 }).refine((d) => d.wallet !== d.toWallet, { message: "Cannot send message to yourself", path: ["toWallet"] });
 
+/** Same as above but message optional (when sending file attachment only). */
+export const messagesPostBodySchemaWithFile = z.object({
+  toWallet: walletSchema,
+  message: z.string().max(2000).optional().default(""),
+  wallet: walletSchema,
+  publicKey: publicKeySchema,
+  signedCmd: signedCmdSchema,
+  contextOfferId: z.string().max(256).optional().nullable(),
+}).refine((d) => d.wallet !== d.toWallet, { message: "Cannot send message to yourself", path: ["toWallet"] });
+
 export const messagesReadQuerySchema = z.object({
   wallet: walletSchema,
   publicKey: publicKeySchema,

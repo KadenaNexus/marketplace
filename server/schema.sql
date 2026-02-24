@@ -97,7 +97,9 @@ CREATE TABLE IF NOT EXISTS user_messages (
     message TEXT NOT NULL CHECK (char_length(message) <= 2000),
     read_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    context_offer_id VARCHAR(255)
+    context_offer_id VARCHAR(255),
+    attachment_url VARCHAR(512),
+    attachment_name VARCHAR(255)
 );
 
 -- Indexes for user messages
