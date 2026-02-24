@@ -31,7 +31,8 @@ export function OpenDisputeDialog({ open, onOpenChange, escrow, onSuccess }: Ope
 
   const isBuyer = account?.account === escrow.buyer;
   const isSeller = account?.account === escrow.seller;
-  const canOpenDispute = (isBuyer || isSeller) && (escrow.state === "FUNDED" || escrow.state === "PAID");
+  const allowedStates = ["CREATED", "ACCEPTED", "FUNDED", "PAID"] as const;
+  const canOpenDispute = (isBuyer || isSeller) && allowedStates.includes(escrow.state as typeof allowedStates[number]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

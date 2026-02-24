@@ -426,9 +426,9 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
     (selectedEscrow?.state !== "DISPUTED" || account?.account === selectedEscrow?.arbiter);
   const canRefund = (selectedEscrow?.state === "FUNDED" || selectedEscrow?.state === "PAID" || selectedEscrow?.state === "DISPUTED") && account?.account === selectedEscrow?.arbiter;
   const canCloseOffer = selectedEscrow?.state === "CREATED" && account?.account === selectedEscrow?.creator;
-  const canOpenDispute = selectedEscrow?.buyer && 
-    (account?.account === selectedEscrow?.buyer || account?.account === selectedEscrow?.seller) &&
-    (selectedEscrow?.state === "FUNDED" || selectedEscrow?.state === "PAID") &&
+  const canOpenDispute =
+    (account?.account === selectedEscrow?.seller || account?.account === selectedEscrow?.buyer) &&
+    (selectedEscrow?.state === "CREATED" || selectedEscrow?.state === "ACCEPTED" || selectedEscrow?.state === "FUNDED" || selectedEscrow?.state === "PAID") &&
     (!existingDispute || existingDispute.status !== "OPEN");
   const canTimeoutAcceptedClose = selectedEscrow?.state === "ACCEPTED" && !!account?.account && isStepExpired(selectedEscrow.acceptedAt, T1_SECONDS);
   const canTimeoutFundedRefund = selectedEscrow?.state === "FUNDED" && account?.account === selectedEscrow?.seller && isStepExpired(selectedEscrow.fundedAt, T2_SECONDS);
