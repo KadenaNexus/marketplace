@@ -1,10 +1,8 @@
-// Base URL for API: VITE_PROFILE_API in dev, or current origin in browser (production behind Nginx).
+// Base URL for API: use relative "" (same-origin) so Nginx receives /api/... and proxies correctly.
+// Set VITE_PROFILE_API only when the API is on a different origin (e.g. dev backend URL).
 function getApiBase(): string {
   if (typeof import.meta.env?.VITE_PROFILE_API === "string" && import.meta.env.VITE_PROFILE_API.trim() !== "") {
     return import.meta.env.VITE_PROFILE_API.trim().replace(/\/$/, "");
-  }
-  if (typeof window !== "undefined" && window.location?.origin) {
-    return window.location.origin;
   }
   return "";
 }
