@@ -384,8 +384,11 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
 
   const handleRefund = () => {
     if (!account || !selectedEscrow) return;
-    executeAction("Refund", () => 
-      buildRefundTx(selectedEscrow.offerId, account.account, account.publicKey, selectedEscrow.seller, selectedEscrow.amount)
+    // Contract: SELL -> refund creator (seller), BUY -> refund buyer (depositor)
+    const refundRecipient = selectedEscrow.side === "SELL" ? selectedEscrow.creator : selectedEscrow.buyer;
+    if (!refundRecipient) return;
+    executeAction("Refund", () =>
+      buildRefundTx(selectedEscrow.offerId, account.account, account.publicKey, refundRecipient, selectedEscrow.amount)
     );
   };
 
@@ -424,7 +427,9 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
   const canRelease = (selectedEscrow?.state === "PAID" || selectedEscrow?.state === "DISPUTED") &&
     (account?.account === selectedEscrow?.seller || account?.account === selectedEscrow?.arbiter) &&
     (selectedEscrow?.state !== "DISPUTED" || account?.account === selectedEscrow?.arbiter);
-  const canRefund = (selectedEscrow?.state === "FUNDED" || selectedEscrow?.state === "PAID" || selectedEscrow?.state === "DISPUTED") && account?.account === selectedEscrow?.arbiter;
+  const canRefund = (selectedEscrow?.state === "FUNDED" || selectedEscrow?.state === "PAID" || selectedEscrow?.state === "DISPUTED") &&
+    account?.account === selectedEscrow?.arbiter &&
+    (selectedEscrow?.side === "SELL" || !!selectedEscrow?.buyer);
   const canCloseOffer = selectedEscrow?.state === "CREATED" && account?.account === selectedEscrow?.creator;
   const canOpenDispute =
     (account?.account === selectedEscrow?.seller || account?.account === selectedEscrow?.buyer) &&
@@ -738,7 +743,7 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
                     ) : (
                       <RotateCcw className="h-4 w-4" />
                     )}
-                    Refund to Seller
+                    {selectedEscrow?.side === "SELL" ? "Refund to Seller" : "Refund to Buyer"}
                   </Button>
                 )}
 

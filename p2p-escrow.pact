@@ -150,17 +150,19 @@
           (update escrows id { "state": "COMPLETED" })
           (inc-reputation seller true)
           (inc-reputation recipient true)))))
-  (defun refund (id)
-    (with-read escrows id
-      { "creator" := c, "buyer" := b, "arbiter" := a, "amount" := amt, "state" := s, "side" := side }
-      (enforce (or (= s "PAID") (= s "FUNDED") (= s "DISPUTED")) "Invalid state for refund")
-      (enforce (= (read-msg "sender") a) "Only arbiter can refund")
-      (let ((refund-to (if (= side "SELL") c b))
-            (other (if (= side "SELL") b c)))
-        (coin.transfer VAULT_ACCOUNT refund-to amt)
-        (update escrows id { "buyer": "", "state": "REFUNDED" })
-        (inc-reputation refund-to false)
-        (if (> (length other) 0) (inc-reputation other false) true))))
+  ;; Refund takes no args to avoid "too many arguments" from client/capability; offerId from message data.
+  (defun refund ()
+    (let ((id (read-msg "offerId")))
+      (with-read escrows id
+        { "creator" := c, "buyer" := b, "arbiter" := a, "amount" := amt, "state" := s, "side" := side }
+        (enforce (or (= s "PAID") (= s "FUNDED") (= s "DISPUTED")) "Invalid state for refund")
+        (enforce (= (read-msg "sender") a) "Only arbiter can refund")
+        (let ((refund-to (if (= side "SELL") c b))
+              (other (if (= side "SELL") b c)))
+          (coin.transfer VAULT_ACCOUNT refund-to amt)
+          (update escrows id { "buyer": "", "state": "REFUNDED" })
+          (inc-reputation refund-to false)
+          (if (> (length other) 0) (inc-reputation other false) true)))))
   (defun timeout-accepted-close (id)
     (let ((now (at "block-time" (chain-data)))
           (t1 (get-t1)))

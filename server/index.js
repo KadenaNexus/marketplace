@@ -210,7 +210,7 @@ const apiLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
-// Stricter limit for messaging: throttle rapid message spam
+// Chat/messages: 30 messages per minute per IP (flexible limit)
 const messagesLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 30,

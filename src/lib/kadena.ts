@@ -354,21 +354,25 @@ export function buildReleaseTx(
 }
 
 /* ---------- REFUND (ARBITER only; FUNDED/PAID/DISPUTED; contract: SELL -> refund creator, BUY -> refund buyer) ---------- */
-
+/*
+ * Contract (defun refund ()) takes NO arguments and reads "offerId" from message data to avoid
+ * "too many arguments" errors from execution or capability serialization.
+ */
 export function buildRefundTx(
   offerId: string,
   arbiterAccount: string,
   arbiterPubKey: string,
-  sellerFromEscrow: string,
+  refundRecipient: string,
   amountFromEscrow: number
 ) {
   const amt = { decimal: amountFromEscrow.toFixed(8) };
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.refund "${offerId}")`)
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.refund)`)
+    .addData("offerId", offerId)
     .addData("sender", arbiterAccount)
     .addSigner(arbiterPubKey, (s) => [
       s("coin.GAS"),
-      s("coin.TRANSFER", "p2p-escrow-vault", sellerFromEscrow, amt),
+      s("coin.TRANSFER", "p2p-escrow-vault", refundRecipient, amt),
     ])
     .setMeta({
       chainId: CHAIN_ID,
@@ -515,9 +519,9 @@ export function buildTimeoutPaidDisputeTx(
     .createTransaction();
 }
 
-/** Explorer URL for a request key (mainnet). */
+/** Explorer URL for a transaction (request key). Uses Kadena community block explorer. */
 export function getTxExplorerUrl(requestKey: string): string {
-  return `https://explorer.chainweb.com/mainnet/tx/${requestKey}`;
+  return `https://explorer.chainweb-community.org/mainnet/tx/${requestKey}`;
 }
 
 /* ---------- ADMIN: init config (GOVERNANCE; run once after deploy) ---------- */
