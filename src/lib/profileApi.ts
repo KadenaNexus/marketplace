@@ -1,8 +1,13 @@
-// Use VITE_PROFILE_API when set (e.g. for dev or when API is on another domain). Otherwise same-origin ("").
-const API =
-  typeof import.meta.env?.VITE_PROFILE_API === "string" && import.meta.env.VITE_PROFILE_API.trim() !== ""
-    ? import.meta.env.VITE_PROFILE_API.trim().replace(/\/$/, "")
-    : "";
+// Base URL for API: VITE_PROFILE_API in dev, or current origin in browser (production behind Nginx).
+function getApiBase(): string {
+  if (typeof import.meta.env?.VITE_PROFILE_API === "string" && import.meta.env.VITE_PROFILE_API.trim() !== "") {
+    return import.meta.env.VITE_PROFILE_API.trim().replace(/\/$/, "");
+  }
+  if (typeof window !== "undefined" && window.location?.origin) {
+    return window.location.origin;
+  }
+  return "";
+}
 
 export interface Profile {
   username: string | null;
@@ -22,7 +27,8 @@ export interface ProfileSummary {
 }
 
 export async function fetchProfile(wallet: string): Promise<Profile | null> {
-  const res = await fetch(`${API}/api/profiles/${encodeURIComponent(wallet)}`);
+  const base = getApiBase();
+  const res = await fetch(`${base}/api/profiles/${encodeURIComponent(wallet)}`);
   if (res.status === 404 || res.status === 204) return null;
   if (!res.ok) throw new Error(await res.text().catch(() => res.statusText));
   const j = await res.json();
@@ -42,10 +48,16 @@ export async function uploadAvatar(params: {
   form.append("wallet", wallet);
   form.append("publicKey", publicKey);
   form.append("signedCmd", JSON.stringify(signedCmd));
-  const res = await fetch(`${API}/api/profiles/upload-avatar`, {
-    method: "POST",
-    body: form,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${getApiBase()}/api/profiles/upload-avatar`, {
+      method: "POST",
+      body: form,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Network error";
+    throw new Error(msg.includes("fetch") ? "Profile server unreachable. Check backend and Nginx /api proxy." : msg);
+  }
   if (!res.ok) {
     const e = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(e.reason || e.error || "Upload failed");
@@ -69,11 +81,17 @@ export async function putProfile(params: {
     signedCmd: params.signedCmd,
   };
   if (params.avatar !== undefined) body.avatar = params.avatar;
-  const res = await fetch(`${API}/api/profiles`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${getApiBase()}/api/profiles`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Network error";
+    throw new Error(msg.includes("fetch") ? "Profile server unreachable. Check backend and Nginx /api proxy." : msg);
+  }
   if (!res.ok) {
     const e = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(e.reason || e.error || "Failed to save profile");
@@ -83,7 +101,7 @@ export async function putProfile(params: {
 
 export async function fetchProfilesBulk(wallets: string[]): Promise<Record<string, ProfileSummary>> {
   if (wallets.length === 0) return {};
-  const res = await fetch(`${API}/api/profiles/bulk`, {
+  const res = await fetch(`${getApiBase()}/api/profiles/bulk`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ wallets }),
