@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { WalletConnect } from "@/components/WalletConnect";
+import { AppLogo } from "@/components/AppLogo";
 import { Dashboard } from "@/components/Dashboard";
 import { RoleSelection } from "@/components/RoleSelection";
 import { BuyerView } from "@/components/BuyerView";
@@ -10,7 +11,7 @@ import { useState } from "react";
 import { useWallet } from "@/hooks/useWallet";
 import { fetchProfile } from "@/lib/profileApi";
 import { CHAIN_ID, NETWORK_ID, listAllEscrows } from "@/lib/kadena";
-import { ShieldCheck, LogOut, Shield } from "lucide-react";
+import { LogOut, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { toast } from "sonner";
@@ -53,17 +54,7 @@ const Index = () => {
       {/* Header */}
       <header className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-50">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-lg bg-primary/20 flex items-center justify-center">
-              <ShieldCheck className="h-5 w-5 text-primary" />
-            </div>
-            <div>
-              <h1 className="font-bold text-lg">Kadena P2P Escrow</h1>
-              <p className="text-xs text-muted-foreground font-mono">
-                {NETWORK_ID} • Chain {CHAIN_ID}
-              </p>
-            </div>
-          </div>
+          <AppLogo subtitle={`${NETWORK_ID} • Chain ${CHAIN_ID}`} />
           <div className="flex items-center gap-4">
             <ThemeToggle />
             {isArbiter && (

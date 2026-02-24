@@ -1,4 +1,9 @@
-const API = ""; // relative; /api is proxied in dev or same-origin in prod
+// Use VITE_PROFILE_API when set (e.g. http://localhost:5050 for local API, or full API URL when frontend is on another domain).
+// Empty string = same-origin; /api is proxied in Vite dev to the profile server.
+const API =
+  typeof import.meta.env?.VITE_PROFILE_API === "string" && import.meta.env.VITE_PROFILE_API.trim() !== ""
+    ? import.meta.env.VITE_PROFILE_API.trim().replace(/\/$/, "")
+    : "";
 
 export interface Profile {
   username: string | null;
