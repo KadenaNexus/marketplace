@@ -4,6 +4,7 @@ import { WalletConnect } from "@/components/WalletConnect";
 import { AppLogo } from "@/components/AppLogo";
 import { Dashboard } from "@/components/Dashboard";
 import { RoleSelection } from "@/components/RoleSelection";
+import { EscrowActions } from "@/components/EscrowActions";
 import { BuyerView } from "@/components/BuyerView";
 import { SellerView } from "@/components/SellerView";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -88,7 +89,13 @@ const Index = () => {
         {!isConnected ? (
           <Dashboard />
         ) : !role ? (
-          <RoleSelection onSelectRole={handleRoleSelect} />
+          <div className="space-y-10">
+            {/* My active trades: seller or buyer, state in progress */}
+            <section>
+              <EscrowActions refreshTrigger={refreshTrigger} viewMode="active" role="seller" />
+            </section>
+            <RoleSelection onSelectRole={handleRoleSelect} />
+          </div>
         ) : (
           <div className="space-y-4">
             <div className="flex items-center justify-end">

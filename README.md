@@ -103,16 +103,18 @@ The Pact module is `free.p2p-escrow5` (see `CONTRACT_MODULE` in `src/lib/kadena.
 
 - **Strict state machine** — CREATED → ACCEPTED → FUNDED → PAID → COMPLETED (or REFUNDED/CLOSED/DISPUTED via timeouts or arbiter).
 - **Timed transitions** — T1/T2/T3 (default 10 min each).
-- **Admin** — `init-config` and `set-config(arbiter, t1, t2, t3)` (GOVERNANCE).
+- **Admin** — `init-config` and `set-config(arbiter, t1, t2, t3)` (GOVERNANCE). GOVERNANCE is restricted: only a signer that satisfies the keyset `admin-keyset` (provided in tx data) can grant it — so only the admin can upgrade the module or run init/set-config.
+- **Vault** — Per-offer accounts use a **capability user guard** (not a keyset). Only the module can transfer from vaults (release/refund); see [Kadena deprecation notice for module guards](https://medium.com/kadena-io/deprecation-notice-for-module-guards-and-pact-guards-2efbf64f488f).
 
 ### One-transaction deploy (recommended)
 
 `p2p-escrow.pact` ends with an **init block** that runs in the **same transaction** as the module load. One deploy = module + create tables + init config.
 
 1. Deploy the **entire** `p2p-escrow.pact` file (module + the block at the end) in one transaction.
-2. When signing the deploy tx you **must grant** the capability `free.p2p-escrow5.GOVERNANCE` (or `{namespace}.{module}.GOVERNANCE` if you changed the module name):
-   - **Chainweaver:** When you sign the deploy transaction, add the capability `free.p2p-escrow5.GOVERNANCE` to the signer (e.g. in "Capabilities" or "Signing"). If you don't add it, you get "Module admin is necessary but has not been acquired."
-3. For **upgrades** (tables already exist), remove or comment out the block at the end of the file to avoid "table already exists."
+2. The deploy tx **must include** in its data the keyset `admin-keyset` (e.g. `{ "keys": ["<your-admin-pubkey>"], "pred": "keys-all" }`). Only a signer that satisfies this keyset can grant GOVERNANCE.
+3. When signing the deploy tx you **must grant** the capability `free.p2p-escrow5.GOVERNANCE` (or `{namespace}.{module}.GOVERNANCE` if you changed the module name):
+   - **Chainweaver:** Add the capability `free.p2p-escrow5.GOVERNANCE` to the signer and include `admin-keyset` in the transaction data with your admin public key. If you don't add it, you get "Module admin is necessary but has not been acquired."
+4. For **upgrades** (tables already exist), remove or comment out the block at the end of the file to avoid "table already exists."
 
 ### Tables and init in same tx
 
@@ -150,7 +152,7 @@ This happens when you run the init transaction (p2p-escrow-deploy-init.pact) but
 1. **Sign with the same key that deployed the module** — The account/key that deployed `p2p-escrow.pact` is the "module admin" and the only one who can grant GOVERNANCE.
 2. **Grant the capability when signing** — In Chainweaver, when you sign the init tx, you must **add** the capability `free.p2p-escrow5.GOVERNANCE` (or your module name) to the signer so you are granting it. If you don't add it, the capability is not acquired and you get this error.
 
-So: **Sender** = deployer account, **Signer** = deployer key, and when signing add the capability **free.p2p-escrow5.GOVERNANCE**.
+So: **Sender** = deployer account, **Signer** = deployer key, **Data** = include `admin-keyset` with `{ "keys": ["<deployer-pubkey>"], "pred": "keys-all" }`, and when signing add the capability **free.p2p-escrow5.GOVERNANCE**.
 
 ### "Operation is not allowed in read-only or system-only mode" (mainnet chain 1)
 

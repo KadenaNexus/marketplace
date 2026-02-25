@@ -1,14 +1,29 @@
-;; NAMESPACE: Use "free" (pre-existing on mainnet). Custom names like "saudi" must be created first (see README "Custom namespace").
-;; If you use a principal namespace (n_xxx from ns.create-principal-namespace), set it here and in the init block below.
+;; =============================================================================
+;; CHAINWEAVER DEPLOY (copy-paste this entire file)
+;; =============================================================================
+;; 1. Paste this full file into Chainweaver (Pact editor / Run).
+;; 2. Set Network, Chain, and Sender (your k: account).
+;; 3. Sign the transaction. When prompted, ADD the capability:
+;;    free.p2p-escrow6.GOVERNANCE (so the init block can run).
+;; 4. Send. No "Data" section needed.
+;;
+;; For upgrades (tables already exist): delete or comment out the block at the
+;; very end of this file (the with-capability block), then deploy again.
+;; =============================================================================
 (namespace "free")
-;; DEPLOY (one transaction): Deploy this ENTIRE file — module + init block at the end run in the SAME tx.
-;; When signing the deploy tx you MUST grant the capability {namespace}.{module}.GOVERNANCE (e.g. free.p2p-escrow5.GOVERNANCE).
-;; For upgrades (tables already exist), remove or comment out the block at the end to avoid "table already exists".
-;; Schema mismatch on p2p-escrow5? Use this new module (p2p-escrow5) so create-table runs with the current schema.
 
-(module p2p-escrow5 GOVERNANCE
+(module p2p-escrow6 GOVERNANCE
+  ;; GOVERNANCE: unrestricted so deploy works from Chainweaver with no extra data.
+  ;; Only sign deploy/init with the key that should own the module.
   (defcap GOVERNANCE () true)
   (defconst VAULT_ACCOUNT "p2p-escrow-vault")
+  ;; Per-offer vault: capability user guard (not module guard). Activation is bounded only
+  ;; inside (with-capability (ESCROW_VAULT_DEBIT id)) — so only our release/refund/timeout
+  ;; paths can transfer from the vault; no module-wide authority.
+  (defun vault-account (id) (concat ["p2p-escrow-vault-" id]))
+  (defcap ESCROW_VAULT_DEBIT (id:string) true)
+  (defun require-ESCROW_VAULT_DEBIT (id:string) (require-capability (ESCROW_VAULT_DEBIT id)))
+  (defun create-escrow-vault-guard (id:string) (create-user-guard (require-ESCROW_VAULT_DEBIT id)))
   (defconst PLATFORM_ARBITER "k:665976b8f985c0119c3afa74115fde19f71309cc85428a7104dc2648252b593e")
   (defconst T1_SECONDS 600)
   (defconst T2_SECONDS 600)
@@ -107,8 +122,9 @@
               (and (= side "BUY") (= b (read-msg "sender"))))
           "Only KDA holder can deposit")
         (let ((depositor (if (= side "SELL") c b))
-              (fundedAt-str (format-time "%Y-%m-%dT%H:%M:%SZ" (at "block-time" (chain-data)))))
-          (coin.transfer-create depositor VAULT_ACCOUNT (read-keyset "vault-guard") a)
+              (fundedAt-str (format-time "%Y-%m-%dT%H:%M:%SZ" (at "block-time" (chain-data))))
+              (vault (vault-account id)))
+          (coin.transfer-create depositor vault (create-escrow-vault-guard id) a)
           (update escrows id { "state": "FUNDED", "fundedAt": fundedAt-str })))))
   (defun mark-paid (id)
     (let ((now (at "block-time" (chain-data)))
@@ -143,23 +159,27 @@
               (and (= s "PAID") (= side "BUY") (= (read-msg "sender") b)))
           "Only KDA holder or arbiter can release - DISPUTED only arbiter")
         (let ((recipient (if (= side "SELL") b c))
-              (seller (if (= side "SELL") c b)))
-          (if (= side "SELL")
-            (coin.transfer VAULT_ACCOUNT b amt)
-            (coin.transfer VAULT_ACCOUNT c amt))
+              (seller (if (= side "SELL") c b))
+              (vault (vault-account id)))
+          (with-capability (ESCROW_VAULT_DEBIT id)
+            (if (= side "SELL")
+              (coin.transfer vault b amt)
+              (coin.transfer vault c amt)))
           (update escrows id { "state": "COMPLETED" })
           (inc-reputation seller true)
           (inc-reputation recipient true)))))
   ;; Refund takes no args to avoid "too many arguments" from client/capability; offerId from message data.
   (defun refund ()
-    (let ((id (read-msg "offerId")))
+    (let ((id (read-msg "offerId"))
+          (vault (vault-account (read-msg "offerId"))))
       (with-read escrows id
         { "creator" := c, "buyer" := b, "arbiter" := a, "amount" := amt, "state" := s, "side" := side }
         (enforce (or (= s "PAID") (= s "FUNDED") (= s "DISPUTED")) "Invalid state for refund")
         (enforce (= (read-msg "sender") a) "Only arbiter can refund")
         (let ((refund-to (if (= side "SELL") c b))
               (other (if (= side "SELL") b c)))
-          (coin.transfer VAULT_ACCOUNT refund-to amt)
+          (with-capability (ESCROW_VAULT_DEBIT id)
+            (coin.transfer vault refund-to amt))
           (update escrows id { "buyer": "", "state": "REFUNDED" })
           (inc-reputation refund-to false)
           (if (> (length other) 0) (inc-reputation other false) true)))))
@@ -184,8 +204,10 @@
               (and (= side "BUY") (= (read-msg "sender") b)))
           "Only seller can timeout-refund")
         (let ((refund-to (if (= side "SELL") c b))
-              (other (if (= side "SELL") b c)))
-          (coin.transfer VAULT_ACCOUNT refund-to amt)
+              (other (if (= side "SELL") b c))
+              (vault (vault-account id)))
+          (with-capability (ESCROW_VAULT_DEBIT id)
+            (coin.transfer vault refund-to amt))
           (update escrows id { "state": "REFUNDED", "buyer": "", "fundedAt": "" })
           (inc-reputation refund-to false)
           (if (> (length other) 0) (inc-reputation other false) true)))))
@@ -202,13 +224,11 @@
   (defun list-escrow-ids ()
     (keys escrows))
 )
-;; ========== INIT IN SAME TRANSACTION (run when you deploy this file) ==========
-;; create-table is only allowed at tx top level. This block creates tables and sets config.
-;; You MUST sign the deploy tx with the capability {namespace}.{module}.GOVERNANCE granted (e.g. free.p2p-escrow5.GOVERNANCE).
-;; If you changed (namespace "free") or the module name above, replace "free" and "p2p-escrow5" in the 5 lines below to match.
-;; For module upgrades (tables exist), comment out or delete the block below.
-(with-capability (free.p2p-escrow5.GOVERNANCE)
-  (create-table free.p2p-escrow5.escrows)
-  (create-table free.p2p-escrow5.reputation)
-  (create-table free.p2p-escrow5.config)
-  (free.p2p-escrow5.init-config))
+;; ========== INIT (run in same tx as deploy) ==========
+;; Creates tables and config. When signing, grant free.p2p-escrow6.GOVERNANCE.
+;; For upgrades (tables exist), comment out or delete the block below.
+(with-capability (free.p2p-escrow6.GOVERNANCE)
+  (create-table free.p2p-escrow6.escrows)
+  (create-table free.p2p-escrow6.reputation)
+  (create-table free.p2p-escrow6.config)
+  (free.p2p-escrow6.init-config))

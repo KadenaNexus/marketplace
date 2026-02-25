@@ -237,7 +237,12 @@ const app = express();
 app.use(cors({
   origin: CORS_ALLOWED_ORIGINS?.length ? CORS_ALLOWED_ORIGINS : true,
 }));
-app.use(express.json({ limit: "256kb" }));
+// Skip JSON body parser for multipart (so profile image + chat attachment uploads work behind Nginx)
+app.use((req, res, next) => {
+  const ct = req.get("Content-Type") || "";
+  if (ct.toLowerCase().includes("multipart/form-data")) return next();
+  express.json({ limit: "256kb" })(req, res, next);
+});
 
 // Rate limiting: 50 req/s per IP on /api/* (50+ → 429)
 const apiLimiter = rateLimit({
@@ -643,8 +648,8 @@ app.post("/api/profiles/upload-avatar", (req, res, next) => {
 }, validateBody(profileUploadAvatarBodySchema), async (req, res) => {
   try {
     if (!req.file) {
-      console.error("POST /api/profiles/upload-avatar: No file in request");
-      return res.status(400).json({ error: "Missing image file" });
+      console.error("POST /api/profiles/upload-avatar: No file in request (check Nginx proxy_request_buffering off and proxy_pass without trailing slash)");
+      return res.status(400).json({ error: "Missing image file. If using Nginx, ensure location /api/ has proxy_request_buffering off and proxy_pass http://127.0.0.1:5050 with no trailing slash." });
     }
     // Validate magic bytes (reject renamed executables / wrong content)
     if (!isAllowedImageMagic(req.file.path)) {
@@ -889,7 +894,7 @@ app.post("/api/messages", (req, res, next) => {
     const errMsg = firstErr
       ? firstErr.message
       : bodyKeys.length === 0 && isMultipart
-        ? "Upload failed: form data was not received. If using dev proxy, the app will send attachments directly to the server."
+        ? "Upload failed: form data not received. On the server, ensure Nginx location /api/ uses proxy_pass http://127.0.0.1:5050 (no trailing slash) and proxy_request_buffering off; then reload Nginx."
         : "Invalid request body";
     if (isMultipart && bodyKeys.length === 0) {
       console.warn("[POST /api/messages] multipart request had empty body (proxy may have consumed it). Send attachments directly to backend in dev.");

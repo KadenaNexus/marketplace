@@ -276,11 +276,9 @@ export function buildAcceptOfferTx(
 }
 
 /* ---------- DEPOSIT ---------- */
-/* depositorAccount: KDA holder (SELL=creator, BUY=buyer field). Contract uses coin.transfer-create
-   so the vault is created on first deposit. vault-guard: keyset with keys:[] so no one can spend
-   from vault except via the contract (release/refund). */
-
-const VAULT_GUARD = { keys: [] as string[], pred: "keys-all" as const };
+/* Vault is created by the contract with a capability user guard (ESCROW_VAULT_DEBIT id).
+   Only the module can transfer from the vault (release/refund); no keyset from client. */
+const VAULT_PREFIX = "p2p-escrow-vault";
 
 export function buildDepositTx(
   offerId: string,
@@ -289,14 +287,13 @@ export function buildDepositTx(
   depositorPubKey: string
 ) {
   const amountDecimal = { decimal: amount.toFixed(8) };
+  const vaultAccount = `${VAULT_PREFIX}-${offerId}`;
   return Pact.builder
     .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.deposit "${offerId}")`)
     .addData("sender", depositorAccount)
-    .addData("vault-guard", VAULT_GUARD)
     .addSigner(depositorPubKey, (s) => [
       s("coin.GAS"),
-      s("coin.TRANSFER", depositorAccount, "p2p-escrow-vault", amountDecimal),
-      s("coin.TRANSFER-CREATE", depositorAccount, "p2p-escrow-vault", VAULT_GUARD, amountDecimal),
+      s("coin.TRANSFER", depositorAccount, vaultAccount, amountDecimal),
     ])
     .setMeta({
       chainId: CHAIN_ID,
@@ -332,7 +329,6 @@ export function buildMarkPaidTx(
 }
 
 /* ---------- RELEASE (KDA holder or arbiter; DISPUTED only arbiter; contract: SELL -> transfer to buyer, BUY -> transfer to creator) ---------- */
-
 export function buildReleaseTx(
   offerId: string,
   callerAccount: string,
@@ -340,14 +336,10 @@ export function buildReleaseTx(
   recipientAccount: string,
   amountFromEscrow: number
 ) {
-  const amt = { decimal: amountFromEscrow.toFixed(8) };
   return Pact.builder
     .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.release "${offerId}")`)
     .addData("sender", callerAccount)
-    .addSigner(callerPubKey, (s) => [
-      s("coin.GAS"),
-      s("coin.TRANSFER", "p2p-escrow-vault", recipientAccount, amt),
-    ])
+    .addSigner(callerPubKey, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: callerAccount,
@@ -371,15 +363,11 @@ export function buildRefundTx(
   refundRecipient: string,
   amountFromEscrow: number
 ) {
-  const amt = { decimal: amountFromEscrow.toFixed(8) };
   return Pact.builder
     .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.refund)`)
     .addData("offerId", offerId)
     .addData("sender", arbiterAccount)
-    .addSigner(arbiterPubKey, (s) => [
-      s("coin.GAS"),
-      s("coin.TRANSFER", "p2p-escrow-vault", refundRecipient, amt),
-    ])
+    .addSigner(arbiterPubKey, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: arbiterAccount,
@@ -393,12 +381,13 @@ export function buildRefundTx(
 
 /* ---------- INIT (create-table; usually in DEPLOYMENT tx) ---------- */
 /* Kadena requires create-table in the DEPLOYMENT tx, signed by the deployer. See DEPLOY.md. */
-
+/* GOVERNANCE enforces (read-msg "sender") = DEPLOYER constant; add "sender" = deployer account. */
 export function buildInitTx(senderAccount: string, senderPubKey: string) {
   const govCap = `${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.GOVERNANCE`;
   const createTableCode = `(with-capability (${govCap}) (create-table ${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.escrows))`;
   return Pact.builder
     .execution(createTableCode)
+    .addData("sender", senderAccount)
     .addSigner(senderPubKey, (s) => [s("coin.GAS"), s(govCap)])
     .setMeta({
       chainId: CHAIN_ID,
@@ -423,6 +412,7 @@ export function buildInitAllTx(senderAccount: string, senderPubKey: string) {
   (${ns}.${mod}.init-config))`;
   return Pact.builder
     .execution(pactCode)
+    .addData("sender", senderAccount)
     .addSigner(senderPubKey, (s) => [s("coin.GAS"), s(govCap)])
     .setMeta({
       chainId: CHAIN_ID,
@@ -485,14 +475,10 @@ export function buildTimeoutFundedRefundTx(
   sellerPubKey: string,
   amount: number
 ) {
-  const amt = { decimal: amount.toFixed(8) };
   return Pact.builder
     .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.timeout-funded-refund "${offerId}")`)
     .addData("sender", sellerAccount)
-    .addSigner(sellerPubKey, (s) => [
-      s("coin.GAS"),
-      s("coin.TRANSFER", "p2p-escrow-vault", sellerAccount, amt),
-    ])
+    .addSigner(sellerPubKey, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: sellerAccount,
@@ -535,7 +521,8 @@ export function buildInitConfigTx(senderAccount: string, senderPubKey: string) {
   const govCap = `${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.GOVERNANCE`;
   const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.init-config)`;
   return Pact.builder
-    .execution(pactCode)
+    .execution(`(with-capability (${govCap}) ${pactCode})`)
+    .addData("sender", senderAccount)
     .addSigner(senderPubKey, (s) => [s("coin.GAS"), s(govCap)])
     .setMeta({
       chainId: CHAIN_ID,
@@ -560,7 +547,8 @@ export function buildSetConfigTx(
   const govCap = `${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.GOVERNANCE`;
   const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.set-config "${arbiter}" ${t1Seconds} ${t2Seconds} ${t3Seconds})`;
   return Pact.builder
-    .execution(pactCode)
+    .execution(`(with-capability (${govCap}) ${pactCode})`)
+    .addData("sender", adminAccount)
     .addSigner(adminPubKey, (s) => [s("coin.GAS"), s(govCap)])
     .setMeta({
       chainId: CHAIN_ID,

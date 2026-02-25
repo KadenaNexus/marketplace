@@ -72,7 +72,7 @@ interface EscrowActionsProps {
   refreshTrigger?: number;
   filters?: OfferFilters;
   role?: "buyer" | "seller";
-  viewMode?: "all" | "my"; // "all" shows all offers, "my" shows only user's offers
+  viewMode?: "all" | "my" | "active"; // "active" = trades where I'm seller or buyer and state is in progress (not CREATED/COMPLETED/REFUNDED/CLOSED)
 }
 
 export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", viewMode = "all" }: EscrowActionsProps) {
@@ -88,12 +88,22 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
   const [showRatingDialog, setShowRatingDialog] = useState(false);
   const [registeringCompletion, setRegisteringCompletion] = useState(false);
 
+const ACTIVE_STATES = ["ACCEPTED", "FUNDED", "PAID", "DISPUTED"] as const;
+
   // Filter escrows based on filters and role
   const escrows = useMemo(() => {
     let filtered = [...allEscrows];
 
     // View mode and role-based filtering
-    if (viewMode === "my") {
+    if (viewMode === "active") {
+      // My active trades: I'm seller or buyer, and state is in progress (not CREATED/terminal)
+      filtered = filtered.filter(
+        (e) =>
+          account?.account &&
+          (e.seller === account.account || e.buyer === account.account) &&
+          ACTIVE_STATES.includes(e.state as (typeof ACTIVE_STATES)[number])
+      );
+    } else if (viewMode === "my") {
       // Show only offers created by the current user (creator), not just where they are the seller
       filtered = filtered.filter((e) => e.creator === account?.account);
     } else {
@@ -170,8 +180,12 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
       }
     }
 
-    // Sort by price (ascending for buyers, descending for sellers)
+    // Sort: for active view by state (most actionable first), else by price
     filtered.sort((a, b) => {
+      if (viewMode === "active") {
+        const order = { PAID: 0, FUNDED: 1, DISPUTED: 2, ACCEPTED: 3 };
+        return (order[a.state as keyof typeof order] ?? 4) - (order[b.state as keyof typeof order] ?? 4);
+      }
       if (role === "buyer") {
         return a.price - b.price; // Buyers want lowest price
       } else {
@@ -180,7 +194,7 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
     });
 
     return filtered;
-  }, [allEscrows, filters, role, account?.account]);
+  }, [allEscrows, filters, role, account?.account, viewMode]);
 
   // Off-chain offer details (price, limits, payment); merge with chain data for display
   const offerIds = useMemo(() => [...new Set(allEscrows.map((e) => e.offerId))], [allEscrows]);
@@ -490,14 +504,18 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
             <div>
               <CardTitle className="flex items-center gap-2">
                 <List className="h-5 w-5 text-primary" />
-                {viewMode === "my" 
+                {viewMode === "active"
+                  ? "My Active Trades"
+                  : viewMode === "my" 
                   ? "My Offers" 
                   : role === "buyer" 
                     ? "All Sell Offers" 
                     : "All Buy Offers"}
               </CardTitle>
               <CardDescription>
-                {viewMode === "my"
+                {viewMode === "active"
+                  ? "Trades where you're the seller or buyer (in progress)"
+                  : viewMode === "my"
                   ? "Manage all offers you've created"
                   : role === "buyer" 
                     ? "Browse available sell offers to accept"
@@ -519,7 +537,9 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
             </div>
           ) : escrows.length === 0 ? (
             <p className="text-center py-8 text-muted-foreground">
-              {viewMode === "my"
+              {viewMode === "active"
+                ? "You have no active trades. Accept an offer as buyer or wait for a buyer as seller to see trades here."
+                : viewMode === "my"
                 ? "You haven't created any offers yet. Create your first offer in the Create Offer tab."
                 : role === "buyer" 
                   ? "No sell offers found. Try adjusting your filters or create a new offer."
@@ -534,7 +554,7 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
                   profileMap={profileMap}
                   ratingSummaryMap={ratingSummaryMap}
                   onSelect={setSelectedOfferId}
-                  role={role}
+                  role={viewMode === "active" ? (e.seller === account?.account ? "seller" : "buyer") : role}
                   isSelected={selectedOfferId === e.offerId}
                 />
               ))}
