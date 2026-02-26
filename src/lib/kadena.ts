@@ -329,7 +329,7 @@ export function buildMarkPaidTx(
 }
 
 /* ---------- RELEASE (KDA holder or arbiter; DISPUTED only arbiter) ---------- */
-/* Contract (defun release ()) takes NO arguments and reads "offerId" from message data (avoids "too many arguments"). */
+/* Contract (defun release (offerId:string)) — pass offerId as argument to avoid "too many arguments". */
 export function buildReleaseTx(
   offerId: string,
   callerAccount: string,
@@ -338,8 +338,7 @@ export function buildReleaseTx(
   _amountFromEscrow: number
 ) {
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.release)`)
-    .addData("offerId", offerId)
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.release "${offerId}")`)
     .addData("sender", callerAccount)
     .addSigner(callerPubKey, (s) => [s("coin.GAS")])
     .setMeta({
@@ -354,10 +353,7 @@ export function buildReleaseTx(
 }
 
 /* ---------- REFUND (ARBITER only; FUNDED/PAID/DISPUTED; contract: SELL -> refund creator, BUY -> refund buyer) ---------- */
-/*
- * Contract (defun refund ()) takes NO arguments and reads "offerId" from message data to avoid
- * "too many arguments" errors from execution or capability serialization.
- */
+/* Contract (defun refund (offerId:string)) — pass offerId as argument to avoid "too many arguments". */
 export function buildRefundTx(
   offerId: string,
   arbiterAccount: string,
@@ -366,8 +362,7 @@ export function buildRefundTx(
   amountFromEscrow: number
 ) {
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.refund)`)
-    .addData("offerId", offerId)
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.refund "${offerId}")`)
     .addData("sender", arbiterAccount)
     .addSigner(arbiterPubKey, (s) => [s("coin.GAS")])
     .setMeta({

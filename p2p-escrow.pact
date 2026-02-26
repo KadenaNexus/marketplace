@@ -136,9 +136,9 @@
           "Only fiat payer can mark paid")
         (let ((paidAt-str (format-time "%Y-%m-%dT%H:%M:%SZ" (at "block-time" (chain-data)))))
           (update escrows id { "state": "PAID", "paidAt": paidAt-str })))))
-  (defun release ()
-    ;; No args — read offerId from message to avoid "too many arguments" from client/capability (same as refund).
-    (let ((id (read-msg "offerId"))
+  (defun release (offerId:string)
+    ;; Single argument avoids "too many arguments" from payload/data and works with all wallets.
+    (let ((id offerId)
           (now (at "block-time" (chain-data)))
           (t3 (get-t3)))
       (with-read escrows id
@@ -164,9 +164,9 @@
           (update escrows id { "state": "COMPLETED" })
           (inc-reputation seller true)
           (inc-reputation recipient true)))))
-  ;; Refund takes no args to avoid "too many arguments" from client/capability; offerId from message data.
-  (defun refund ()
-    (let ((id (read-msg "offerId")))
+  ;; Refund takes offerId as argument to avoid "too many arguments" and missing read-msg from payload.
+  (defun refund (offerId:string)
+    (let ((id offerId))
       (with-read escrows id
         { "creator" := c, "buyer" := b, "arbiter" := a, "amount" := amt, "state" := s, "side" := side }
         (enforce (or (= s "PAID") (= s "FUNDED") (= s "DISPUTED")) "Invalid state for refund")
