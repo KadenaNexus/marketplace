@@ -6,6 +6,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { WalletProvider } from "@/hooks/useWallet";
 import { ThemeProvider } from "next-themes";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { useNewMessageNotification } from "@/hooks/useNewMessageNotification";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import Profile from "./pages/Profile";
@@ -14,9 +15,10 @@ import AdminDisputeDetail from "./pages/AdminDisputeDetail";
 
 const queryClient = new QueryClient();
 
-// Component to initialize WebSocket connection
+// Component to initialize WebSocket connection and new-message notifications
 function OnlineStatusProvider({ children }: { children: React.ReactNode }) {
   useOnlineStatus(); // Initialize WebSocket connection
+  useNewMessageNotification(); // Toast + invalidate when user receives a message
   return <>{children}</>;
 }
 

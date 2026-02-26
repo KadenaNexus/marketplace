@@ -1,33 +1,28 @@
 ;; =============================================================================
 ;; CHAINWEAVER DEPLOY (copy-paste this entire file)
 ;; =============================================================================
-;; 1. Paste this full file into Chainweaver (Pact editor / Run).
-;; 2. Set Network, Chain, and Sender (your k: account).
-;; 3. Sign the transaction. When prompted, ADD the capability:
-;;    free.p2p-escrow6.GOVERNANCE (so the init block can run).
-;; 4. Send. No "Data" section needed.
-;;
-;; For upgrades (tables already exist): delete or comment out the block at the
-;; very end of this file (the with-capability block), then deploy again.
+;; 1. Set DEPLOYER below to your k: account (the only key that can upgrade/govern).
+;; 2. Paste this file into Chainweaver; set Network, Chain, and Sender = DEPLOYER.
+;; 3. Sign and grant free.p2p-escrow7.GOVERNANCE. Set Sender in Chainweaver = DEPLOYER (no Data needed).
+;; 4. For upgrades (tables exist): delete or comment out the init block at the end.
 ;; =============================================================================
 (namespace "free")
 
-(module p2p-escrow6 GOVERNANCE
-  ;; GOVERNANCE: unrestricted so deploy works from Chainweaver with no extra data.
-  ;; Only sign deploy/init with the key that should own the module.
-  (defcap GOVERNANCE () true)
-  (defconst VAULT_ACCOUNT "p2p-escrow-vault")
-  ;; Per-offer vault: capability user guard (not module guard). Activation is bounded only
-  ;; inside (with-capability (ESCROW_VAULT_DEBIT id)) — so only our release/refund/timeout
-  ;; paths can transfer from the vault; no module-wide authority.
-  (defun vault-account (id) (concat ["p2p-escrow-vault-" id]))
+(module p2p-escrow7 GOVERNANCE
+  ;; Only this account can grant GOVERNANCE (upgrade module, init, set-config).
+  ;; Set to your k: account and use it as Sender in Chainweaver when deploying.
+  (defconst DEPLOYER "k:665976b8f985c0119c3afa74115fde19f71309cc85428a7104dc2648252b593e")
+  (defcap GOVERNANCE ()
+    (enforce (= (at "sender" (chain-data)) DEPLOYER) "Only deployer can grant GOVERNANCE"))
+  (defconst VAULT_ACCOUNT "p2p-escrow-vault-")
+  ;; Vault name: VAULT_ACCOUNT + id. Static name so depositor can sign (coin.TRANSFER depositor vault amount).
   (defcap ESCROW_VAULT_DEBIT (id:string) true)
   (defun require-ESCROW_VAULT_DEBIT (id:string) (require-capability (ESCROW_VAULT_DEBIT id)))
   (defun create-escrow-vault-guard (id:string) (create-user-guard (require-ESCROW_VAULT_DEBIT id)))
-  (defconst PLATFORM_ARBITER "k:665976b8f985c0119c3afa74115fde19f71309cc85428a7104dc2648252b593e")
-  (defconst T1_SECONDS 600)
-  (defconst T2_SECONDS 600)
-  (defconst T3_SECONDS 600)
+  (defconst PLATFORM_ARBITER "k:f5cb898c1a34680787a0ec35ae01a45bd0e9526c010362730162c9e93a9e3436")
+  (defconst T1_SECONDS 1200)
+  (defconst T2_SECONDS 1200)
+  (defconst T3_SECONDS 1200)
   (defschema escrow
     creator:string
     buyer:string
@@ -86,17 +81,16 @@
       { "totalTrades" := total, "successfulTrades" := ok, "disputesCount" := disputes }
       { "totalTrades": total, "successfulTrades": ok, "disputesCount": disputes }))
   (defun create-offer (id creator amount side)
-    (enforce (= (read-msg "sender") creator) "Creator must be the transaction sender")
+    (enforce (= (at "sender" (chain-data)) creator) "Creator must be the transaction sender")
     (with-default-read escrows id { "creator": "" } { "creator" := c }
       (enforce (= (length c) 0) "Escrow exists"))
     (enforce (> amount 0.0) "Amount must be > 0")
     (enforce (> (length creator) 0) "Creator required")
     (enforce (!= creator (get-arbiter)) "Creator and arbiter must be different")
-    (enforce (or (= side "BUY") (= side "SELL")) "Side must be BUY or SELL")
     (insert escrows id
       { "creator": creator, "buyer": "", "arbiter": (get-arbiter), "amount": amount, "state": "CREATED", "side": side, "acceptedAt": "", "fundedAt": "", "paidAt": "" }))
   (defun accept-offer (id)
-    (let ((accepter (read-msg "sender"))
+    (let ((accepter (at "sender" (chain-data)))
           (acceptedAt-str (format-time "%Y-%m-%dT%H:%M:%SZ" (at "block-time" (chain-data)))))
       (with-read escrows id { "creator" := c, "state" := s }
         (enforce (= s "CREATED") "Invalid state: must be CREATED")
@@ -105,7 +99,7 @@
   (defun close-offer (id)
     (with-read escrows id { "creator" := c, "state" := s }
       (enforce (= s "CREATED") "Can only close in CREATED state")
-      (enforce (= (read-msg "sender") c) "Only creator can close")
+      (enforce (= (at "sender" (chain-data)) c) "Only creator can close")
       (update escrows id { "state": "CLOSED" })))
   (defun deposit (id)
     (let ((now (at "block-time" (chain-data)))
@@ -118,12 +112,12 @@
               (<= now (add-time (time acceptedAt) t1)))
           "Funding period expired (T1) - call timeout-accepted-close")
         (enforce
-          (or (and (= side "SELL") (= c (read-msg "sender")))
-              (and (= side "BUY") (= b (read-msg "sender"))))
+          (or (and (= side "SELL") (= c (at "sender" (chain-data))))
+              (and (= side "BUY") (= b (at "sender" (chain-data)))))
           "Only KDA holder can deposit")
         (let ((depositor (if (= side "SELL") c b))
               (fundedAt-str (format-time "%Y-%m-%dT%H:%M:%SZ" (at "block-time" (chain-data))))
-              (vault (vault-account id)))
+              (vault (concat [VAULT_ACCOUNT id])))
           (coin.transfer-create depositor vault (create-escrow-vault-guard id) a)
           (update escrows id { "state": "FUNDED", "fundedAt": fundedAt-str })))))
   (defun mark-paid (id)
@@ -137,13 +131,15 @@
               (<= now (add-time (time fundedAt) t2)))
           "Mark-paid period expired (T2) - seller can call timeout-funded-refund")
         (enforce
-          (or (and (= side "SELL") (= b (read-msg "sender")))
-              (and (= side "BUY") (= c (read-msg "sender"))))
+          (or (and (= side "SELL") (= b (at "sender" (chain-data))))
+              (and (= side "BUY") (= c (at "sender" (chain-data)))))
           "Only fiat payer can mark paid")
         (let ((paidAt-str (format-time "%Y-%m-%dT%H:%M:%SZ" (at "block-time" (chain-data)))))
           (update escrows id { "state": "PAID", "paidAt": paidAt-str })))))
-  (defun release (id)
-    (let ((now (at "block-time" (chain-data)))
+  (defun release ()
+    ;; No args — read offerId from message to avoid "too many arguments" from client/capability (same as refund).
+    (let ((id (read-msg "offerId"))
+          (now (at "block-time" (chain-data)))
           (t3 (get-t3)))
       (with-read escrows id
         { "creator" := c, "buyer" := b, "arbiter" := a, "amount" := amt, "state" := s, "side" := side, "paidAt" := paidAt }
@@ -154,13 +150,13 @@
               (<= now (add-time (time paidAt) t3)))
           "Release period expired (T3) - call timeout-paid-dispute")
         (enforce
-          (or (= (read-msg "sender") a)
-              (and (= s "PAID") (= side "SELL") (= (read-msg "sender") c))
-              (and (= s "PAID") (= side "BUY") (= (read-msg "sender") b)))
+          (or (= (at "sender" (chain-data)) a)
+              (and (= s "PAID") (= side "SELL") (= (at "sender" (chain-data)) c))
+              (and (= s "PAID") (= side "BUY") (= (at "sender" (chain-data)) b)))
           "Only KDA holder or arbiter can release - DISPUTED only arbiter")
         (let ((recipient (if (= side "SELL") b c))
               (seller (if (= side "SELL") c b))
-              (vault (vault-account id)))
+              (vault (concat [VAULT_ACCOUNT id])))
           (with-capability (ESCROW_VAULT_DEBIT id)
             (if (= side "SELL")
               (coin.transfer vault b amt)
@@ -170,14 +166,14 @@
           (inc-reputation recipient true)))))
   ;; Refund takes no args to avoid "too many arguments" from client/capability; offerId from message data.
   (defun refund ()
-    (let ((id (read-msg "offerId"))
-          (vault (vault-account (read-msg "offerId"))))
+    (let ((id (read-msg "offerId")))
       (with-read escrows id
         { "creator" := c, "buyer" := b, "arbiter" := a, "amount" := amt, "state" := s, "side" := side }
         (enforce (or (= s "PAID") (= s "FUNDED") (= s "DISPUTED")) "Invalid state for refund")
-        (enforce (= (read-msg "sender") a) "Only arbiter can refund")
+        (enforce (= (at "sender" (chain-data)) a) "Only arbiter can refund")
         (let ((refund-to (if (= side "SELL") c b))
-              (other (if (= side "SELL") b c)))
+              (other (if (= side "SELL") b c))
+              (vault (concat [VAULT_ACCOUNT id])))
           (with-capability (ESCROW_VAULT_DEBIT id)
             (coin.transfer vault refund-to amt))
           (update escrows id { "buyer": "", "state": "REFUNDED" })
@@ -200,12 +196,12 @@
         (enforce (> (length fundedAt) 0) "Missing fundedAt")
         (enforce (> now (add-time (time fundedAt) t2)) "Mark-paid period not yet expired")
         (enforce
-          (or (and (= side "SELL") (= (read-msg "sender") c))
-              (and (= side "BUY") (= (read-msg "sender") b)))
+          (or (and (= side "SELL") (= (at "sender" (chain-data)) c))
+              (and (= side "BUY") (= (at "sender" (chain-data)) b)))
           "Only seller can timeout-refund")
         (let ((refund-to (if (= side "SELL") c b))
               (other (if (= side "SELL") b c))
-              (vault (vault-account id)))
+              (vault (concat [VAULT_ACCOUNT id])))
           (with-capability (ESCROW_VAULT_DEBIT id)
             (coin.transfer vault refund-to amt))
           (update escrows id { "state": "REFUNDED", "buyer": "", "fundedAt": "" })
@@ -225,10 +221,10 @@
     (keys escrows))
 )
 ;; ========== INIT (run in same tx as deploy) ==========
-;; Creates tables and config. When signing, grant free.p2p-escrow6.GOVERNANCE.
+;; When signing, grant free.p2p-escrow7.GOVERNANCE. Sender must = DEPLOYER in the module.
 ;; For upgrades (tables exist), comment out or delete the block below.
-(with-capability (free.p2p-escrow6.GOVERNANCE)
-  (create-table free.p2p-escrow6.escrows)
-  (create-table free.p2p-escrow6.reputation)
-  (create-table free.p2p-escrow6.config)
-  (free.p2p-escrow6.init-config))
+(with-capability (free.p2p-escrow7.GOVERNANCE)
+  (create-table free.p2p-escrow7.escrows)
+  (create-table free.p2p-escrow7.reputation)
+  (create-table free.p2p-escrow7.config)
+  (free.p2p-escrow7.init-config))

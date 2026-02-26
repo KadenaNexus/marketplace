@@ -57,7 +57,8 @@ export function initializeOnlineStatus(profiles: Record<string, { isOnline?: boo
   }
 }
 
-function getSocket(): Socket | null {
+// Expose socket globally for ChatBox and new-message notification; exported for useNewMessageNotification
+export function getSocket(): Socket | null {
   if (typeof window === "undefined") return null;
   
   if (!globalSocket) {

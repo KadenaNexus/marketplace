@@ -382,6 +382,8 @@ io.on("connection", (socket) => {
     });
 
     socket.data.wallet = wallet;
+    // Join per-user room so we can push new-message to recipient even when chat isn't open
+    socket.join(`user:${wallet}`);
     console.log(`User online: ${wallet}`);
 
     // Update last_seen in database (if column exists)
@@ -982,6 +984,8 @@ app.post("/api/messages", (req, res, next) => {
     const wallets = [wallet, toWallet].sort();
     const roomName = `conversation:${wallets[0]}:${wallets[1]}`;
     io.to(roomName).emit("new-message", messageData);
+    // Notify recipient even when they don't have this conversation open (so they get toast/badge)
+    io.to(`user:${messageData.to}`).emit("new-message", messageData);
     return res.json({
       id: msg.id,
       from: msg.from_wallet,

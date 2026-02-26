@@ -33,7 +33,7 @@ export const API_HOST = API_CHAINWEB_PACT;
 export const CONTRACT_NAMESPACE =
   (typeof import.meta.env?.VITE_CONTRACT_NAMESPACE === "string" && import.meta.env.VITE_CONTRACT_NAMESPACE) || "free";
 export const CONTRACT_MODULE =
-  (typeof import.meta.env?.VITE_CONTRACT_MODULE === "string" && import.meta.env.VITE_CONTRACT_MODULE) || "p2p-escrow5";
+  (typeof import.meta.env?.VITE_CONTRACT_MODULE === "string" && import.meta.env.VITE_CONTRACT_MODULE) || "p2p-escrow7";
 
 export const kadenaClient = createClient(API_HOST);
 
@@ -328,16 +328,18 @@ export function buildMarkPaidTx(
     .createTransaction();
 }
 
-/* ---------- RELEASE (KDA holder or arbiter; DISPUTED only arbiter; contract: SELL -> transfer to buyer, BUY -> transfer to creator) ---------- */
+/* ---------- RELEASE (KDA holder or arbiter; DISPUTED only arbiter) ---------- */
+/* Contract (defun release ()) takes NO arguments and reads "offerId" from message data (avoids "too many arguments"). */
 export function buildReleaseTx(
   offerId: string,
   callerAccount: string,
   callerPubKey: string,
-  recipientAccount: string,
-  amountFromEscrow: number
+  _recipientAccount: string,
+  _amountFromEscrow: number
 ) {
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.release "${offerId}")`)
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.release)`)
+    .addData("offerId", offerId)
     .addData("sender", callerAccount)
     .addSigner(callerPubKey, (s) => [s("coin.GAS")])
     .setMeta({
