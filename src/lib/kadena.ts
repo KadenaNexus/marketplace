@@ -329,7 +329,7 @@ export function buildMarkPaidTx(
 }
 
 /* ---------- RELEASE (KDA holder or arbiter; DISPUTED only arbiter) ---------- */
-/* Contract (defun release (offerId:string)) — pass offerId as argument to avoid "too many arguments". */
+/* Contract (defun release (offerId:string)). Do NOT add payload data — some nodes pass data as extra args and cause "too many arguments". */
 export function buildReleaseTx(
   offerId: string,
   callerAccount: string,
@@ -338,8 +338,7 @@ export function buildReleaseTx(
   _amountFromEscrow: number
 ) {
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.release "${offerId}")`)
-    .addData("sender", callerAccount)
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.release "${offerId.replace(/"/g, '\\"')}")`)
     .addSigner(callerPubKey, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
@@ -353,7 +352,7 @@ export function buildReleaseTx(
 }
 
 /* ---------- REFUND (ARBITER only; FUNDED/PAID/DISPUTED; contract: SELL -> refund creator, BUY -> refund buyer) ---------- */
-/* Contract (defun refund (offerId:string)) — pass offerId as argument to avoid "too many arguments". */
+/* Contract (defun refund (offerId:string)). Do NOT add payload data — some nodes pass data as extra args. */
 export function buildRefundTx(
   offerId: string,
   arbiterAccount: string,
@@ -362,8 +361,7 @@ export function buildRefundTx(
   amountFromEscrow: number
 ) {
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.refund "${offerId}")`)
-    .addData("sender", arbiterAccount)
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.refund "${offerId.replace(/"/g, '\\"')}")`)
     .addSigner(arbiterPubKey, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
