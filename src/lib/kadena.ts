@@ -329,7 +329,7 @@ export function buildMarkPaidTx(
 }
 
 /* ---------- RELEASE (KDA holder or arbiter; DISPUTED only arbiter) ---------- */
-/* Contract (defun release (offerId:string)). Do NOT add payload data — some nodes pass data as extra args and cause "too many arguments". */
+/* Contract (defun release (offerId:string _sender:string)). Pass 2 args so node/wallet appending sender does not cause "too many arguments". */
 export function buildReleaseTx(
   offerId: string,
   callerAccount: string,
@@ -337,8 +337,10 @@ export function buildReleaseTx(
   _recipientAccount: string,
   _amountFromEscrow: number
 ) {
+  const safeId = offerId.replace(/"/g, '\\"');
+  const safeSender = (callerAccount || "").replace(/"/g, '\\"');
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.release "${offerId.replace(/"/g, '\\"')}")`)
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.release "${safeId}" "${safeSender}")`)
     .addSigner(callerPubKey, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
@@ -352,7 +354,7 @@ export function buildReleaseTx(
 }
 
 /* ---------- REFUND (ARBITER only; FUNDED/PAID/DISPUTED; contract: SELL -> refund creator, BUY -> refund buyer) ---------- */
-/* Contract (defun refund (offerId:string)). Do NOT add payload data — some nodes pass data as extra args. */
+/* Contract (defun refund (offerId:string _sender:string)). Pass 2 args to avoid "too many arguments". */
 export function buildRefundTx(
   offerId: string,
   arbiterAccount: string,
@@ -360,8 +362,10 @@ export function buildRefundTx(
   refundRecipient: string,
   amountFromEscrow: number
 ) {
+  const safeId = offerId.replace(/"/g, '\\"');
+  const safeSender = (arbiterAccount || "").replace(/"/g, '\\"');
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.refund "${offerId.replace(/"/g, '\\"')}")`)
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.refund "${safeId}" "${safeSender}")`)
     .addSigner(arbiterPubKey, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,

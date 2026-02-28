@@ -136,19 +136,20 @@
           "Only fiat payer can mark paid")
         (let ((paidAt-str (format-time "%Y-%m-%dT%H:%M:%SZ" (at "block-time" (chain-data)))))
           (update escrows id { "state": "PAID", "paidAt": paidAt-str })))))
-  (defun release (offerId:string)
-    ;; Single argument avoids "too many arguments" from payload/data and works with all wallets.
+  (defun release (offerId:string _sender:string)
+    ;; Two args: some nodes/wallets append payload or sender as 2nd arg; we ignore _sender and use (chain-data) for auth.
     (let ((id offerId)
           (now (at "block-time" (chain-data)))
           (t3 (get-t3)))
       (with-read escrows id
         { "creator" := c, "buyer" := b, "arbiter" := a, "amount" := amt, "state" := s, "side" := side, "paidAt" := paidAt }
         (enforce (or (= s "PAID") (= s "DISPUTED")) "Invalid state for release")
-        (enforce
-          (or (= s "DISPUTED")
-              (= (length paidAt) 0)
-              (<= now (add-time (time paidAt) t3)))
-          "Release period expired (T3) - call timeout-paid-dispute")
+        (if (= s "DISPUTED")
+          true
+          (enforce
+            (or (= (length paidAt) 0)
+                (<= now (add-time (time paidAt) t3)))
+            "Release period expired (T3) - call timeout-paid-dispute"))
         (enforce
           (or (= (at "sender" (chain-data)) a)
               (and (= s "PAID") (= side "SELL") (= (at "sender" (chain-data)) c))
@@ -164,8 +165,8 @@
           (update escrows id { "state": "COMPLETED" })
           (inc-reputation seller true)
           (inc-reputation recipient true)))))
-  ;; Refund takes offerId as argument to avoid "too many arguments" and missing read-msg from payload.
-  (defun refund (offerId:string)
+  ;; Refund: two args so node/wallet appending sender does not cause "too many arguments".
+  (defun refund (offerId:string _sender:string)
     (let ((id offerId))
       (with-read escrows id
         { "creator" := c, "buyer" := b, "arbiter" := a, "amount" := amt, "state" := s, "side" := side }
