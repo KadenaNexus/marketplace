@@ -16,9 +16,21 @@
     (enforce (= (at "sender" (chain-data)) DEPLOYER) "Only deployer can grant GOVERNANCE"))
   (defconst VAULT_ACCOUNT "p2p-escrow-vault-")
   ;; Vault name: VAULT_ACCOUNT + id. Static name so depositor can sign (coin.TRANSFER depositor vault amount).
-  (defcap ESCROW_VAULT_DEBIT (id:string) true)
-  (defun require-ESCROW_VAULT_DEBIT (id:string) (require-capability (ESCROW_VAULT_DEBIT id)))
-  (defun create-escrow-vault-guard (id:string) (create-user-guard (require-ESCROW_VAULT_DEBIT id)))
+  (defcap ESCROW_VAULT_DEBIT (id:string recipient:string amount:decimal)
+    (with-read escrows id { "creator" := c, "buyer" := b, "arbiter" := a, "amount" := amt, "state" := s, "side" := side }
+      (enforce (contains s ["PAID" "FUNDED" "DISPUTED"]) "Invalid state for vault debit")
+      (enforce (= amount amt) "Debit amount must match escrow amount")
+      (enforce (or (= recipient c) (= recipient b)) "Recipient must be creator or buyer")
+      (enforce
+        (or (= (at "sender" (chain-data)) a)
+            (and (contains s ["PAID" "FUNDED"]) (= side "SELL") (= (at "sender" (chain-data)) c))
+            (and (contains s ["PAID" "FUNDED"]) (= side "BUY") (= (at "sender" (chain-data)) b)))
+        "Only arbiter or KDA holder (for PAID/FUNDED) can debit vault")))
+  (defun require-ESCROW_VAULT_DEBIT (id:string recipient:string amount:decimal)
+    (require-capability (ESCROW_VAULT_DEBIT id recipient amount)))
+  ;; Vault is debitable only by this module; capability enforces who may debit and to whom.
+  (defun create-escrow-vault-guard (id:string)
+    (create-module-guard "free.p2p-escrow7"))
   (defconst PLATFORM_ARBITER "k:f5cb898c1a34680787a0ec35ae01a45bd0e9526c010362730162c9e93a9e3436")
   (defconst T1_SECONDS 1200)
   (defconst T2_SECONDS 1200)
@@ -136,14 +148,14 @@
           "Only fiat payer can mark paid")
         (let ((paidAt-str (format-time "%Y-%m-%dT%H:%M:%SZ" (at "block-time" (chain-data)))))
           (update escrows id { "state": "PAID", "paidAt": paidAt-str })))))
-  (defun release (offerId:string _sender:string)
-    ;; Two args: some nodes/wallets append payload or sender as 2nd arg; we ignore _sender and use (chain-data) for auth.
+  (defun release (offerId:string _sender:string _dummy:string)
+    ;; Three args: some nodes/wallets append sender + payload; we ignore _sender and _dummy and use (chain-data) for auth.
     (let ((id offerId)
           (now (at "block-time" (chain-data)))
           (t3 (get-t3)))
       (with-read escrows id
         { "creator" := c, "buyer" := b, "arbiter" := a, "amount" := amt, "state" := s, "side" := side, "paidAt" := paidAt }
-        (enforce (or (= s "PAID") (= s "DISPUTED")) "Invalid state for release")
+        (enforce (contains s ["PAID" "DISPUTED"]) "Invalid state for release")
         (if (= s "DISPUTED")
           true
           (enforce
@@ -158,7 +170,7 @@
         (let ((recipient (if (= side "SELL") b c))
               (seller (if (= side "SELL") c b))
               (vault (concat [VAULT_ACCOUNT id])))
-          (with-capability (ESCROW_VAULT_DEBIT id)
+          (with-capability (ESCROW_VAULT_DEBIT id recipient amt)
             (if (= side "SELL")
               (coin.transfer vault b amt)
               (coin.transfer vault c amt)))
@@ -170,12 +182,12 @@
     (let ((id offerId))
       (with-read escrows id
         { "creator" := c, "buyer" := b, "arbiter" := a, "amount" := amt, "state" := s, "side" := side }
-        (enforce (or (= s "PAID") (= s "FUNDED") (= s "DISPUTED")) "Invalid state for refund")
+        (enforce (contains s ["PAID" "FUNDED" "DISPUTED"]) "Invalid state for refund")
         (enforce (= (at "sender" (chain-data)) a) "Only arbiter can refund")
         (let ((refund-to (if (= side "SELL") c b))
               (other (if (= side "SELL") b c))
               (vault (concat [VAULT_ACCOUNT id])))
-          (with-capability (ESCROW_VAULT_DEBIT id)
+          (with-capability (ESCROW_VAULT_DEBIT id refund-to amt)
             (coin.transfer vault refund-to amt))
           (update escrows id { "buyer": "", "state": "REFUNDED" })
           (inc-reputation refund-to false)
@@ -203,7 +215,7 @@
         (let ((refund-to (if (= side "SELL") c b))
               (other (if (= side "SELL") b c))
               (vault (concat [VAULT_ACCOUNT id])))
-          (with-capability (ESCROW_VAULT_DEBIT id)
+          (with-capability (ESCROW_VAULT_DEBIT id refund-to amt)
             (coin.transfer vault refund-to amt))
           (update escrows id { "state": "REFUNDED", "buyer": "", "fundedAt": "" })
           (inc-reputation refund-to false)

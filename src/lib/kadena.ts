@@ -329,7 +329,7 @@ export function buildMarkPaidTx(
 }
 
 /* ---------- RELEASE (KDA holder or arbiter; DISPUTED only arbiter) ---------- */
-/* Contract (defun release (offerId:string _sender:string)). Pass 2 args so node/wallet appending sender does not cause "too many arguments". */
+/* Contract (defun release (offerId:string _sender:string _dummy:string)). Pass 3 args so node/wallet appending args does not cause "too many arguments". */
 export function buildReleaseTx(
   offerId: string,
   callerAccount: string,
@@ -340,7 +340,7 @@ export function buildReleaseTx(
   const safeId = offerId.replace(/"/g, '\\"');
   const safeSender = (callerAccount || "").replace(/"/g, '\\"');
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.release "${safeId}" "${safeSender}")`)
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.release "${safeId}" "${safeSender}" "")`)
     .addSigner(callerPubKey, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
