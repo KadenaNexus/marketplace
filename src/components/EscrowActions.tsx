@@ -422,8 +422,10 @@ const ACTIVE_STATES = ["ACCEPTED", "FUNDED", "PAID", "DISPUTED"] as const;
 
   const handleTimeoutFundedRefund = () => {
     if (!account || !selectedEscrow) return;
+    const refundTo = selectedEscrow.side === "SELL" ? selectedEscrow.creator : selectedEscrow.buyer;
+    if (!refundTo) return;
     executeAction("Timeout: Refund (T2)", () =>
-      buildTimeoutFundedRefundTx(selectedEscrow.offerId, account.account, account.publicKey, selectedEscrow.amount)
+      buildTimeoutFundedRefundTx(selectedEscrow.offerId, account.account, account.publicKey, refundTo, selectedEscrow.amount)
     );
   };
 

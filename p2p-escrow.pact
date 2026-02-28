@@ -23,8 +23,8 @@
       (enforce (or (= recipient c) (= recipient b)) "Recipient must be creator or buyer")
       (enforce
         (or (= (at "sender" (chain-data)) a)
-            (and (contains s ["PAID" "FUNDED"]) (= side "SELL") (= (at "sender" (chain-data)) c))
-            (and (contains s ["PAID" "FUNDED"]) (= side "BUY") (= (at "sender" (chain-data)) b)))
+            (or (and (contains s ["PAID" "FUNDED"]) (and (= side "SELL") (= (at "sender" (chain-data)) c)))
+                (and (contains s ["PAID" "FUNDED"]) (and (= side "BUY") (= (at "sender" (chain-data)) b)))))
         "Only arbiter or KDA holder (for PAID/FUNDED) can debit vault")))
   (defun require-ESCROW_VAULT_DEBIT (id:string recipient:string amount:decimal)
     (require-capability (ESCROW_VAULT_DEBIT id recipient amount)))
@@ -164,8 +164,8 @@
             "Release period expired (T3) - call timeout-paid-dispute"))
         (enforce
           (or (= (at "sender" (chain-data)) a)
-              (and (= s "PAID") (= side "SELL") (= (at "sender" (chain-data)) c))
-              (and (= s "PAID") (= side "BUY") (= (at "sender" (chain-data)) b)))
+              (or (and (= s "PAID") (and (= side "SELL") (= (at "sender" (chain-data)) c)))
+                  (and (= s "PAID") (and (= side "BUY") (= (at "sender" (chain-data)) b)))))
           "Only KDA holder or arbiter can release - DISPUTED only arbiter")
         (let ((recipient (if (= side "SELL") b c))
               (seller (if (= side "SELL") c b))
