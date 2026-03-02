@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useWallet } from "@/hooks/useWallet";
@@ -16,7 +17,7 @@ import {
   getChainwebDebugInfo,
 } from "@/lib/kadena";
 import { putOfferDetails } from "@/lib/offerDetailsApi";
-import { Plus, Loader2, ShoppingCart, Store } from "lucide-react";
+import { Plus, Loader2, ShoppingCart, Store, Info } from "lucide-react";
 import { toast } from "sonner";
 
 const PAYMENT_METHODS = ["USDT", "USDC", "BUSD", "Bank Transfer", "PayPal", "Wise", "Revolut", "Cash App"];
@@ -181,6 +182,13 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">
+          {isLoading && (
+            <Alert className="border-primary/50 bg-primary/5">
+              <Info className="h-4 w-4" />
+              <AlertTitle>Transaction in progress</AlertTitle>
+              <AlertDescription>{TX_CONFIRM_MESSAGE}</AlertDescription>
+            </Alert>
+          )}
           {/* Side Selection */}
           <div className="space-y-2">
             <Label>Trade Side</Label>
@@ -320,12 +328,6 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
               "Create Offer"
             )}
           </Button>
-
-          {isLoading && (
-            <p className="text-sm text-muted-foreground rounded-md bg-muted/50 border border-border px-3 py-2">
-              {TX_CONFIRM_MESSAGE}
-            </p>
-          )}
 
           {!isConnected && (
             <p className="text-sm text-muted-foreground text-center">
