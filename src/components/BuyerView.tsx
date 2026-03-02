@@ -3,7 +3,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CreateOfferForm } from "@/components/CreateOfferForm";
 import { EscrowActions } from "@/components/EscrowActions";
 import { OfferFiltersComponent, type OfferFilters } from "@/components/OfferFilters";
-import { Plus, ShoppingCart } from "lucide-react";
+import { Plus, ShoppingCart, Activity } from "lucide-react";
 
 interface BuyerViewProps {
   refreshTrigger?: number;
@@ -42,8 +42,12 @@ export function BuyerView({ refreshTrigger = 0 }: BuyerViewProps) {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-3">
+        <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="browse">All Sell Offers</TabsTrigger>
+          <TabsTrigger value="active" className="gap-2">
+            <Activity className="h-4 w-4" />
+            Active Trades
+          </TabsTrigger>
           <TabsTrigger value="my">My Offers</TabsTrigger>
           <TabsTrigger value="create" className="gap-2">
             <Plus className="h-4 w-4" />
@@ -51,8 +55,8 @@ export function BuyerView({ refreshTrigger = 0 }: BuyerViewProps) {
           </TabsTrigger>
         </TabsList>
 
-        {/* Shared Filters - shown for browse and my tabs */}
-        {(activeTab === "browse" || activeTab === "my") && (
+        {/* Shared Filters - shown for browse, active, and my tabs */}
+        {(activeTab === "browse" || activeTab === "my" || activeTab === "active") && (
           <div className="mt-4">
             <OfferFiltersComponent 
               filters={filters} 
@@ -68,6 +72,15 @@ export function BuyerView({ refreshTrigger = 0 }: BuyerViewProps) {
             filters={filters}
             role="buyer"
             viewMode="all"
+          />
+        </TabsContent>
+
+        <TabsContent value="active" className="space-y-4 mt-4">
+          <EscrowActions 
+            refreshTrigger={refreshTrigger}
+            filters={filters}
+            role="buyer"
+            viewMode="active"
           />
         </TabsContent>
 
