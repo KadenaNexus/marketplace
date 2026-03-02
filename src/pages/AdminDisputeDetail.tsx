@@ -11,7 +11,7 @@ import {
   requestDisputeInfo,
   closeDispute,
 } from "@/lib/disputeApi";
-import { buildProfileAuthTx, signTransaction } from "@/lib/kadena";
+import { buildProfileAuthTx, signTransaction, buildReleaseTx, buildRefundTx, submitTransaction, pollTransaction } from "@/lib/kadena";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -28,7 +28,8 @@ import {
   Send,
   CheckCircle,
   Eye,
-  XCircle,
+  Unlock,
+  RotateCcw,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useState } from "react";
@@ -42,6 +43,8 @@ export default function AdminDisputeDetail() {
   const [isRequestingInfo, setIsRequestingInfo] = useState(false);
   const [isSettingReview, setIsSettingReview] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
+  const [releaseToBuyerLoading, setReleaseToBuyerLoading] = useState(false);
+  const [releaseToSellerLoading, setReleaseToSellerLoading] = useState(false);
 
   const { data: escrows = [] } = useQuery({
     queryKey: ["admin-escrows"],
@@ -84,6 +87,7 @@ export default function AdminDisputeDetail() {
     refetchMessages();
     refetchActions();
     queryClient.invalidateQueries({ queryKey: ["admin-disputes"] });
+    queryClient.invalidateQueries({ queryKey: ["admin-escrows"] });
   };
 
   const handleRequestInfo = async () => {
@@ -151,6 +155,64 @@ export default function AdminDisputeDetail() {
       toast.error(err instanceof Error ? err.message : "Failed to resolve");
     } finally {
       setIsClosing(false);
+    }
+  };
+
+  /** Release escrow to the buyer (fiat payer). Contract: SELL -> buyer, BUY -> creator. Only PAID or DISPUTED. */
+  const handleReleaseToBuyer = async () => {
+    if (!account || !escrow || !offerId) return;
+    const recipient = escrow.side === "SELL" ? escrow.buyer : escrow.creator;
+    if (!recipient) {
+      toast.error("No buyer set for this offer");
+      return;
+    }
+    if (!confirm(`Release ${escrow.amount} KDA to the buyer (${recipient.slice(0, 12)}…)? This will complete the escrow on-chain.`)) return;
+    setReleaseToBuyerLoading(true);
+    try {
+      const tx = buildReleaseTx(offerId, account.account, account.publicKey, recipient, escrow.amount);
+      const signedTx = await signTransaction(tx);
+      const requestKey = await submitTransaction(signedTx);
+      const result = await pollTransaction(requestKey);
+      const res = result?.result;
+      if (res?.status === "failure") {
+        const errMsg = typeof res.error === "string" ? res.error : (res.error as any)?.message ?? "Transaction failed";
+        throw new Error(errMsg);
+      }
+      toast.success("Released to buyer", { description: `Request Key: ${requestKey.slice(0, 16)}…` });
+      refetchAll();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Release to buyer failed");
+    } finally {
+      setReleaseToBuyerLoading(false);
+    }
+  };
+
+  /** Refund escrow to the seller (KDA holder). Contract: SELL -> creator, BUY -> buyer. FUNDED, PAID, or DISPUTED. */
+  const handleReleaseToSeller = async () => {
+    if (!account || !escrow || !offerId) return;
+    const refundTo = escrow.side === "SELL" ? escrow.creator : escrow.buyer;
+    if (!refundTo) {
+      toast.error("Cannot determine refund recipient");
+      return;
+    }
+    if (!confirm(`Refund ${escrow.amount} KDA to the seller (${refundTo.slice(0, 12)}…)? This will refund the escrow on-chain.`)) return;
+    setReleaseToSellerLoading(true);
+    try {
+      const tx = buildRefundTx(offerId, account.account, account.publicKey, refundTo, escrow.amount);
+      const signedTx = await signTransaction(tx);
+      const requestKey = await submitTransaction(signedTx);
+      const result = await pollTransaction(requestKey);
+      const res = result?.result;
+      if (res?.status === "failure") {
+        const errMsg = typeof res.error === "string" ? res.error : (res.error as any)?.message ?? "Transaction failed";
+        throw new Error(errMsg);
+      }
+      toast.success("Refunded to seller", { description: `Request Key: ${requestKey.slice(0, 16)}…` });
+      refetchAll();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Release to seller failed");
+    } finally {
+      setReleaseToSellerLoading(false);
     }
   };
 
@@ -301,6 +363,48 @@ export default function AdminDisputeDetail() {
                 <Button variant="default" size="sm" onClick={handleResolve} disabled={isClosing} className="gap-2">
                   {isClosing ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
                   Resolve (close) dispute
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Release escrow funds — arbiter can send KDA to buyer or seller from admin */}
+        {isArbiter && escrow && ["FUNDED", "PAID", "DISPUTED"].includes(escrow.state) && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Unlock className="h-5 w-5 text-primary" />
+                Release escrow funds
+              </CardTitle>
+              <CardDescription>
+                Send the funded escrow amount ({escrow.amount} KDA) to either the buyer or the seller. This executes on-chain and finalizes the escrow.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                <strong>Seller (KDA holder):</strong> {escrow.seller.slice(0, 16)}… — <strong>Buyer (fiat payer):</strong> {escrow.buyer ? `${escrow.buyer.slice(0, 16)}…` : "—"}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {["PAID", "DISPUTED"].includes(escrow.state) && escrow.buyer && (
+                  <Button
+                    variant="default"
+                    className="gap-2 bg-success hover:bg-success/90"
+                    onClick={handleReleaseToBuyer}
+                    disabled={releaseToBuyerLoading || releaseToSellerLoading}
+                  >
+                    {releaseToBuyerLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Unlock className="h-4 w-4" />}
+                    Release to Buyer
+                  </Button>
+                )}
+                <Button
+                  variant="outline"
+                  className="gap-2"
+                  onClick={handleReleaseToSeller}
+                  disabled={releaseToBuyerLoading || releaseToSellerLoading}
+                >
+                  {releaseToSellerLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+                  Release to Seller (refund)
                 </Button>
               </div>
             </CardContent>
