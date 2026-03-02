@@ -11,7 +11,17 @@ import {
   requestDisputeInfo,
   closeDispute,
 } from "@/lib/disputeApi";
-import { buildProfileAuthTx, signTransaction, buildReleaseTx, buildRefundTx, submitTransaction, pollTransaction } from "@/lib/kadena";
+import {
+  buildProfileAuthTx,
+  signTransaction,
+  buildReleaseTx,
+  buildRefundTx,
+  buildTimeoutPaidDisputeTx,
+  submitTransaction,
+  pollTransaction,
+  T3_SECONDS,
+} from "@/lib/kadena";
+import { isStepExpired } from "@/components/TradeTimer";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -45,6 +55,7 @@ export default function AdminDisputeDetail() {
   const [isClosing, setIsClosing] = useState(false);
   const [releaseToBuyerLoading, setReleaseToBuyerLoading] = useState(false);
   const [releaseToSellerLoading, setReleaseToSellerLoading] = useState(false);
+  const [moveToDisputeLoading, setMoveToDisputeLoading] = useState(false);
 
   const { data: escrows = [] } = useQuery({
     queryKey: ["admin-escrows"],
@@ -216,6 +227,35 @@ export default function AdminDisputeDetail() {
     }
   };
 
+  /** When state is PAID and T3 has expired, move to DISPUTED so arbiter can then release (contract blocks release in PAID after T3). */
+  const handleMoveToDispute = async () => {
+    if (!account || !escrow || !offerId) return;
+    if (!confirm("Move this escrow to DISPUTED state? After this, you can release to buyer or seller. This is required when the release period (T3) has expired.")) return;
+    setMoveToDisputeLoading(true);
+    try {
+      const tx = buildTimeoutPaidDisputeTx(offerId, account.account, account.publicKey);
+      const signedTx = await signTransaction(tx);
+      const requestKey = await submitTransaction(signedTx);
+      const result = await pollTransaction(requestKey);
+      const res = result?.result;
+      if (res?.status === "failure") {
+        const errMsg = typeof res.error === "string" ? res.error : (res.error as any)?.message ?? "Transaction failed";
+        throw new Error(errMsg);
+      }
+      toast.success("Moved to dispute", { description: "You can now release to buyer or seller." });
+      refetchAll();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Move to dispute failed");
+    } finally {
+      setMoveToDisputeLoading(false);
+    }
+  };
+
+  const isPaidT3Expired = escrow?.state === "PAID" && isStepExpired(escrow.paidAt, T3_SECONDS);
+  const canReleaseToBuyer =
+    !!escrow?.buyer &&
+    (escrow.state === "DISPUTED" || (escrow.state === "PAID" && !isStepExpired(escrow.paidAt, T3_SECONDS)));
+
   if (!offerId) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -378,20 +418,36 @@ export default function AdminDisputeDetail() {
                 Release escrow funds
               </CardTitle>
               <CardDescription>
-                Send the funded escrow amount ({escrow.amount} KDA) to either the buyer or the seller. This executes on-chain and finalizes the escrow.
+                Send the funded escrow amount ({escrow.amount} KDA) to either the buyer or the seller. When state is PAID and the release period (T3) has expired, move to dispute first, then release.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
+              {isPaidT3Expired && (
+                <div className="rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-400">
+                  Release period (T3) has expired. Move this escrow to <strong>DISPUTED</strong> first, then you can release to buyer or seller.
+                </div>
+              )}
               <p className="text-sm text-muted-foreground">
                 <strong>Seller (KDA holder):</strong> {escrow.seller.slice(0, 16)}… — <strong>Buyer (fiat payer):</strong> {escrow.buyer ? `${escrow.buyer.slice(0, 16)}…` : "—"}
               </p>
               <div className="flex flex-wrap gap-2">
-                {["PAID", "DISPUTED"].includes(escrow.state) && escrow.buyer && (
+                {isPaidT3Expired && (
+                  <Button
+                    variant="outline"
+                    className="gap-2 border-amber-500 text-amber-600 hover:bg-amber-500/10"
+                    onClick={handleMoveToDispute}
+                    disabled={moveToDisputeLoading || releaseToBuyerLoading || releaseToSellerLoading}
+                  >
+                    {moveToDisputeLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <AlertCircle className="h-4 w-4" />}
+                    Move to dispute (T3 expired)
+                  </Button>
+                )}
+                {canReleaseToBuyer && (
                   <Button
                     variant="default"
                     className="gap-2 bg-success hover:bg-success/90"
                     onClick={handleReleaseToBuyer}
-                    disabled={releaseToBuyerLoading || releaseToSellerLoading}
+                    disabled={releaseToBuyerLoading || releaseToSellerLoading || moveToDisputeLoading}
                   >
                     {releaseToBuyerLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Unlock className="h-4 w-4" />}
                     Release to Buyer
@@ -401,12 +457,15 @@ export default function AdminDisputeDetail() {
                   variant="outline"
                   className="gap-2"
                   onClick={handleReleaseToSeller}
-                  disabled={releaseToBuyerLoading || releaseToSellerLoading}
+                  disabled={releaseToBuyerLoading || releaseToSellerLoading || moveToDisputeLoading}
                 >
                   {releaseToSellerLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
                   Release to Seller (refund)
                 </Button>
               </div>
+              <p className="text-xs text-muted-foreground border-t border-border pt-2 mt-2">
+                If your wallet shows &quot;Failed to apply a partial closure...&quot; when signing, use <strong>Chainweaver</strong> with the arbiter account to sign release/refund transactions.
+              </p>
             </CardContent>
           </Card>
         )}
