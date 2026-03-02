@@ -148,8 +148,7 @@
           "Only fiat payer can mark paid")
         (let ((paidAt-str (format-time "%Y-%m-%dT%H:%M:%SZ" (at "block-time" (chain-data)))))
           (update escrows id { "state": "PAID", "paidAt": paidAt-str })))))
-  (defun release (offerId:string _sender:string _dummy:string)
-    ;; Three args: some nodes/wallets append sender + payload; we ignore _sender and _dummy and use (chain-data) for auth.
+  (defun release (offerId:string)
     (let ((id offerId)
           (now (at "block-time" (chain-data)))
           (t3 (get-t3)))
@@ -177,8 +176,7 @@
           (update escrows id { "state": "COMPLETED" })
           (inc-reputation seller true)
           (inc-reputation recipient true)))))
-  ;; Refund: two args so node/wallet appending sender does not cause "too many arguments".
-  (defun refund (offerId:string _sender:string)
+  (defun refund (offerId:string)
     (let ((id offerId))
       (with-read escrows id
         { "creator" := c, "buyer" := b, "arbiter" := a, "amount" := amt, "state" := s, "side" := side }

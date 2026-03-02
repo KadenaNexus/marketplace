@@ -329,8 +329,7 @@ export function buildMarkPaidTx(
 }
 
 /* ---------- RELEASE (KDA holder or arbiter; DISPUTED only arbiter) ---------- */
-/* Contract (defun release (offerId:string _sender:string _dummy:string)). Pass 3 args so node/wallet appending args does not cause "too many arguments". */
-/* Chain requires coin.TRANSFER(vault, recipient, amount) to be installed in sigs. Vault has module guard; the signer (caller) provides the capability so the coin contract can debit the vault. */
+/* Contract (defun release (offerId:string)). Chain requires coin.TRANSFER(vault, recipient, amount) in sigs. */
 export function buildReleaseTx(
   offerId: string,
   callerAccount: string,
@@ -339,11 +338,10 @@ export function buildReleaseTx(
   amountFromEscrow: number
 ) {
   const safeId = offerId.replace(/"/g, '\\"');
-  const safeSender = (callerAccount || "").replace(/"/g, '\\"');
   const vaultAccount = `${VAULT_PREFIX}-${offerId}`;
   const amountDecimal = { decimal: amountFromEscrow.toFixed(8) };
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.release "${safeId}" "${safeSender}" "")`)
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.release "${safeId}")`)
     .addSigner(callerPubKey, (s) => [
       s("coin.GAS"),
       s("coin.TRANSFER", vaultAccount, recipientAccount, amountDecimal),
@@ -360,8 +358,7 @@ export function buildReleaseTx(
 }
 
 /* ---------- REFUND (ARBITER only; FUNDED/PAID/DISPUTED; contract: SELL -> refund creator, BUY -> refund buyer) ---------- */
-/* Contract (defun refund (offerId:string _sender:string)). Pass 2 args to avoid "too many arguments". */
-/* Chain requires coin.TRANSFER(vault, refundTo, amount) to be installed in sigs. Arbiter signs to provide the capability. */
+/* Contract (defun refund (offerId:string)). Chain requires coin.TRANSFER(vault, refundTo, amount) in sigs. */
 export function buildRefundTx(
   offerId: string,
   arbiterAccount: string,
@@ -370,11 +367,10 @@ export function buildRefundTx(
   amountFromEscrow: number
 ) {
   const safeId = offerId.replace(/"/g, '\\"');
-  const safeSender = (arbiterAccount || "").replace(/"/g, '\\"');
   const vaultAccount = `${VAULT_PREFIX}-${offerId}`;
   const amountDecimal = { decimal: amountFromEscrow.toFixed(8) };
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.refund "${safeId}" "${safeSender}")`)
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.refund "${safeId}")`)
     .addSigner(arbiterPubKey, (s) => [
       s("coin.GAS"),
       s("coin.TRANSFER", vaultAccount, refundRecipient, amountDecimal),
