@@ -8,11 +8,12 @@ import { EscrowActions } from "@/components/EscrowActions";
 import { BuyerView } from "@/components/BuyerView";
 import { SellerView } from "@/components/SellerView";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Card, CardContent } from "@/components/ui/card";
 import { useState } from "react";
 import { useWallet } from "@/hooks/useWallet";
 import { fetchProfile } from "@/lib/profileApi";
 import { CHAIN_ID, NETWORK_ID, listAllEscrows } from "@/lib/kadena";
-import { LogOut, Shield } from "lucide-react";
+import { LogOut, Shield, Megaphone } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { toast } from "sonner";
@@ -88,28 +89,47 @@ const Index = () => {
       <main className="container mx-auto px-4 py-8">
         {!isConnected ? (
           <Dashboard />
-        ) : !role ? (
-          <div className="space-y-10">
-            {/* My active trades: seller or buyer, state in progress */}
-            <section>
-              <EscrowActions refreshTrigger={refreshTrigger} viewMode="active" role="seller" />
-            </section>
-            <RoleSelection onSelectRole={handleRoleSelect} />
-          </div>
         ) : (
-          <div className="space-y-4">
-            <div className="flex items-center justify-end">
-              <Button variant="outline" size="sm" onClick={handleRoleChange} className="gap-2">
-                <LogOut className="h-4 w-4" />
-                Change Role
-              </Button>
-            </div>
-            {role === "buyer" ? (
-              <BuyerView refreshTrigger={refreshTrigger} />
+          <>
+            {/* Top announcement — visible after sign-in */}
+            <Card className="mb-8 border-primary/40 bg-gradient-to-r from-primary/10 via-primary/5 to-transparent">
+              <CardContent className="flex flex-col sm:flex-row gap-3 sm:items-start pt-6">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/20">
+                  <Megaphone className="h-5 w-5 text-primary" />
+                </div>
+                <div className="space-y-1">
+                  <h2 className="text-lg font-semibold text-foreground">Expanding the Marketplace</h2>
+                  <p className="text-sm text-muted-foreground leading-relaxed">
+                    We are integrating additional Kadena ecosystem tokens — including $BRO, $HERON, $KISHK, $FLUX, $CHIPSKDA, $KWATT, and $KADPAD — with more tokens coming soon.
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+
+            {!role ? (
+              <div className="space-y-10">
+                {/* My active trades: seller or buyer, state in progress */}
+                <section>
+                  <EscrowActions refreshTrigger={refreshTrigger} viewMode="active" role="seller" />
+                </section>
+                <RoleSelection onSelectRole={handleRoleSelect} />
+              </div>
             ) : (
-              <SellerView refreshTrigger={refreshTrigger} />
+              <div className="space-y-4">
+                <div className="flex items-center justify-end">
+                  <Button variant="outline" size="sm" onClick={handleRoleChange} className="gap-2">
+                    <LogOut className="h-4 w-4" />
+                    Change Role
+                  </Button>
+                </div>
+                {role === "buyer" ? (
+                  <BuyerView refreshTrigger={refreshTrigger} />
+                ) : (
+                  <SellerView refreshTrigger={refreshTrigger} />
+                )}
+              </div>
             )}
-          </div>
+          </>
         )}
       </main>
 
