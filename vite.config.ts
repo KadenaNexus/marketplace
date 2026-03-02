@@ -7,12 +7,12 @@ import { componentTagger } from "lovable-tagger";
 export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
-    port: 8080,
+    port: 8081,
     allowedHosts: ["marketplace.kadena.ws", "localhost", "127.0.0.1"],
     proxy: (() => {
       // Use 127.0.0.1 to avoid IPv6/localhost EACCES on Windows when dev:server isn't running.
-      // "ws proxy error: ECONNREFUSED 127.0.0.1:3001" is normal when the profile API isn't running — run "npm run dev:server" in another terminal.
-      const profileTarget = process.env.VITE_PROFILE_API || "http://127.0.0.1:3001";
+      // "ws proxy error: ECONNREFUSED 127.0.0.1:5050" is normal when the profile API isn't running — run "npm run dev:server" in another terminal.
+      const profileTarget = process.env.VITE_PROFILE_API || "http://127.0.0.1:5050";
       const proxyError = (err: NodeJS.ErrnoException & { message?: string }, _req: unknown, _res: unknown) => {
         const code = err.code ?? (err as { cause?: { code?: string } }).cause?.code;
         const msg = err.message ?? "";

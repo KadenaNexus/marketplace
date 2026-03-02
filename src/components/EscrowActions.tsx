@@ -89,6 +89,8 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
   const [registeringCompletion, setRegisteringCompletion] = useState(false);
 
 const ACTIVE_STATES = ["ACCEPTED", "FUNDED", "PAID", "DISPUTED"] as const;
+const CRITICAL_ACTION_LOADING = ["Accept Offer", "Deposit", "Mark Paid", "Release"] as const;
+const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena network. This may take up to 60 seconds.";
 
   // Filter escrows based on filters and role
   const escrows = useMemo(() => {
@@ -675,7 +677,13 @@ const ACTIVE_STATES = ["ACCEPTED", "FUNDED", "PAID", "DISPUTED"] as const;
 
             {/* Action Buttons */}
             {!isTerminal && isConnected && (
-              <div className="flex flex-wrap gap-3 pt-4 border-t border-border">
+              <div className="flex flex-col gap-3 pt-4 border-t border-border">
+                {CRITICAL_ACTION_LOADING.includes(actionLoading as (typeof CRITICAL_ACTION_LOADING)[number]) && (
+                  <p className="text-sm text-muted-foreground rounded-md bg-muted/50 border border-border px-3 py-2">
+                    {TX_CONFIRM_MESSAGE}
+                  </p>
+                )}
+                <div className="flex flex-wrap gap-3">
                 {canCloseOffer && (
                   <Button 
                     onClick={handleCloseOffer}
@@ -828,6 +836,7 @@ const ACTIVE_STATES = ["ACCEPTED", "FUNDED", "PAID", "DISPUTED"] as const;
                     Move to dispute (seller did not release in time)
                   </Button>
                 )}
+                </div>
               </div>
             )}
 
