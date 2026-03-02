@@ -334,6 +334,8 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
     }
 
     setActionLoading(actionName);
+    // Yield so React paints the "Transaction in progress..." message before wallet/signing
+    await new Promise((r) => setTimeout(r, 0));
 
     try {
       const tx = buildTx();

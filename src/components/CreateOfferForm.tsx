@@ -21,6 +21,7 @@ import { toast } from "sonner";
 
 const PAYMENT_METHODS = ["USDT", "USDC", "BUSD", "Bank Transfer", "PayPal", "Wise", "Revolut", "Cash App"];
 const FIAT_CURRENCIES = ["USD", "EUR", "GBP", "CAD", "AUD"];
+const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena network. This may take up to 60 seconds.";
 
 interface CreateOfferFormProps {
   onSuccess?: (offerId: string, txHash: string) => void;
@@ -82,6 +83,8 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
     }
 
     setIsLoading(true);
+    // Yield so React paints the status message before wallet/signing
+    await new Promise((r) => setTimeout(r, 0));
 
     try {
       // On-chain first: create-offer (id, creator, amount, side only)
@@ -317,6 +320,12 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
               "Create Offer"
             )}
           </Button>
+
+          {isLoading && (
+            <p className="text-sm text-muted-foreground rounded-md bg-muted/50 border border-border px-3 py-2">
+              {TX_CONFIRM_MESSAGE}
+            </p>
+          )}
 
           {!isConnected && (
             <p className="text-sm text-muted-foreground text-center">
