@@ -330,7 +330,7 @@ export function buildMarkPaidTx(
 
 /* ---------- RELEASE (KDA holder or arbiter; DISPUTED only arbiter) ---------- */
 /* Contract (defun release (offerId:string _sender:string _dummy:string)). Pass 3 args so node/wallet appending args does not cause "too many arguments". */
-/* Releaser must install coin.TRANSFER(vault, recipient, amount) so the coin contract can debit the vault (vault has module guard). */
+/* Vault has module guard: only the module can debit it when release runs. Caller signs only coin.GAS (do not sign coin.TRANSFER from vault — wallet cannot sign for vault account). */
 export function buildReleaseTx(
   offerId: string,
   callerAccount: string,
@@ -340,14 +340,9 @@ export function buildReleaseTx(
 ) {
   const safeId = offerId.replace(/"/g, '\\"');
   const safeSender = (callerAccount || "").replace(/"/g, '\\"');
-  const vaultAccount = `${VAULT_PREFIX}-${offerId}`;
-  const amountDecimal = { decimal: amountFromEscrow.toFixed(8) };
   return Pact.builder
     .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.release "${safeId}" "${safeSender}" "")`)
-    .addSigner(callerPubKey, (s) => [
-      s("coin.GAS"),
-      s("coin.TRANSFER", vaultAccount, recipientAccount, amountDecimal),
-    ])
+    .addSigner(callerPubKey, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: callerAccount,
@@ -361,7 +356,7 @@ export function buildReleaseTx(
 
 /* ---------- REFUND (ARBITER only; FUNDED/PAID/DISPUTED; contract: SELL -> refund creator, BUY -> refund buyer) ---------- */
 /* Contract (defun refund (offerId:string _sender:string)). Pass 2 args to avoid "too many arguments". */
-/* Arbiter must install coin.TRANSFER(vault, refundTo, amount) for the coin contract to debit the vault. */
+/* Vault has module guard: only the module can debit it when refund runs. Arbiter signs only coin.GAS (do not sign coin.TRANSFER from vault — wallet cannot sign for vault account). */
 export function buildRefundTx(
   offerId: string,
   arbiterAccount: string,
@@ -371,14 +366,9 @@ export function buildRefundTx(
 ) {
   const safeId = offerId.replace(/"/g, '\\"');
   const safeSender = (arbiterAccount || "").replace(/"/g, '\\"');
-  const vaultAccount = `${VAULT_PREFIX}-${offerId}`;
-  const amountDecimal = { decimal: amountFromEscrow.toFixed(8) };
   return Pact.builder
     .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.refund "${safeId}" "${safeSender}")`)
-    .addSigner(arbiterPubKey, (s) => [
-      s("coin.GAS"),
-      s("coin.TRANSFER", vaultAccount, refundRecipient, amountDecimal),
-    ])
+    .addSigner(arbiterPubKey, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: arbiterAccount,
@@ -480,7 +470,7 @@ export function buildTimeoutAcceptedCloseTx(
 }
 
 /* ---------- TIMEOUT: FUNDED -> REFUNDED (seller only; buyer did not mark paid within T2) ---------- */
-/* Seller must install coin.TRANSFER(vault, refundTo, amount) for the coin contract to debit the vault. */
+/* Vault has module guard: only the module can debit it when timeout-funded-refund runs. Seller signs only coin.GAS. */
 export function buildTimeoutFundedRefundTx(
   offerId: string,
   sellerAccount: string,
@@ -488,15 +478,10 @@ export function buildTimeoutFundedRefundTx(
   refundRecipient: string,
   amount: number
 ) {
-  const vaultAccount = `${VAULT_PREFIX}-${offerId}`;
-  const amountDecimal = { decimal: amount.toFixed(8) };
   return Pact.builder
     .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.timeout-funded-refund "${offerId}")`)
     .addData("sender", sellerAccount)
-    .addSigner(sellerPubKey, (s) => [
-      s("coin.GAS"),
-      s("coin.TRANSFER", vaultAccount, refundRecipient, amountDecimal),
-    ])
+    .addSigner(sellerPubKey, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: sellerAccount,
