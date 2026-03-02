@@ -8,7 +8,6 @@ import { EscrowActions } from "@/components/EscrowActions";
 import { BuyerView } from "@/components/BuyerView";
 import { SellerView } from "@/components/SellerView";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Card, CardContent } from "@/components/ui/card";
 import { useState } from "react";
 import { useWallet } from "@/hooks/useWallet";
 import { fetchProfile } from "@/lib/profileApi";
@@ -86,26 +85,30 @@ const Index = () => {
         </div>
       </header>
 
+      {/* Top announcement banner — full-width, visible after sign-in */}
+      {isConnected && (
+        <div className="w-full bg-gradient-to-r from-primary via-primary/90 to-primary/70 text-primary-foreground border-b border-primary/30">
+          <div className="container mx-auto px-4 py-5">
+            <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:gap-4">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white/20">
+                <Megaphone className="h-6 w-6" />
+              </div>
+              <div className="space-y-1 min-w-0">
+                <h2 className="text-xl font-bold tracking-tight">Expanding the Marketplace</h2>
+                <p className="text-sm sm:text-base opacity-95 leading-relaxed">
+                  We are integrating additional Kadena ecosystem tokens — including $BRO, $HERON, $KISHK, $FLUX, $CHIPSKDA, $KWATT, and $KADPAD — with more tokens coming soon.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <main className="container mx-auto px-4 py-8">
         {!isConnected ? (
           <Dashboard />
         ) : (
           <>
-            {/* Top announcement — visible after sign-in */}
-            <Card className="mb-8 border-primary/40 bg-gradient-to-r from-primary/10 via-primary/5 to-transparent">
-              <CardContent className="flex flex-col sm:flex-row gap-3 sm:items-start pt-6">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/20">
-                  <Megaphone className="h-5 w-5 text-primary" />
-                </div>
-                <div className="space-y-1">
-                  <h2 className="text-lg font-semibold text-foreground">Expanding the Marketplace</h2>
-                  <p className="text-sm text-muted-foreground leading-relaxed">
-                    We are integrating additional Kadena ecosystem tokens — including $BRO, $HERON, $KISHK, $FLUX, $CHIPSKDA, $KWATT, and $KADPAD — with more tokens coming soon.
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
-
             {!role ? (
               <div className="space-y-10">
                 {/* My active trades: seller or buyer, state in progress */}
