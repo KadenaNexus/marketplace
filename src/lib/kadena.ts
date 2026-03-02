@@ -67,10 +67,10 @@ export type EscrowState =
   | "CLOSED"
   | "DISPUTED";
 
-/** Time limits for timed steps (seconds). Match contract T1/T2/T3. */
-export const T1_SECONDS = 600;
-export const T2_SECONDS = 600;
-export const T3_SECONDS = 600;
+/** Time limits for timed steps (seconds). Match contract T1/T2/T3 (20 minutes). */
+export const T1_SECONDS = 1200;
+export const T2_SECONDS = 1200;
+export const T3_SECONDS = 1200;
 
 export interface Escrow {
   offerId: string;
