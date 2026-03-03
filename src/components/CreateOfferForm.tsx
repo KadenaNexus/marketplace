@@ -308,11 +308,6 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
           <p className="text-xs text-muted-foreground">
             Platform arbiter is set in the contract and can release or refund in disputes.
           </p>
-          <p className="text-xs text-amber-600 dark:text-amber-500">
-            If Create Offer fails with &quot;table not found&quot;, the escrows table was not created. The deployer must run{" "}
-            <code className="rounded bg-muted px-0.5">(create-table {CONTRACT_NAMESPACE}.{CONTRACT_MODULE}.escrows)</code> in the deployment tx. See{" "}
-            <code>DEPLOY.md</code>.
-          </p>
 
           <Button 
             type="submit" 
