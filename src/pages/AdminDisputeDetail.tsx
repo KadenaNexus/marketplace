@@ -20,6 +20,7 @@ import {
   submitTransaction,
   pollTransaction,
   T3_SECONDS,
+  getAccountExplorerUrl,
 } from "@/lib/kadena";
 import { isStepExpired } from "@/components/TradeTimer";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -342,14 +343,24 @@ export default function AdminDisputeDetail() {
             <p><Label className="text-muted-foreground">Arbiter</Label> {escrow.arbiter}</p>
             <p><Label className="text-muted-foreground">Amount</Label> {escrow.amount} KDA • Price {escrow.fiatCurrency} {escrow.price}</p>
             <p><Label className="text-muted-foreground">State</Label> {escrow.state}</p>
-            <a
-              href={`https://denascan.com/chain/${escrow.chainId}/account/${escrow.seller}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-primary hover:underline"
-            >
-              View on explorer <ExternalLink className="h-3 w-3" />
-            </a>
+            <div className="flex flex-wrap gap-4 pt-1">
+              <a
+                href={getAccountExplorerUrl(escrow.seller)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-primary hover:underline"
+              >
+                Fund Tx <ExternalLink className="h-3 w-3" />
+              </a>
+              <a
+                href={getAccountExplorerUrl(`p2p-escrow-vault-${offerId}`)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-primary hover:underline"
+              >
+                Release / Refund Tx <ExternalLink className="h-3 w-3" />
+              </a>
+            </div>
           </CardContent>
         </Card>
 

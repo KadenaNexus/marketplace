@@ -530,6 +530,11 @@ export function getTxExplorerUrl(requestKey: string): string {
   return `https://explorer.chainweb-community.org/mainnet/tx/${requestKey}`;
 }
 
+/** Explorer URL for an account (view fund/release/refund activity). */
+export function getAccountExplorerUrl(account: string): string {
+  return `https://explorer.chainweb-community.org/mainnet/account/${encodeURIComponent(account)}`;
+}
+
 /* ---------- ADMIN: init config (GOVERNANCE; run once after deploy) ---------- */
 export function buildInitConfigTx(senderAccount: string, senderPubKey: string) {
   const govCap = `${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.GOVERNANCE`;

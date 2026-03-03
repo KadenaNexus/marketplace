@@ -3,12 +3,12 @@
 ;; =============================================================================
 ;; 1. Set DEPLOYER below to your k: account (the only key that can upgrade/govern).
 ;; 2. Paste this file into Chainweaver; set Network, Chain, and Sender = DEPLOYER.
-;; 3. Sign and grant free.p2p-escrow7.GOVERNANCE. Set Sender in Chainweaver = DEPLOYER (no Data needed).
+;; 3. Sign and grant free.p2p-escrow9.GOVERNANCE. Set Sender in Chainweaver = DEPLOYER (no Data needed).
 ;; 4. For upgrades (tables exist): delete or comment out the init block at the end.
 ;; =============================================================================
 (namespace "free")
 
-(module p2p-escrow7 GOVERNANCE
+(module p2p-escrow9 GOVERNANCE
   ;; Only this account can grant GOVERNANCE (upgrade module, init, set-config).
   ;; Set to your k: account and use it as Sender in Chainweaver when deploying.
   (defconst DEPLOYER "k:665976b8f985c0119c3afa74115fde19f71309cc85428a7104dc2648252b593e")
@@ -30,7 +30,7 @@
     (require-capability (ESCROW_VAULT_DEBIT id recipient amount)))
   ;; Vault is debitable only by this module; capability enforces who may debit and to whom.
   (defun create-escrow-vault-guard (id:string)
-    (create-module-guard "free.p2p-escrow7"))
+    (create-module-guard "free.p2p-escrow9"))
   (defconst PLATFORM_ARBITER "k:f5cb898c1a34680787a0ec35ae01a45bd0e9526c010362730162c9e93a9e3436")
   (defconst T1_SECONDS 1200)
   (defconst T2_SECONDS 1200)
@@ -232,10 +232,10 @@
     (keys escrows))
 )
 ;; ========== INIT (run in same tx as deploy) ==========
-;; When signing, grant free.p2p-escrow7.GOVERNANCE. Sender must = DEPLOYER in the module.
+;; When signing, grant free.p2p-escrow9.GOVERNANCE. Sender must = DEPLOYER in the module.
 ;; For upgrades (tables exist), comment out or delete the block below.
-(with-capability (free.p2p-escrow7.GOVERNANCE)
-  (create-table free.p2p-escrow7.escrows)
-  (create-table free.p2p-escrow7.reputation)
-  (create-table free.p2p-escrow7.config)
-  (free.p2p-escrow7.init-config))
+(with-capability (free.p2p-escrow9.GOVERNANCE)
+  (create-table free.p2p-escrow9.escrows)
+  (create-table free.p2p-escrow9.reputation)
+  (create-table free.p2p-escrow9.config)
+  (free.p2p-escrow9.init-config))
