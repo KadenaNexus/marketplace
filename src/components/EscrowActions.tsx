@@ -11,6 +11,7 @@ import { DisputeView } from "./DisputeView";
 import { OpenDisputeDialog } from "./OpenDisputeDialog";
 import { ChatBox } from "./ChatBox";
 import { getDispute } from "@/lib/disputeApi";
+import { putFundTxRequestKey } from "@/lib/disputeApi";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useWallet } from "@/hooks/useWallet";
@@ -362,6 +363,27 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
       });
 
       addTransaction(actionName, requestKey);
+      if (actionName === "Deposit" && selectedEscrow && account) {
+        try {
+          const tx = buildProfileAuthTx(account.account, account.publicKey);
+          let signedCmd = await signTransaction(tx);
+          if (signedCmd?.signedCmd && !signedCmd.cmd) signedCmd = signedCmd.signedCmd;
+          const sigs = Array.isArray(signedCmd?.sigs) ? signedCmd.sigs : [];
+          if (sigs[0] && !sigs[0].pubKey) sigs[0] = { ...sigs[0], pubKey: account.publicKey };
+          if (sigs[0]?.signature && !sigs[0].sig) sigs[0] = { ...sigs[0], sig: sigs[0].signature };
+          await putFundTxRequestKey({
+            offerId: selectedEscrow.offerId,
+            requestKey,
+            wallet: account.account,
+            publicKey: account.publicKey,
+            signedCmd,
+          });
+        } catch (e) {
+          toast.error("Deposit saved; fund tx link could not be saved", {
+            description: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
       loadAll();
     } catch (error) {
       console.error(`${actionName} error:`, error);

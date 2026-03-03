@@ -7,6 +7,10 @@ export interface Dispute {
   openedByWallet: string;
   status: "OPEN" | "UNDER_REVIEW" | "CLOSED";
   triggeredByTimeout?: boolean;
+  /** Request key for the deposit (fund) transaction by seller. Set when seller deposits. */
+  fundTxRequestKey?: string | null;
+  /** Request key for the release or refund transaction by arbiter. Set when arbiter releases or refunds. */
+  releaseRefundTxRequestKey?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -199,6 +203,57 @@ export async function closeDispute(params: {
   if (!res.ok) {
     const e = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(e.reason || e.error || "Failed to close dispute");
+  }
+  return res.json();
+}
+
+/** Save fund (deposit) transaction request key for an offer. Call after seller deposits. */
+export async function putFundTxRequestKey(params: {
+  offerId: string;
+  requestKey: string;
+  wallet: string;
+  publicKey: string;
+  signedCmd: unknown;
+}): Promise<{ ok: boolean; offerId: string }> {
+  const res = await fetch(`${API}/api/offers/${encodeURIComponent(params.offerId)}/fund-tx`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      offerId: params.offerId,
+      requestKey: params.requestKey,
+      wallet: params.wallet,
+      publicKey: params.publicKey,
+      signedCmd: params.signedCmd,
+    }),
+  });
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(e.reason || e.error || "Failed to save fund tx");
+  }
+  return res.json();
+}
+
+/** Save release/refund transaction request key for a dispute. Call after arbiter releases or refunds. */
+export async function putReleaseRefundTxRequestKey(params: {
+  offerId: string;
+  requestKey: string;
+  wallet: string;
+  publicKey: string;
+  signedCmd: unknown;
+}): Promise<{ ok: boolean; offerId: string }> {
+  const res = await fetch(`${API}/api/disputes/${encodeURIComponent(params.offerId)}/release-refund-tx`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      requestKey: params.requestKey,
+      wallet: params.wallet,
+      publicKey: params.publicKey,
+      signedCmd: params.signedCmd,
+    }),
+  });
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(e.reason || e.error || "Failed to save release/refund tx");
   }
   return res.json();
 }

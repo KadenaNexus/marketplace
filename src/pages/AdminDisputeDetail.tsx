@@ -10,6 +10,7 @@ import {
   setDisputeUnderReview,
   requestDisputeInfo,
   closeDispute,
+  putReleaseRefundTxRequestKey,
 } from "@/lib/disputeApi";
 import {
   buildProfileAuthTx,
@@ -20,7 +21,7 @@ import {
   submitTransaction,
   pollTransaction,
   T3_SECONDS,
-  getAccountExplorerUrl,
+  getTxExplorerUrl,
 } from "@/lib/kadena";
 import { isStepExpired } from "@/components/TradeTimer";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -191,6 +192,17 @@ export default function AdminDisputeDetail() {
         throw new Error(errMsg);
       }
       toast.success("Released to buyer", { description: `Request Key: ${requestKey.slice(0, 16)}…` });
+      try {
+        const tx = buildProfileAuthTx(account.account, account.publicKey);
+        let signedCmd = await signTransaction(tx);
+        if (signedCmd?.signedCmd && !signedCmd.cmd) signedCmd = signedCmd.signedCmd;
+        const sigs = Array.isArray(signedCmd?.sigs) ? signedCmd.sigs : [];
+        if (sigs[0] && !sigs[0].pubKey) sigs[0] = { ...sigs[0], pubKey: account.publicKey };
+        if (sigs[0]?.signature && !sigs[0].sig) sigs[0] = { ...sigs[0], sig: sigs[0].signature };
+        await putReleaseRefundTxRequestKey({ offerId, requestKey, wallet: account.account, publicKey: account.publicKey, signedCmd });
+      } catch (_) {
+        toast.error("Release succeeded but tx link could not be saved");
+      }
       refetchAll();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Release to buyer failed");
@@ -220,6 +232,17 @@ export default function AdminDisputeDetail() {
         throw new Error(errMsg);
       }
       toast.success("Refunded to seller", { description: `Request Key: ${requestKey.slice(0, 16)}…` });
+      try {
+        const tx = buildProfileAuthTx(account.account, account.publicKey);
+        let signedCmd = await signTransaction(tx);
+        if (signedCmd?.signedCmd && !signedCmd.cmd) signedCmd = signedCmd.signedCmd;
+        const sigs = Array.isArray(signedCmd?.sigs) ? signedCmd.sigs : [];
+        if (sigs[0] && !sigs[0].pubKey) sigs[0] = { ...sigs[0], pubKey: account.publicKey };
+        if (sigs[0]?.signature && !sigs[0].sig) sigs[0] = { ...sigs[0], sig: sigs[0].signature };
+        await putReleaseRefundTxRequestKey({ offerId, requestKey, wallet: account.account, publicKey: account.publicKey, signedCmd });
+      } catch (_) {
+        toast.error("Refund succeeded but tx link could not be saved");
+      }
       refetchAll();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Release to seller failed");
@@ -344,22 +367,30 @@ export default function AdminDisputeDetail() {
             <p><Label className="text-muted-foreground">Amount</Label> {escrow.amount} KDA • Price {escrow.fiatCurrency} {escrow.price}</p>
             <p><Label className="text-muted-foreground">State</Label> {escrow.state}</p>
             <div className="flex flex-wrap gap-4 pt-1">
-              <a
-                href={getAccountExplorerUrl(escrow.seller)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-primary hover:underline"
-              >
-                Fund Tx <ExternalLink className="h-3 w-3" />
-              </a>
-              <a
-                href={getAccountExplorerUrl(`p2p-escrow-vault-${offerId}`)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-primary hover:underline"
-              >
-                Release / Refund Tx <ExternalLink className="h-3 w-3" />
-              </a>
+              {dispute.fundTxRequestKey ? (
+                <a
+                  href={getTxExplorerUrl(dispute.fundTxRequestKey)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-primary hover:underline"
+                >
+                  Fund Tx <ExternalLink className="h-3 w-3" />
+                </a>
+              ) : (
+                <span className="text-muted-foreground text-sm">Fund Tx — not recorded</span>
+              )}
+              {dispute.releaseRefundTxRequestKey ? (
+                <a
+                  href={getTxExplorerUrl(dispute.releaseRefundTxRequestKey)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-primary hover:underline"
+                >
+                  Release / Refund Tx <ExternalLink className="h-3 w-3" />
+                </a>
+              ) : (
+                <span className="text-muted-foreground text-sm">Release / Refund Tx — appears after arbiter releases or refunds</span>
+              )}
             </div>
           </CardContent>
         </Card>

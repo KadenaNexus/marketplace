@@ -42,6 +42,8 @@ import {
   disputesPostBodySchema,
   disputeMessageBodySchema,
   disputeActionBodySchema,
+  fundTxBodySchema,
+  releaseRefundTxBodySchema,
   completedOffersBodySchema,
   ratingsPostBodySchema,
   ratingsCheckQuerySchema,
@@ -807,6 +809,27 @@ app.put("/api/offers", validateBody(offersPutBodySchema), async (req, res) => {
   }
 });
 
+// PUT /api/offers/:offerId/fund-tx – save deposit (fund) transaction request key (called by seller after deposit)
+app.put("/api/offers/:offerId/fund-tx", validateParams(offerIdParamSchema), validateBody(fundTxBodySchema), async (req, res) => {
+  const auth = requireAuth(req);
+  if (!auth.ok) return sendAuthError(res, auth);
+  if (req.body.wallet !== auth.wallet) {
+    return res.status(400).json({ error: "Wallet must match authenticated wallet" });
+  }
+  const offerId = req.params.offerId;
+  const { requestKey } = req.body;
+  try {
+    await pool.query(
+      "UPDATE offer_details SET fund_tx_request_key = $1 WHERE offer_id = $2",
+      [requestKey.trim(), offerId]
+    );
+    return res.json({ ok: true, offerId });
+  } catch (err) {
+    console.error("PUT /api/offers/:offerId/fund-tx", err);
+    return res.status(500).json({ error: err.message || "Database error" });
+  }
+});
+
 // POST /api/profiles/bulk – body: { wallets: string[] }; returns { [wallet]: ProfileSummary }
 app.post("/api/profiles/bulk", validateBody(profilesBulkBodySchema), async (req, res) => {
   const list = req.body.wallets;
@@ -1297,29 +1320,48 @@ app.get("/api/disputes", async (req, res) => {
   }
 });
 
-// GET /api/disputes/:offerId – get dispute for an offer
+// GET /api/disputes/:offerId – get dispute for an offer (includes fundTxRequestKey from offer_details, releaseRefundTxRequestKey from disputes)
 app.get("/api/disputes/:offerId", validateParams(offerIdParamSchema), async (req, res) => {
   const offerId = req.params.offerId;
   try {
     let result;
     try {
       result = await pool.query(
-        "SELECT id, offer_id, opened_by, reason, opened_by_wallet, status, triggered_by_timeout, created_at, updated_at FROM disputes WHERE offer_id = $1",
+        "SELECT id, offer_id, opened_by, reason, opened_by_wallet, status, triggered_by_timeout, release_refund_tx_request_key, created_at, updated_at FROM disputes WHERE offer_id = $1",
         [offerId]
       );
     } catch (e) {
-      if (e.message?.includes("triggered_by_timeout")) {
+      if (e.message?.includes("release_refund_tx_request_key")) {
+        result = await pool.query(
+          "SELECT id, offer_id, opened_by, reason, opened_by_wallet, status, triggered_by_timeout, created_at, updated_at FROM disputes WHERE offer_id = $1",
+          [offerId]
+        );
+        if (result.rows[0]) result.rows[0].release_refund_tx_request_key = null;
+      } else if (e.message?.includes("triggered_by_timeout")) {
         result = await pool.query(
           "SELECT id, offer_id, opened_by, reason, opened_by_wallet, status, created_at, updated_at FROM disputes WHERE offer_id = $1",
           [offerId]
         );
-        if (result.rows[0]) result.rows[0].triggered_by_timeout = false;
+        if (result.rows[0]) {
+          result.rows[0].triggered_by_timeout = false;
+          result.rows[0].release_refund_tx_request_key = null;
+        }
       } else throw e;
     }
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "Dispute not found" });
     }
     const dispute = result.rows[0];
+    let fundTxRequestKey = null;
+    try {
+      const offerRow = await pool.query(
+        "SELECT fund_tx_request_key FROM offer_details WHERE offer_id = $1",
+        [offerId]
+      );
+      if (offerRow.rows[0]?.fund_tx_request_key) fundTxRequestKey = offerRow.rows[0].fund_tx_request_key;
+    } catch (colErr) {
+      if (!colErr.message?.includes("fund_tx_request_key")) throw colErr;
+    }
     return res.json({
       offerId: dispute.offer_id,
       openedBy: dispute.opened_by,
@@ -1327,6 +1369,8 @@ app.get("/api/disputes/:offerId", validateParams(offerIdParamSchema), async (req
       openedByWallet: dispute.opened_by_wallet,
       status: dispute.status,
       triggeredByTimeout: !!dispute.triggered_by_timeout,
+      fundTxRequestKey: fundTxRequestKey || null,
+      releaseRefundTxRequestKey: dispute.release_refund_tx_request_key || null,
       createdAt: dispute.created_at,
       updatedAt: dispute.updated_at,
     });
@@ -1650,6 +1694,31 @@ app.put("/api/disputes/:offerId/close", validateParams(offerIdParamSchema), vali
     return res.json({ success: true, status: "CLOSED" });
   } catch (err) {
     console.error("PUT /api/disputes/:offerId/close", err);
+    return res.status(500).json({ error: err.message || "Database error" });
+  }
+});
+
+// PUT /api/disputes/:offerId/release-refund-tx – save release or refund transaction request key (called by arbiter after release/refund)
+app.put("/api/disputes/:offerId/release-refund-tx", validateParams(offerIdParamSchema), validateBody(releaseRefundTxBodySchema), async (req, res) => {
+  const auth = requireAuth(req);
+  if (!auth.ok) return sendAuthError(res, auth);
+  if (req.body.wallet !== auth.wallet) {
+    return res.status(400).json({ error: "Wallet must match authenticated wallet" });
+  }
+  const offerId = req.params.offerId;
+  const { requestKey } = req.body;
+  try {
+    const disputeResult = await pool.query("SELECT id FROM disputes WHERE offer_id = $1", [offerId]);
+    if (disputeResult.rows.length === 0) {
+      return res.status(404).json({ error: "Dispute not found" });
+    }
+    await pool.query(
+      "UPDATE disputes SET release_refund_tx_request_key = $1, updated_at = $2 WHERE offer_id = $3",
+      [requestKey.trim(), new Date().toISOString(), offerId]
+    );
+    return res.json({ ok: true, offerId });
+  } catch (err) {
+    console.error("PUT /api/disputes/:offerId/release-refund-tx", err);
     return res.status(500).json({ error: err.message || "Database error" });
   }
 });
@@ -2083,6 +2152,11 @@ async function initializeSchema() {
       await pool.query("ALTER TABLE disputes ADD COLUMN triggered_by_timeout BOOLEAN NOT NULL DEFAULT FALSE");
       console.log("  ✓ Added triggered_by_timeout");
     }
+    if (!(await pool.query(`SELECT 1 FROM information_schema.columns WHERE table_name = 'disputes' AND column_name = 'release_refund_tx_request_key'`)).rows.length) {
+      console.log("  Adding release_refund_tx_request_key to disputes...");
+      await pool.query("ALTER TABLE disputes ADD COLUMN release_refund_tx_request_key VARCHAR(255)");
+      console.log("  ✓ Added release_refund_tx_request_key");
+    }
     // Allow UNDER_REVIEW in status (drop old check, add new)
     await pool.query(`
       ALTER TABLE disputes DROP CONSTRAINT IF EXISTS disputes_status_check
@@ -2095,6 +2169,19 @@ async function initializeSchema() {
     });
   } catch (err) {
     console.error("  ✗ Disputes migration:", err.message);
+  }
+  try {
+    const fundTxCol = await pool.query(`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'offer_details' AND column_name = 'fund_tx_request_key'
+    `);
+    if (fundTxCol.rows.length === 0) {
+      console.log("  Adding fund_tx_request_key to offer_details...");
+      await pool.query("ALTER TABLE offer_details ADD COLUMN fund_tx_request_key VARCHAR(255)");
+      console.log("  ✓ Added fund_tx_request_key");
+    }
+  } catch (err) {
+    console.error("  ✗ offer_details fund_tx_request_key migration:", err.message);
   }
 
   // Deliverable 5 — Database hardening: indexes and constraints (idempotent for existing DBs)

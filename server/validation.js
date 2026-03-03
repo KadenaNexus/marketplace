@@ -140,6 +140,22 @@ export const disputeActionBodySchema = z.object({
   message: z.string().max(1000).optional(),
 });
 
+/** PUT /api/offers/:offerId/fund-tx – save deposit (fund) transaction request key. */
+export const fundTxBodySchema = z.object({
+  requestKey: z.string().min(1).max(256),
+  wallet: walletSchema,
+  publicKey: publicKeySchema,
+  signedCmd: signedCmdSchema,
+});
+
+/** PUT /api/disputes/:offerId/release-refund-tx – save release/refund transaction request key. */
+export const releaseRefundTxBodySchema = z.object({
+  requestKey: z.string().min(1).max(256),
+  wallet: walletSchema,
+  publicKey: publicKeySchema,
+  signedCmd: signedCmdSchema,
+});
+
 export const completedOffersBodySchema = z.object({
   offerId: z.string().min(1).max(256),
   buyerWallet: walletSchema,
