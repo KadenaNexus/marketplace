@@ -65,6 +65,7 @@ export type EscrowState =
   | "COMPLETED"
   | "REFUNDED"
   | "CLOSED"
+  | "DELETED"
   | "DISPUTED";
 
 /** Time limits for timed steps (seconds). Match contract T1/T2/T3 (20 minutes). */

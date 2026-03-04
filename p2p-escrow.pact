@@ -113,11 +113,13 @@
       (enforce (= s "CREATED") "Can only close in CREATED state")
       (enforce (= (at "sender" (chain-data)) c) "Only creator can close")
       (update escrows id { "state": "CLOSED" })))
+  ;; Delete offer: only for CREATED (unaccepted) offers. Sets state to DELETED so list-escrow-ids excludes them.
+  ;; (Chainweb resolves unqualified "delete" as free.delete and pact has no "delete" member; soft-delete works everywhere.)
   (defun delete-offer (id)
     (with-read escrows id { "creator" := c, "state" := s }
       (enforce (= s "CREATED") "Can only delete offer in CREATED state")
       (enforce (= (at "sender" (chain-data)) c) "Only creator can delete offer")
-      (delete escrows id)))
+      (update escrows id { "state": "DELETED" })))
   (defun deposit (id)
     (let ((now (at "block-time" (chain-data)))
           (t1 (get-t1)))
@@ -233,8 +235,11 @@
         (update escrows id { "state": "DISPUTED" }))))
   (defun get-escrow (id)
     (read escrows id))
+  ;; Helper for list-escrow-ids: exclude DELETED (avoids "fn" which resolves as free.fn on Chainweb).
+  (defun list-escrow-ids-step (k acc)
+    (with-read escrows k { "state" := s } (if (= s "DELETED") acc (concat acc [k]))))
   (defun list-escrow-ids ()
-    (keys escrows))
+    (fold list-escrow-ids-step (keys escrows) []))
 )
 ;; ========== INIT (run in same tx as deploy) ==========
 ;; When signing, grant free.p2p-escrow9.GOVERNANCE. Sender must = DEPLOYER in the module.

@@ -55,6 +55,11 @@ const stateConfig: Record<EscrowState, {
     icon: XCircle, 
     className: "status-cancelled" 
   },
+  DELETED: { 
+    label: "Deleted", 
+    icon: XCircle, 
+    className: "status-cancelled" 
+  },
   DISPUTED: { 
     label: "Disputed", 
     icon: AlertTriangle, 
