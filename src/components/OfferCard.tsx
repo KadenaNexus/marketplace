@@ -7,7 +7,7 @@ import { RatingDisplay } from "./RatingDisplay";
 import type { Escrow } from "@/lib/kadena";
 import type { RatingSummary } from "@/lib/ratingApi";
 import { formatFiat } from "@/lib/utils";
-import { ShoppingCart, Store, ArrowRight, CreditCard, MessageCircle, X } from "lucide-react";
+import { ShoppingCart, Store, ArrowRight, CreditCard, MessageCircle, X, Loader2 } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { useState } from "react";
 import { ChatBox } from "./ChatBox";
@@ -19,18 +19,20 @@ interface OfferCardProps {
   ratingSummaryMap?: Record<string, RatingSummary>;
   onSelect: (offerId: string) => void;
   onDelete?: (offerId: string) => void;
+  isDeletingOfferId?: string | null;
   role: "buyer" | "seller";
   isSelected?: boolean;
 }
 
-export function OfferCard({ escrow, profileMap, ratingSummaryMap, onSelect, onDelete, role, isSelected = false }: OfferCardProps) {
+export function OfferCard({ escrow, profileMap, ratingSummaryMap, onSelect, onDelete, isDeletingOfferId, role, isSelected = false }: OfferCardProps) {
   const { account } = useWallet();
   const [showChat, setShowChat] = useState(false);
   const isMyOffer = escrow.creator === account?.account;
   const canAccept = escrow.state === "CREATED" && !isMyOffer;
   const canChat = account && isMyOffer ? !!escrow.buyer : !isMyOffer;
   const canDelete = isMyOffer && escrow.state === "CREATED" && !!onDelete;
-  
+  const isDeleting = isDeletingOfferId === escrow.offerId;
+
   // Parse payment methods
   let paymentMethods: string[] = [];
   try {
@@ -44,13 +46,21 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, onSelect, onDe
 
   return (
     <Card 
-      className={`transition-all cursor-pointer ${
+      className={`transition-all cursor-pointer relative ${
+        isDeleting ? "opacity-70 pointer-events-none" : ""
+      } ${
         isSelected 
           ? "border-2 border-primary bg-primary/5 shadow-lg shadow-primary/10 ring-2 ring-primary/20" 
           : "hover:border-primary/50 hover:shadow-md"
       }`}
-      onClick={() => onSelect(escrow.offerId)}
+      onClick={() => !isDeleting && onSelect(escrow.offerId)}
     >
+      {isDeleting && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 rounded-lg bg-background/80 z-10">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <span className="text-sm font-medium text-muted-foreground">Deleting offer…</span>
+        </div>
+      )}
       <CardContent className="p-4">
         <div className="space-y-3">
           {/* Header: Side badge and status */}
@@ -64,7 +74,7 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, onSelect, onDe
                 )}
                 {escrow.side === "SELL" ? "Selling" : "Buying"} KDA
               </Badge>
-              {canDelete && (
+              {canDelete && !isDeleting && (
                 <Button
                   size="icon"
                   variant="ghost"

@@ -86,6 +86,7 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
   const [selectedOfferId, setSelectedOfferId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [deletingOfferId, setDeletingOfferId] = useState<string | null>(null);
   const [transactions, setTransactions] = useState<TransactionResult[]>([]);
   const [showDisputeDialog, setShowDisputeDialog] = useState(false);
   const [disputeTab, setDisputeTab] = useState("details");
@@ -93,12 +94,15 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
   const [registeringCompletion, setRegisteringCompletion] = useState(false);
 
 const ACTIVE_STATES = ["ACCEPTED", "FUNDED", "PAID", "DISPUTED"] as const;
-const CRITICAL_ACTION_LOADING = ["Accept Offer", "Deposit", "Mark Paid", "Release"] as const;
+const CRITICAL_ACTION_LOADING = ["Accept Offer", "Deposit", "Mark Paid", "Release", "Delete Offer"] as const;
 const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena network. This may take up to 60 seconds.";
 
   // Filter escrows based on filters and role
   const escrows = useMemo(() => {
     let filtered = [...allEscrows];
+
+    // Only show offers that are not DELETED (on-chain list-escrow-ids already excludes them; this is a safeguard)
+    filtered = filtered.filter((e) => e.state !== "DELETED");
 
     // View mode and role-based filtering
     if (viewMode === "active") {
@@ -396,6 +400,11 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
     }
   };
 
+  // Clear deleting offer state when any action finishes loading
+  useEffect(() => {
+    if (!actionLoading) setDeletingOfferId(null);
+  }, [actionLoading]);
+
   const handleAccept = () => {
     if (!account || !selectedEscrow) return;
     executeAction("Accept Offer", () => 
@@ -447,6 +456,8 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
       toast.error("Please connect your wallet");
       return;
     }
+    setDeletingOfferId(offerId);
+    toast.info("Deleting offer…", { description: "Confirm in your wallet. This may take a moment." });
     executeAction("Delete Offer", () =>
       buildDeleteOfferTx(offerId, account.account, account.publicKey)
     );
@@ -597,6 +608,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                   ratingSummaryMap={ratingSummaryMap}
                   onSelect={setSelectedOfferId}
                   onDelete={handleDeleteOffer}
+                  isDeletingOfferId={deletingOfferId}
                   role={viewMode === "active" ? (e.seller === account?.account ? "seller" : "buyer") : role}
                   isSelected={selectedOfferId === e.offerId}
                 />
