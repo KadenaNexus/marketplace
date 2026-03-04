@@ -76,7 +76,7 @@ interface EscrowActionsProps {
   refreshTrigger?: number;
   filters?: OfferFilters;
   role?: "buyer" | "seller";
-  viewMode?: "all" | "my" | "active"; // "active" = trades where I'm seller or buyer and state is in progress (not CREATED/COMPLETED/REFUNDED/CLOSED)
+  viewMode?: "all" | "my" | "active" | "new"; // "new" = CREATED only, sorted by price (buy: low first, sell: high first)
 }
 
 export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", viewMode = "all" }: EscrowActionsProps) {
@@ -113,6 +113,14 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
           (e.seller === account.account || e.buyer === account.account) &&
           ACTIVE_STATES.includes(e.state as (typeof ACTIVE_STATES)[number])
       );
+    } else if (viewMode === "new") {
+      // New offers only (CREATED), by role
+      filtered = filtered.filter((e) => e.state === "CREATED");
+      if (role === "buyer") {
+        filtered = filtered.filter((e) => e.side === "SELL");
+      } else {
+        filtered = filtered.filter((e) => e.side === "BUY");
+      }
     } else if (viewMode === "my") {
       // Show only offers created by the current user (creator), not just where they are the seller
       filtered = filtered.filter((e) => e.creator === account?.account);
@@ -190,16 +198,16 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
       }
     }
 
-    // Sort: for active view by state (most actionable first), else by price
+    // Sort: active view by state; "new" view by price (buy: lowest first, sell: highest first); else by price
     filtered.sort((a, b) => {
       if (viewMode === "active") {
         const order = { PAID: 0, FUNDED: 1, DISPUTED: 2, ACCEPTED: 3 };
         return (order[a.state as keyof typeof order] ?? 4) - (order[b.state as keyof typeof order] ?? 4);
       }
-      if (role === "buyer") {
-        return a.price - b.price; // Buyers want lowest price
+      if (viewMode === "new" || role === "buyer") {
+        return a.price - b.price; // Buy: lowest price first
       } else {
-        return b.price - a.price; // Sellers want highest price
+        return b.price - a.price; // Sell: highest price first
       }
     });
 
@@ -559,18 +567,24 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                 <List className="h-5 w-5 text-primary" />
                 {viewMode === "active"
                   ? "My Active Trades"
-                  : viewMode === "my" 
-                  ? "My Offers" 
-                  : role === "buyer" 
-                    ? "All Sell Offers" 
+                  : viewMode === "new"
+                  ? "New Offers"
+                  : viewMode === "my"
+                  ? "My Offers"
+                  : role === "buyer"
+                    ? "All Sell Offers"
                     : "All Buy Offers"}
               </CardTitle>
               <CardDescription>
                 {viewMode === "active"
                   ? "Trades where you're the seller or buyer (in progress)"
+                  : viewMode === "new"
+                  ? role === "buyer"
+                    ? "New sell offers, lowest price first"
+                    : "New buy offers, highest price first"
                   : viewMode === "my"
                   ? "Manage all offers you've created"
-                  : role === "buyer" 
+                  : role === "buyer"
                     ? "Browse available sell offers to accept"
                     : "Browse available buy offers to accept"}
               </CardDescription>
@@ -592,9 +606,11 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
             <p className="text-center py-8 text-muted-foreground">
               {viewMode === "active"
                 ? "You have no active trades. Accept an offer as buyer or wait for a buyer as seller to see trades here."
+                : viewMode === "new"
+                ? "No new offers at the moment. Check back later or try All Sell/Buy Offers."
                 : viewMode === "my"
                 ? "You haven't created any offers yet. Create your first offer in the Create Offer tab."
-                : role === "buyer" 
+                : role === "buyer"
                   ? "No sell offers found. Try adjusting your filters or create a new offer."
                   : "No buy offers found. Try adjusting your filters or create a new offer."}
             </p>

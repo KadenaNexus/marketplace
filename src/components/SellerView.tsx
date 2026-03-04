@@ -3,14 +3,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CreateOfferForm } from "@/components/CreateOfferForm";
 import { EscrowActions } from "@/components/EscrowActions";
 import { OfferFiltersComponent, type OfferFilters } from "@/components/OfferFilters";
-import { Plus, Store, Activity } from "lucide-react";
+import { Plus, Store, Activity, Sparkles } from "lucide-react";
 
 interface SellerViewProps {
   refreshTrigger?: number;
 }
 
 export function SellerView({ refreshTrigger = 0 }: SellerViewProps) {
-  const [activeTab, setActiveTab] = useState("browse");
+  const [activeTab, setActiveTab] = useState("new");
   const [filters, setFilters] = useState<OfferFilters>({
     state: "ALL",
     side: "ALL",
@@ -24,7 +24,7 @@ export function SellerView({ refreshTrigger = 0 }: SellerViewProps) {
   });
 
   const handleOfferCreated = () => {
-    setActiveTab("browse");
+    setActiveTab("new");
   };
 
   return (
@@ -42,7 +42,11 @@ export function SellerView({ refreshTrigger = 0 }: SellerViewProps) {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-5">
+          <TabsTrigger value="new" className="gap-2">
+            <Sparkles className="h-4 w-4" />
+            New Offers
+          </TabsTrigger>
           <TabsTrigger value="browse">All Buy Offers</TabsTrigger>
           <TabsTrigger value="active" className="gap-2">
             <Activity className="h-4 w-4" />
@@ -56,7 +60,7 @@ export function SellerView({ refreshTrigger = 0 }: SellerViewProps) {
         </TabsList>
 
         {/* Shared Filters - shown for browse, active, and my tabs */}
-        {(activeTab === "browse" || activeTab === "my" || activeTab === "active") && (
+        {(activeTab === "new" || activeTab === "browse" || activeTab === "my" || activeTab === "active") && (
           <div className="mt-4">
             <OfferFiltersComponent 
               filters={filters} 
@@ -65,6 +69,15 @@ export function SellerView({ refreshTrigger = 0 }: SellerViewProps) {
             />
           </div>
         )}
+
+        <TabsContent value="new" className="space-y-4 mt-4">
+          <EscrowActions
+            refreshTrigger={refreshTrigger}
+            filters={filters}
+            role="seller"
+            viewMode="new"
+          />
+        </TabsContent>
 
         <TabsContent value="browse" className="space-y-4 mt-4">
           <EscrowActions 
