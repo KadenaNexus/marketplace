@@ -454,6 +454,28 @@ export function buildCloseOfferTx(
     .createTransaction();
 }
 
+/* ---------- DELETE OFFER (creator only, CREATED state; removes offer from system) ---------- */
+
+export function buildDeleteOfferTx(
+  offerId: string,
+  creatorAccount: string,
+  creatorPubKey: string
+) {
+  return Pact.builder
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.delete-offer "${offerId}")`)
+    .addData("sender", creatorAccount)
+    .addSigner(creatorPubKey, (s) => [s("coin.GAS")])
+    .setMeta({
+      chainId: CHAIN_ID,
+      senderAccount: creatorAccount,
+      gasLimit: GAS_LIMIT,
+      gasPrice: GAS_PRICE,
+      ttl: 600,
+    })
+    .setNetworkId(NETWORK_ID)
+    .createTransaction();
+}
+
 /* ---------- TIMEOUT: ACCEPTED -> CLOSED (anyone; seller did not fund within T1) ---------- */
 export function buildTimeoutAcceptedCloseTx(
   offerId: string,

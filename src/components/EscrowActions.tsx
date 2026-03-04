@@ -28,6 +28,7 @@ import {
   buildReleaseTx,
   buildRefundTx,
   buildCloseOfferTx,
+  buildDeleteOfferTx,
   buildTimeoutAcceptedCloseTx,
   buildTimeoutFundedRefundTx,
   buildTimeoutPaidDisputeTx,
@@ -441,6 +442,17 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
     );
   };
 
+  const handleDeleteOffer = (offerId: string) => {
+    if (!account) {
+      toast.error("Please connect your wallet");
+      return;
+    }
+    executeAction("Delete Offer", () =>
+      buildDeleteOfferTx(offerId, account.account, account.publicKey)
+    );
+    if (selectedOfferId === offerId) setSelectedOfferId(null);
+  };
+
   const handleTimeoutAcceptedClose = () => {
     if (!account || !selectedEscrow) return;
     executeAction("Timeout: Close (T1)", () =>
@@ -584,6 +596,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                   profileMap={profileMap}
                   ratingSummaryMap={ratingSummaryMap}
                   onSelect={setSelectedOfferId}
+                  onDelete={handleDeleteOffer}
                   role={viewMode === "active" ? (e.seller === account?.account ? "seller" : "buyer") : role}
                   isSelected={selectedOfferId === e.offerId}
                 />

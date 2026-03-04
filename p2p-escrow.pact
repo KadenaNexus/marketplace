@@ -113,6 +113,11 @@
       (enforce (= s "CREATED") "Can only close in CREATED state")
       (enforce (= (at "sender" (chain-data)) c) "Only creator can close")
       (update escrows id { "state": "CLOSED" })))
+  (defun delete-offer (id)
+    (with-read escrows id { "creator" := c, "state" := s }
+      (enforce (= s "CREATED") "Can only delete offer in CREATED state")
+      (enforce (= (at "sender" (chain-data)) c) "Only creator can delete offer")
+      (delete escrows id)))
   (defun deposit (id)
     (let ((now (at "block-time" (chain-data)))
           (t1 (get-t1)))

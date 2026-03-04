@@ -7,7 +7,7 @@ import { RatingDisplay } from "./RatingDisplay";
 import type { Escrow } from "@/lib/kadena";
 import type { RatingSummary } from "@/lib/ratingApi";
 import { formatFiat } from "@/lib/utils";
-import { ShoppingCart, Store, ArrowRight, CreditCard, MessageCircle } from "lucide-react";
+import { ShoppingCart, Store, ArrowRight, CreditCard, MessageCircle, X } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { useState } from "react";
 import { ChatBox } from "./ChatBox";
@@ -18,16 +18,18 @@ interface OfferCardProps {
   profileMap: Record<string, { username: string | null; avatar: string | null; wallet: string }>;
   ratingSummaryMap?: Record<string, RatingSummary>;
   onSelect: (offerId: string) => void;
+  onDelete?: (offerId: string) => void;
   role: "buyer" | "seller";
   isSelected?: boolean;
 }
 
-export function OfferCard({ escrow, profileMap, ratingSummaryMap, onSelect, role, isSelected = false }: OfferCardProps) {
+export function OfferCard({ escrow, profileMap, ratingSummaryMap, onSelect, onDelete, role, isSelected = false }: OfferCardProps) {
   const { account } = useWallet();
   const [showChat, setShowChat] = useState(false);
   const isMyOffer = escrow.creator === account?.account;
   const canAccept = escrow.state === "CREATED" && !isMyOffer;
   const canChat = account && isMyOffer ? !!escrow.buyer : !isMyOffer;
+  const canDelete = isMyOffer && escrow.state === "CREATED" && !!onDelete;
   
   // Parse payment methods
   let paymentMethods: string[] = [];
@@ -53,14 +55,33 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, onSelect, role
         <div className="space-y-3">
           {/* Header: Side badge and status */}
           <div className="flex items-center justify-between">
-            <Badge variant={escrow.side === "BUY" ? "default" : "secondary"} className="gap-1">
-              {escrow.side === "BUY" ? (
-                <ShoppingCart className="h-3 w-3" />
-              ) : (
-                <Store className="h-3 w-3" />
+            <div className="flex items-center gap-2">
+              <Badge variant={escrow.side === "BUY" ? "default" : "secondary"} className="gap-1">
+                {escrow.side === "BUY" ? (
+                  <ShoppingCart className="h-3 w-3" />
+                ) : (
+                  <Store className="h-3 w-3" />
+                )}
+                {escrow.side === "SELL" ? "Selling" : "Buying"} KDA
+              </Badge>
+              {canDelete && (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (window.confirm("Delete this offer? It will be removed from the system.")) {
+                      onDelete(escrow.offerId);
+                    }
+                  }}
+                  title="Delete offer"
+                  aria-label="Delete offer"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
               )}
-              {escrow.side === "SELL" ? "Selling" : "Buying"} KDA
-            </Badge>
+            </div>
             <EscrowStatus state={escrow.state} />
           </div>
 
