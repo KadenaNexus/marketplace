@@ -21,6 +21,8 @@ export function SellerView({ refreshTrigger = 0 }: SellerViewProps) {
     paymentMethod: "",
     seller: "",
     buyer: "",
+    minStars: "",
+    onlineNow: false,
   });
 
   const handleOfferCreated = () => {

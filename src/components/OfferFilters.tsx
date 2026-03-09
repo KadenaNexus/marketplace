@@ -1,6 +1,7 @@
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { EscrowState } from "@/lib/kadena";
@@ -15,6 +16,10 @@ export interface OfferFilters {
   paymentMethod: string;
   seller: string;
   buyer: string;
+  /** Min reputation in stars (1-5). Empty string = no filter. */
+  minStars: "" | "1" | "2" | "3" | "4" | "5";
+  /** Only show offers where counterparty is online now. */
+  onlineNow: boolean;
 }
 
 interface OfferFiltersProps {
@@ -41,6 +46,8 @@ export function OfferFiltersComponent({ filters, onFiltersChange, role }: OfferF
       paymentMethod: "",
       seller: "",
       buyer: "",
+      minStars: "",
+      onlineNow: false,
     });
   };
 
@@ -53,48 +60,87 @@ export function OfferFiltersComponent({ filters, onFiltersChange, role }: OfferF
     filters.maxPrice !== "" ||
     filters.paymentMethod !== "" ||
     filters.seller !== "" ||
-    filters.buyer !== "";
+    filters.buyer !== "" ||
+    filters.minStars !== "" ||
+    filters.onlineNow;
 
   return (
     <div className="sticky top-0 z-20 py-3 pb-4 bg-background border-b rounded-lg">
       <div className="flex flex-wrap items-end gap-3">
-        {/* Side */}
+        {/* Side - hidden in buyer section (New Offers = sell offers only) */}
+        {role !== "buyer" && (
+          <div className="space-y-1.5 min-w-[100px]">
+            <Label htmlFor="filter-side" className="text-xs text-muted-foreground">Side</Label>
+            <Select
+              value={filters.side}
+              onValueChange={(value) => updateFilter("side", value as "BUY" | "SELL" | "ALL")}
+            >
+              <SelectTrigger id="filter-side" className="h-9 text-sm">
+                <SelectValue placeholder="All sides" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">All</SelectItem>
+                <SelectItem value="BUY">Buy</SelectItem>
+                <SelectItem value="SELL">Sell</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        {/* State - hidden in buyer section */}
+        {role !== "buyer" && (
+          <div className="space-y-1.5 min-w-[110px]">
+            <Label htmlFor="filter-state" className="text-xs text-muted-foreground">State</Label>
+            <Select
+              value={filters.state}
+              onValueChange={(value) => updateFilter("state", value as EscrowState | "ALL")}
+            >
+              <SelectTrigger id="filter-state" className="h-9 text-sm">
+                <SelectValue placeholder="All states" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">All States</SelectItem>
+                {ESCROW_STATES.map((state) => (
+                  <SelectItem key={state} value={state}>
+                    {state}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        {/* Reputation: min stars */}
         <div className="space-y-1.5 min-w-[100px]">
-          <Label htmlFor="filter-side" className="text-xs text-muted-foreground">Side</Label>
+          <Label htmlFor="filter-stars" className="text-xs text-muted-foreground">Min rating</Label>
           <Select
-            value={filters.side}
-            onValueChange={(value) => updateFilter("side", value as "BUY" | "SELL" | "ALL")}
+            value={filters.minStars || "ALL"}
+            onValueChange={(value) => updateFilter("minStars", value === "ALL" ? "" : (value as "1" | "2" | "3" | "4" | "5"))}
           >
-            <SelectTrigger id="filter-side" className="h-9 text-sm">
-              <SelectValue placeholder="All sides" />
+            <SelectTrigger id="filter-stars" className="h-9 text-sm">
+              <SelectValue placeholder="Any rating" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="ALL">All</SelectItem>
-              <SelectItem value="BUY">Buy</SelectItem>
-              <SelectItem value="SELL">Sell</SelectItem>
+              <SelectItem value="ALL">Any rating</SelectItem>
+              <SelectItem value="5">⭐ 5 stars</SelectItem>
+              <SelectItem value="4">⭐ 4+ stars</SelectItem>
+              <SelectItem value="3">⭐ 3+ stars</SelectItem>
+              <SelectItem value="2">⭐ 2+ stars</SelectItem>
+              <SelectItem value="1">⭐ 1+ stars</SelectItem>
             </SelectContent>
           </Select>
         </div>
 
-        {/* State */}
-        <div className="space-y-1.5 min-w-[110px]">
-          <Label htmlFor="filter-state" className="text-xs text-muted-foreground">State</Label>
-          <Select
-            value={filters.state}
-            onValueChange={(value) => updateFilter("state", value as EscrowState | "ALL")}
-          >
-            <SelectTrigger id="filter-state" className="h-9 text-sm">
-              <SelectValue placeholder="All states" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="ALL">All States</SelectItem>
-              {ESCROW_STATES.map((state) => (
-                <SelectItem key={state} value={state}>
-                  {state}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        {/* Online now */}
+        <div className="space-y-1.5 flex items-end gap-2 pb-1">
+          <div className="flex items-center gap-2 h-9">
+            <Checkbox
+              id="filter-online"
+              checked={filters.onlineNow}
+              onCheckedChange={(checked) => updateFilter("onlineNow", checked === true)}
+            />
+            <Label htmlFor="filter-online" className="text-xs text-muted-foreground whitespace-nowrap cursor-pointer">Online now</Label>
+          </div>
         </div>
 
         {/* Amount range */}

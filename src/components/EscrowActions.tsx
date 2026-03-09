@@ -17,7 +17,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useWallet } from "@/hooks/useWallet";
 import { fetchProfilesBulk, type ProfileSummary } from "@/lib/profileApi";
 import { fetchRatingSummariesBulk, registerCompletion, checkCanRate, fetchTradeRatings, type RatingSummary } from "@/lib/ratingApi";
-import { initializeOnlineStatus } from "@/hooks/useOnlineStatus";
+import { initializeOnlineStatus, useOnlineStatusMap } from "@/hooks/useOnlineStatus";
 import { RatingDisplay } from "./RatingDisplay";
 import { RatingSubmitDialog } from "./RatingSubmitDialog";
 import {
@@ -279,6 +279,32 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
     queryFn: () => fetchRatingSummariesBulk(allWallets),
     enabled: allWallets.length > 0,
   });
+
+  const onlineStatusMap = useOnlineStatusMap(allWallets);
+
+  // Apply reputation (min stars) and online-now filters for display
+  const displayedEscrows = useMemo(() => {
+    let list = escrowsWithDetails;
+    if (!filters) return list;
+    const minStars = filters.minStars ? parseInt(filters.minStars, 10) : 0;
+    if (minStars >= 1 && minStars <= 5) {
+      list = list.filter((e) => {
+        const counterparty = role === "buyer" ? e.seller : e.buyer;
+        if (!counterparty) return false;
+        const summary = ratingSummaryMap[counterparty];
+        const avg = summary?.averageRating ?? 0;
+        return avg >= minStars;
+      });
+    }
+    if (filters.onlineNow) {
+      list = list.filter((e) => {
+        const counterparty = role === "buyer" ? e.seller : e.buyer;
+        if (!counterparty) return false;
+        return onlineStatusMap.get(counterparty) === true;
+      });
+    }
+    return list;
+  }, [escrowsWithDetails, filters, role, ratingSummaryMap, onlineStatusMap]);
 
   // On-chain reputation (minimal counters; score calculation off-chain)
   const { data: sellerRep } = useQuery({
@@ -602,21 +628,23 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
             <div className="flex justify-center py-8">
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
             </div>
-          ) : escrows.length === 0 ? (
+          ) : displayedEscrows.length === 0 ? (
             <p className="text-center py-8 text-muted-foreground">
-              {viewMode === "active"
-                ? "You have no active trades. Accept an offer as buyer or wait for a buyer as seller to see trades here."
-                : viewMode === "new"
-                ? "No new offers at the moment. Check back later or try All Sell/Buy Offers."
-                : viewMode === "my"
-                ? "You haven't created any offers yet. Create your first offer in the Create Offer tab."
-                : role === "buyer"
-                  ? "No sell offers found. Try adjusting your filters or create a new offer."
-                  : "No buy offers found. Try adjusting your filters or create a new offer."}
+              {escrows.length === 0
+                ? (viewMode === "active"
+                    ? "You have no active trades. Accept an offer as buyer or wait for a buyer as seller to see trades here."
+                    : viewMode === "new"
+                    ? "No new offers at the moment. Check back later or try All Sell/Buy Offers."
+                    : viewMode === "my"
+                    ? "You haven't created any offers yet. Create your first offer in the Create Offer tab."
+                    : role === "buyer"
+                      ? "No sell offers found. Try adjusting your filters or create a new offer."
+                      : "No buy offers found. Try adjusting your filters or create a new offer.")
+                : "No offers match your filters (min rating or online now). Try clearing filters."}
             </p>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {escrowsWithDetails.map((e) => (
+              {displayedEscrows.map((e) => (
                 <OfferCard
                   key={e.offerId}
                   escrow={e}
