@@ -44,25 +44,24 @@ export function SellerView({ refreshTrigger = 0 }: SellerViewProps) {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-5">
+        <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="new" className="gap-2">
             <Sparkles className="h-4 w-4" />
-            New Offers
+            New offers - Marketplace
           </TabsTrigger>
-          <TabsTrigger value="browse">All Buy Offers</TabsTrigger>
+          <TabsTrigger value="mypast">All my past offers</TabsTrigger>
           <TabsTrigger value="active" className="gap-2">
             <Activity className="h-4 w-4" />
             Active Trades
           </TabsTrigger>
-          <TabsTrigger value="my">My Offers</TabsTrigger>
           <TabsTrigger value="create" className="gap-2">
             <Plus className="h-4 w-4" />
-            Create Offer
+            Create new offer
           </TabsTrigger>
         </TabsList>
 
-        {/* Shared Filters - shown for browse, active, and my tabs */}
-        {(activeTab === "new" || activeTab === "browse" || activeTab === "my" || activeTab === "active") && (
+        {/* Shared Filters - shown for new, mypast, and active tabs */}
+        {(activeTab === "new" || activeTab === "mypast" || activeTab === "active") && (
           <div className="mt-4">
             <OfferFiltersComponent 
               filters={filters} 
@@ -81,12 +80,12 @@ export function SellerView({ refreshTrigger = 0 }: SellerViewProps) {
           />
         </TabsContent>
 
-        <TabsContent value="browse" className="space-y-4 mt-4">
-          <EscrowActions 
+        <TabsContent value="mypast" className="space-y-4 mt-4">
+          <EscrowActions
             refreshTrigger={refreshTrigger}
             filters={filters}
             role="seller"
-            viewMode="all"
+            viewMode="myPast"
           />
         </TabsContent>
 
@@ -96,15 +95,6 @@ export function SellerView({ refreshTrigger = 0 }: SellerViewProps) {
             filters={filters}
             role="seller"
             viewMode="active"
-          />
-        </TabsContent>
-
-        <TabsContent value="my" className="space-y-4 mt-4">
-          <EscrowActions 
-            refreshTrigger={refreshTrigger}
-            filters={filters}
-            role="seller"
-            viewMode="my"
           />
         </TabsContent>
 

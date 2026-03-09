@@ -76,7 +76,7 @@ interface EscrowActionsProps {
   refreshTrigger?: number;
   filters?: OfferFilters;
   role?: "buyer" | "seller";
-  viewMode?: "all" | "my" | "active" | "new"; // "new" = CREATED only, sorted by price (buy: low first, sell: high first)
+  viewMode?: "all" | "my" | "myPast" | "active" | "new"; // "new" = CREATED only; "myPast" = my offers excluding CREATED
 }
 
 export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", viewMode = "all" }: EscrowActionsProps) {
@@ -93,7 +93,7 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
   const [showRatingDialog, setShowRatingDialog] = useState(false);
   const [registeringCompletion, setRegisteringCompletion] = useState(false);
 
-const ACTIVE_STATES = ["ACCEPTED", "FUNDED", "PAID", "DISPUTED"] as const;
+const ACTIVE_STATES = ["ACCEPTED", "FUNDED", "PAID", "DISPUTED", "COMPLETED", "REFUNDED"] as const;
 const CRITICAL_ACTION_LOADING = ["Accept Offer", "Deposit", "Mark Paid", "Release", "Delete Offer"] as const;
 const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena network. This may take up to 60 seconds.";
 
@@ -124,6 +124,11 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
     } else if (viewMode === "my") {
       // Show only offers created by the current user (creator), not just where they are the seller
       filtered = filtered.filter((e) => e.creator === account?.account);
+    } else if (viewMode === "myPast") {
+      // All my past offers: created by me, excluding new (CREATED) offers
+      filtered = filtered.filter(
+        (e) => e.creator === account?.account && e.state !== "CREATED"
+      );
     } else {
       // Show all offers based on role
       if (role === "buyer") {
@@ -592,9 +597,11 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
               <CardTitle className="flex items-center gap-2">
                 <List className="h-5 w-5 text-primary" />
                 {viewMode === "active"
-                  ? "My Active Trades"
+                  ? "Active Trades"
                   : viewMode === "new"
-                  ? "New Offers"
+                  ? "New offers - Marketplace"
+                  : viewMode === "myPast"
+                  ? "All my past offers"
                   : viewMode === "my"
                   ? "My Offers"
                   : role === "buyer"
@@ -603,11 +610,11 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
               </CardTitle>
               <CardDescription>
                 {viewMode === "active"
-                  ? "Trades where you're the seller or buyer (in progress)"
+                  ? "Trades in progress (accepted, funded, paid, completed, refunded)"
                   : viewMode === "new"
-                  ? role === "buyer"
-                    ? "New sell offers, lowest price first"
-                    : "New buy offers, highest price first"
+                  ? "Only new created offers. Nothing else."
+                  : viewMode === "myPast"
+                  ? "All your sell or buy offers except new created offers"
                   : viewMode === "my"
                   ? "Manage all offers you've created"
                   : role === "buyer"
@@ -634,7 +641,9 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                 ? (viewMode === "active"
                     ? "You have no active trades. Accept an offer as buyer or wait for a buyer as seller to see trades here."
                     : viewMode === "new"
-                    ? "No new offers at the moment. Check back later or try All Sell/Buy Offers."
+                    ? "No new offers at the moment. Check back later."
+                    : viewMode === "myPast"
+                    ? "You have no past offers. New created offers appear in New offers - Marketplace."
                     : viewMode === "my"
                     ? "You haven't created any offers yet. Create your first offer in the Create Offer tab."
                     : role === "buyer"
