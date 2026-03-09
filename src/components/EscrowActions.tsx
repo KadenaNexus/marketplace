@@ -126,10 +126,11 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
       // Show only offers created by the current user (creator), not just where they are the seller
       filtered = filtered.filter((e) => e.creator === account?.account);
     } else if (viewMode === "myPast") {
-      // All my past offers: created by me, in terminal states only (Completed, Refunded, Closed)
+      // All my past offers: I'm creator, seller, or buyer, and state is terminal (Completed, Refunded, Closed)
       filtered = filtered.filter(
         (e) =>
-          e.creator === account?.account &&
+          account?.account &&
+          (e.creator === account.account || e.seller === account.account || e.buyer === account.account) &&
           PAST_TERMINAL_STATES.includes(e.state as (typeof PAST_TERMINAL_STATES)[number])
       );
     } else {
@@ -617,7 +618,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                   : viewMode === "new"
                   ? "Only new created offers. Nothing else."
                   : viewMode === "myPast"
-                  ? "Your offers that ended as Completed, Refunded, or Closed"
+                  ? "Trades you took part in that ended as Completed, Refunded, or Closed"
                   : viewMode === "my"
                   ? "Manage all offers you've created"
                   : role === "buyer"
@@ -646,7 +647,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                     : viewMode === "new"
                     ? "No new offers at the moment. Check back later."
                     : viewMode === "myPast"
-                    ? "You have no past offers. Past offers are those that ended as Completed, Refunded, or Closed."
+                    ? "You have no past offers. Past offers are trades you participated in that ended as Completed, Refunded, or Closed."
                     : viewMode === "my"
                     ? "You haven't created any offers yet. Create your first offer in the Create Offer tab."
                     : role === "buyer"
