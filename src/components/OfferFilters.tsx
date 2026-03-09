@@ -67,49 +67,6 @@ export function OfferFiltersComponent({ filters, onFiltersChange, role }: OfferF
   return (
     <div className="sticky top-0 z-20 py-3 pb-4 bg-background border-b rounded-lg">
       <div className="flex flex-wrap items-end gap-3">
-        {/* Side - hidden in buyer section (New Offers = sell offers only) */}
-        {role !== "buyer" && (
-          <div className="space-y-1.5 min-w-[100px]">
-            <Label htmlFor="filter-side" className="text-xs text-muted-foreground">Side</Label>
-            <Select
-              value={filters.side}
-              onValueChange={(value) => updateFilter("side", value as "BUY" | "SELL" | "ALL")}
-            >
-              <SelectTrigger id="filter-side" className="h-9 text-sm">
-                <SelectValue placeholder="All sides" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ALL">All</SelectItem>
-                <SelectItem value="BUY">Buy</SelectItem>
-                <SelectItem value="SELL">Sell</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        )}
-
-        {/* State - hidden in buyer section */}
-        {role !== "buyer" && (
-          <div className="space-y-1.5 min-w-[110px]">
-            <Label htmlFor="filter-state" className="text-xs text-muted-foreground">State</Label>
-            <Select
-              value={filters.state}
-              onValueChange={(value) => updateFilter("state", value as EscrowState | "ALL")}
-            >
-              <SelectTrigger id="filter-state" className="h-9 text-sm">
-                <SelectValue placeholder="All states" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ALL">All States</SelectItem>
-                {ESCROW_STATES.map((state) => (
-                  <SelectItem key={state} value={state}>
-                    {state}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
-
         {/* Reputation: min stars */}
         <div className="space-y-1.5 min-w-[100px]">
           <Label htmlFor="filter-stars" className="text-xs text-muted-foreground">Min rating</Label>
