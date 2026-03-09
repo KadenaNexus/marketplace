@@ -93,7 +93,8 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
   const [showRatingDialog, setShowRatingDialog] = useState(false);
   const [registeringCompletion, setRegisteringCompletion] = useState(false);
 
-const ACTIVE_STATES = ["ACCEPTED", "FUNDED", "PAID", "DISPUTED", "COMPLETED", "REFUNDED"] as const;
+const ACTIVE_STATES = ["ACCEPTED", "FUNDED", "PAID", "DISPUTED"] as const;
+const PAST_TERMINAL_STATES = ["COMPLETED", "REFUNDED", "CLOSED"] as const;
 const CRITICAL_ACTION_LOADING = ["Accept Offer", "Deposit", "Mark Paid", "Release", "Delete Offer"] as const;
 const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena network. This may take up to 60 seconds.";
 
@@ -125,9 +126,11 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
       // Show only offers created by the current user (creator), not just where they are the seller
       filtered = filtered.filter((e) => e.creator === account?.account);
     } else if (viewMode === "myPast") {
-      // All my past offers: created by me, excluding new (CREATED) offers
+      // All my past offers: created by me, in terminal states only (Completed, Refunded, Closed)
       filtered = filtered.filter(
-        (e) => e.creator === account?.account && e.state !== "CREATED"
+        (e) =>
+          e.creator === account?.account &&
+          PAST_TERMINAL_STATES.includes(e.state as (typeof PAST_TERMINAL_STATES)[number])
       );
     } else {
       // Show all offers based on role
@@ -610,11 +613,11 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
               </CardTitle>
               <CardDescription>
                 {viewMode === "active"
-                  ? "Trades in progress (accepted, funded, paid, completed, refunded)"
+                  ? "Trades in progress (accepted, funded, paid, disputed)"
                   : viewMode === "new"
                   ? "Only new created offers. Nothing else."
                   : viewMode === "myPast"
-                  ? "All your sell or buy offers except new created offers"
+                  ? "Your offers that ended as Completed, Refunded, or Closed"
                   : viewMode === "my"
                   ? "Manage all offers you've created"
                   : role === "buyer"
@@ -643,7 +646,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                     : viewMode === "new"
                     ? "No new offers at the moment. Check back later."
                     : viewMode === "myPast"
-                    ? "You have no past offers. New created offers appear in New offers - Marketplace."
+                    ? "You have no past offers. Past offers are those that ended as Completed, Refunded, or Closed."
                     : viewMode === "my"
                     ? "You haven't created any offers yet. Create your first offer in the Create Offer tab."
                     : role === "buyer"
