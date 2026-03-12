@@ -282,24 +282,6 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
     enabled: !!selectedEscrow,
   });
 
-  // Bulk dispute check for offer cards: which offerIds have an open/active dispute
-  const disputeQueries = useQueries({
-    queries: displayedEscrows.map((e) => ({
-      queryKey: ["dispute-check", e.offerId],
-      queryFn: () => getDispute(e.offerId),
-      enabled: true,
-    })),
-  });
-  const openDisputeOfferIds = useMemo(() => {
-    const set = new Set<string>();
-    disputeQueries.forEach((q, i) => {
-      const d = q.data;
-      if (d && (d.status === "OPEN" || d.status === "UNDER_REVIEW"))
-        set.add(displayedEscrows[i]?.offerId ?? "");
-    });
-    return set;
-  }, [disputeQueries, displayedEscrows]);
-
   // Rating summary for all wallets (offer cards + detail)
   const { data: ratingSummaryMap = {} } = useQuery<Record<string, RatingSummary>>({
     queryKey: ["ratings-summary-bulk", allWallets.join(",")],
@@ -332,6 +314,24 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
     }
     return list;
   }, [escrowsWithDetails, filters, role, ratingSummaryMap, onlineStatusMap]);
+
+  // Bulk dispute check for offer cards: which offerIds have an open/active dispute (must be after displayedEscrows)
+  const disputeQueries = useQueries({
+    queries: displayedEscrows.map((e) => ({
+      queryKey: ["dispute-check", e.offerId],
+      queryFn: () => getDispute(e.offerId),
+      enabled: true,
+    })),
+  });
+  const openDisputeOfferIds = useMemo(() => {
+    const set = new Set<string>();
+    disputeQueries.forEach((q, i) => {
+      const d = q.data;
+      if (d && (d.status === "OPEN" || d.status === "UNDER_REVIEW"))
+        set.add(displayedEscrows[i]?.offerId ?? "");
+    });
+    return set;
+  }, [disputeQueries, displayedEscrows]);
 
   // On-chain reputation (minimal counters; score calculation off-chain)
   const { data: sellerRep } = useQuery({
