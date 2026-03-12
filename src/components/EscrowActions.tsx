@@ -370,6 +370,8 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
       if (selectedOfferId && !list.some((e) => e.offerId === selectedOfferId)) {
         setSelectedOfferId(null);
       }
+      // Refetch dispute state so "Disputed" shows correctly on cards and detail
+      queryClient.invalidateQueries({ queryKey: ["dispute-check"] });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error("[EscrowActions] loadAll failed:", error);
@@ -1103,6 +1105,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
           escrow={selectedEscrow}
           onSuccess={() => {
             setDisputeTab("dispute");
+            queryClient.invalidateQueries({ queryKey: ["dispute-check"] });
             loadAll();
           }}
         />
