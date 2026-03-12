@@ -770,12 +770,17 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                   {selectedEscrow.amount.toFixed(8)} <span className="text-base">KDA</span>
                 </p>
               </div>
-              <div>
+              <div className="sm:col-span-2">
                 <Label className="text-muted-foreground">Total Value</Label>
-                <p className="font-mono text-xl font-bold">
-                  {selectedEscrow.fiatCurrency === "USD" ? "$" : selectedEscrow.fiatCurrency === "EUR" ? "€" : selectedEscrow.fiatCurrency}
-                  {formatFiat(selectedEscrow.amount * selectedEscrow.price)}
-                </p>
+                <div className="mt-1 rounded-lg border-2 border-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 dark:border-emerald-700 px-4 py-3">
+                  <p className="font-mono text-2xl font-bold text-emerald-800 dark:text-emerald-200">
+                    {selectedEscrow.fiatCurrency === "USD" ? "$" : selectedEscrow.fiatCurrency === "EUR" ? "€" : selectedEscrow.fiatCurrency}
+                    {formatFiat(selectedEscrow.amount * selectedEscrow.price)}
+                  </p>
+                  <p className="mt-3 text-sm text-muted-foreground leading-snug">
+                    Kadena buyer must send this exact amount to the seller using the selected payment method. After sending the payment, the buyer must upload a screenshot of the transaction confirmation in the chat.
+                  </p>
+                </div>
               </div>
               <div>
                 <Label className="text-muted-foreground">Amount</Label>
