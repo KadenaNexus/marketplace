@@ -22,9 +22,11 @@ interface OfferCardProps {
   isDeletingOfferId?: string | null;
   role: "buyer" | "seller";
   isSelected?: boolean;
+  /** When true, show "Disputed" instead of chain state (offer has an open/active dispute) */
+  hasOpenDispute?: boolean;
 }
 
-export function OfferCard({ escrow, profileMap, ratingSummaryMap, onSelect, onDelete, isDeletingOfferId, role, isSelected = false }: OfferCardProps) {
+export function OfferCard({ escrow, profileMap, ratingSummaryMap, onSelect, onDelete, isDeletingOfferId, role, isSelected = false, hasOpenDispute = false }: OfferCardProps) {
   const { account } = useWallet();
   const [showChat, setShowChat] = useState(false);
   const isMyOffer = escrow.creator === account?.account;
@@ -92,7 +94,7 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, onSelect, onDe
                 </Button>
               )}
             </div>
-            <EscrowStatus state={escrow.state} />
+            <EscrowStatus state={hasOpenDispute ? "DISPUTED" : escrow.state} />
           </div>
 
           {/* Price and Amount */}

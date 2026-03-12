@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueries, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -282,6 +282,24 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
     enabled: !!selectedEscrow,
   });
 
+  // Bulk dispute check for offer cards: which offerIds have an open/active dispute
+  const disputeQueries = useQueries({
+    queries: displayedEscrows.map((e) => ({
+      queryKey: ["dispute-check", e.offerId],
+      queryFn: () => getDispute(e.offerId),
+      enabled: true,
+    })),
+  });
+  const openDisputeOfferIds = useMemo(() => {
+    const set = new Set<string>();
+    disputeQueries.forEach((q, i) => {
+      const d = q.data;
+      if (d && (d.status === "OPEN" || d.status === "UNDER_REVIEW"))
+        set.add(displayedEscrows[i]?.offerId ?? "");
+    });
+    return set;
+  }, [disputeQueries, displayedEscrows]);
+
   // Rating summary for all wallets (offer cards + detail)
   const { data: ratingSummaryMap = {} } = useQuery<Record<string, RatingSummary>>({
     queryKey: ["ratings-summary-bulk", allWallets.join(",")],
@@ -549,6 +567,24 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
   const canTimeoutFundedRefund = selectedEscrow?.state === "FUNDED" && account?.account === selectedEscrow?.seller && isStepExpired(selectedEscrow.fundedAt, T2_SECONDS);
   const canTimeoutPaidDispute = selectedEscrow?.state === "PAID" && !!account?.account && isStepExpired(selectedEscrow.paidAt, T3_SECONDS);
 
+  // When dispute is open/under review, disable all action buttons for seller and buyer (arbiter can still act)
+  const isInDispute =
+    !!existingDispute && (existingDispute.status === "OPEN" || existingDispute.status === "UNDER_REVIEW");
+  const isSellerOrBuyer =
+    !!selectedEscrow && !!account &&
+    (account.account === selectedEscrow.seller || account.account === selectedEscrow.buyer);
+  const isInDisputeForParty = isInDispute && isSellerOrBuyer;
+
+  const canAcceptFinal = canAccept && !isInDisputeForParty;
+  const canDepositFinal = canDeposit && !isInDisputeForParty;
+  const canMarkPaidFinal = canMarkPaid && !isInDisputeForParty;
+  const canReleaseFinal = canRelease && !isInDisputeForParty;
+  const canCloseOfferFinal = canCloseOffer && !isInDisputeForParty;
+  const canOpenDisputeFinal = canOpenDispute && !isInDisputeForParty;
+  const canTimeoutAcceptedCloseFinal = canTimeoutAcceptedClose && !isInDisputeForParty;
+  const canTimeoutFundedRefundFinal = canTimeoutFundedRefund && !isInDisputeForParty;
+  const canTimeoutPaidDisputeFinal = canTimeoutPaidDispute && !isInDisputeForParty;
+
   const isTerminal = selectedEscrow?.state === "COMPLETED" || selectedEscrow?.state === "REFUNDED" || selectedEscrow?.state === "CLOSED" || selectedEscrow?.state === "DELETED";
 
   const isCompletedTrade = selectedEscrow?.state === "COMPLETED" && selectedEscrow?.buyer;
@@ -668,6 +704,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                   isDeletingOfferId={deletingOfferId}
                   role={viewMode === "active" ? (e.seller === account?.account ? "seller" : "buyer") : role}
                   isSelected={selectedOfferId === e.offerId}
+                  hasOpenDispute={openDisputeOfferIds.has(e.offerId)}
                 />
               ))}
             </div>
@@ -681,7 +718,13 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardTitle className="font-mono text-lg">{selectedEscrow.offerId}</CardTitle>
-              <EscrowStatus state={selectedEscrow.state} />
+              <EscrowStatus
+                state={
+                  existingDispute && (existingDispute.status === "OPEN" || existingDispute.status === "UNDER_REVIEW")
+                    ? "DISPUTED"
+                    : selectedEscrow.state
+                }
+              />
             </div>
           </CardHeader>
           <CardContent className="space-y-6">
@@ -794,7 +837,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                   </Alert>
                 )}
                 <div className="flex flex-wrap gap-3">
-                {canCloseOffer && (
+                {canCloseOfferFinal && (
                   <Button 
                     onClick={handleCloseOffer}
                     disabled={!!actionLoading}
@@ -810,7 +853,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                   </Button>
                 )}
 
-                {canAccept && (
+                {canAcceptFinal && (
                   <Button 
                     onClick={handleAccept}
                     disabled={!!actionLoading}
@@ -825,7 +868,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                   </Button>
                 )}
 
-                {canDeposit && (
+                {canDepositFinal && (
                   <Button 
                     onClick={handleDeposit}
                     disabled={!!actionLoading}
@@ -840,7 +883,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                   </Button>
                 )}
 
-                {canMarkPaid && (
+                {canMarkPaidFinal && (
                   <Button 
                     onClick={handleMarkPaid}
                     disabled={!!actionLoading}
@@ -856,7 +899,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                   </Button>
                 )}
 
-                {canRelease && (
+                {canReleaseFinal && (
                   <Button 
                     onClick={handleRelease}
                     disabled={!!actionLoading}
@@ -887,7 +930,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                   </Button>
                 )}
 
-                {canOpenDispute && (
+                {canOpenDisputeFinal && (
                   <Button 
                     onClick={() => setShowDisputeDialog(true)}
                     disabled={!!actionLoading}
@@ -899,7 +942,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                   </Button>
                 )}
 
-                {canTimeoutAcceptedClose && (
+                {canTimeoutAcceptedCloseFinal && (
                   <Button 
                     onClick={handleTimeoutAcceptedClose}
                     disabled={!!actionLoading}
@@ -915,7 +958,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                   </Button>
                 )}
 
-                {canTimeoutFundedRefund && (
+                {canTimeoutFundedRefundFinal && (
                   <Button 
                     onClick={handleTimeoutFundedRefund}
                     disabled={!!actionLoading}
@@ -931,7 +974,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                   </Button>
                 )}
 
-                {canTimeoutPaidDispute && (
+                {canTimeoutPaidDisputeFinal && (
                   <Button 
                     onClick={handleTimeoutPaidDispute}
                     disabled={!!actionLoading}

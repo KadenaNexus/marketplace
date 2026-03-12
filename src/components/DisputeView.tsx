@@ -215,7 +215,7 @@ export function DisputeView({ escrow, onClose }: DisputeViewProps) {
             <div>
               <CardTitle className="flex items-center gap-2">
                 <AlertCircle className="h-5 w-5 text-destructive" />
-                Dispute #{dispute.offerId.slice(-8)}
+                Disputed
               </CardTitle>
               <CardDescription className="mt-1">
                 Opened by {dispute.openedBy} on {new Date(dispute.createdAt).toLocaleDateString()}
