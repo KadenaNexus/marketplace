@@ -166,6 +166,98 @@ export async function signTransaction(command: IUnsignedCommand) {
   return wallet(command);
 }
 
+/** Run local simulation with signature verification before submit (avoids burning gas on obvious failures). */
+export async function preflightSignedTransaction(signedFromWallet: unknown): Promise<unknown> {
+  const raw = (signedFromWallet as { signedCmd?: unknown })?.signedCmd ?? signedFromWallet;
+  const cmd = raw as { cmd?: string; hash?: string; sigs?: unknown };
+  if (!cmd?.cmd) throw new Error("Invalid signed command for preflight");
+  const body = { cmd: cmd.cmd, hash: cmd.hash ?? "", sigs: (cmd.sigs ?? []) as [] };
+  return kadenaClient.local(body, { preflight: true, signatureVerification: true });
+}
+
+/** Walk nested Chainweb /poll and /local shapes until we find `{ status, error? }`. */
+function extractPactOutcome(result: unknown): Record<string, unknown> | null {
+  let cur: unknown = result;
+  for (let depth = 0; depth < 6; depth++) {
+    if (!cur || typeof cur !== "object") return null;
+    const o = cur as Record<string, unknown>;
+    if (o.status === "failure" || o.status === "success") return o;
+    cur = o.result;
+  }
+  return null;
+}
+
+/** True if this command result is a failed pact execution. */
+export function isPactExecutionFailure(result: unknown): boolean {
+  return extractPactOutcome(result)?.status === "failure";
+}
+
+/** Human-readable message from local / poll failure result. */
+export function describePactFailure(
+  result: unknown,
+  ctx?: { account?: string; operation?: string }
+): string {
+  const op = ctx?.operation ?? "Transaction";
+  const acct = ctx?.account;
+  const res = extractPactOutcome(result);
+  if (!res) return `${op} failed: unknown response shape`;
+  if (res.status === "success") return `${op} succeeded`;
+
+  const err = res.error;
+  let msg = "";
+  if (typeof err === "string") msg = err;
+  else if (err && typeof err === "object") {
+    const o = err as Record<string, unknown>;
+    msg = String(o.message ?? o.msg ?? o.info ?? o.detail ?? JSON.stringify(o));
+  }
+  if (!msg) msg = JSON.stringify(res);
+
+  if (/Keyset failure.*keys-all/i.test(msg)) {
+    const tail =
+      "This usually means: (1) your coin account uses a multisig guard with keys-all and not every key signed, " +
+      "or (2) the wallet signature is not bound to this account (Ecko needs the signer `address` field — now set). " +
+      "Reconnect Ecko on network " +
+      NETWORK_ID +
+      ", chain " +
+      CHAIN_ID +
+      ". " +
+      (acct ? `Sender account: ${acct}. ` : "") +
+      "Multisig accounts need every key to sign; this flow only adds one signer.";
+    return `${op} failed: ${msg}. ${tail}`;
+  }
+  if (/Keyset failure/i.test(msg)) {
+    return `${op} failed: ${msg}. Check that your wallet key matches your k: account on this chain.`;
+  }
+  return `${op} failed: ${msg}`;
+}
+
+/** Verify coin account exists on this chain (local read). */
+export async function readCoinDetailsLocal(account: string): Promise<{ balance: number } | null> {
+  const safe = account.replace(/"/g, '\\"');
+  const pactCode = `(coin.details "${safe}")`;
+  const command = Pact.builder
+    .execution(pactCode)
+    .setMeta({
+      chainId: CHAIN_ID,
+      senderAccount: "free",
+      gasLimit: GAS_LIMIT,
+      gasPrice: GAS_PRICE,
+      ttl: 600,
+    })
+    .setNetworkId(NETWORK_ID)
+    .createTransaction();
+  const result = await kadenaClient.local(
+    { cmd: command.cmd, hash: command.hash, sigs: [] },
+    { preflight: false }
+  );
+  if (result.result.status !== "success") return null;
+  const d = result.result.data as Record<string, unknown> | null;
+  if (!d) return null;
+  const bal = d.balance;
+  const n = typeof bal === "number" ? bal : typeof bal === "string" ? Number(bal) : NaN;
+  return { balance: Number.isFinite(n) ? n : 0 };
+}
+
 export async function submitTransaction(signedCmd: any): Promise<string> {
   const cmd = signedCmd?.signedCmd ?? signedCmd;
   const body = { cmds: Array.isArray(cmd) ? cmd : [cmd] };
@@ -214,13 +306,13 @@ const TEST_TRANSFER_RECIPIENT = "k:665976b8f985c0119c3afa74115fde19f71309cc85428
  * @returns requestKey
  */
 export async function sendTestTransfer(account: string, publicKey: string): Promise<string> {
-  const pk = signingPubKeyForAccount(account, publicKey);
+  const signer = signerPayloadForAccount(account, publicKey);
   const amountCap = { decimal: "10" };
   // meta.sender = gas payer: must match coin-table key (try full k:account; some nodes key by it)
   // If you see "No value found in table coin_coin-table": account has no KDA on mainnet01 chain 1 — fund it first.
   const tx = Pact.builder
     .execution(`(coin.transfer "${account}" "${TEST_TRANSFER_RECIPIENT}" 10.0)`)
-    .addSigner(pk, (s) => [
+    .addSigner(signer, (s) => [
       s("coin.GAS"),
       s("coin.TRANSFER", account, TEST_TRANSFER_RECIPIENT, amountCap),
     ])
@@ -256,6 +348,23 @@ export function signingPubKeyForAccount(account: string, walletPubKey: string): 
   return walletPubKey.trim();
 }
 
+/** Signer object for addSigner — include `address` so Ecko scopes signatures to meta.sender / enforce-guard. */
+export function signerPayloadForAccount(
+  account: string,
+  walletPubKey: string
+): { pubKey: string; address: string; scheme: "ED25519" | "WebAuthn" } {
+  const addr = account.trim();
+  const w = walletPubKey.trim();
+  if (w.toUpperCase().startsWith("WEBAUTHN")) {
+    return { pubKey: w, address: addr, scheme: "WebAuthn" };
+  }
+  return {
+    pubKey: signingPubKeyForAccount(addr, w),
+    address: addr,
+    scheme: "ED25519",
+  };
+}
+
 /* ---------- CREATE OFFER (trustless: id, creator, amount, side; details off-chain) ---------- */
 /* Contract: (defun create-offer (id creator amount side)) */
 
@@ -266,12 +375,12 @@ export function buildCreateOfferTx(
   creatorPubKey: string,
   side: "BUY" | "SELL"
 ) {
-  const pk = signingPubKeyForAccount(creatorAccount, creatorPubKey);
+  const signer = signerPayloadForAccount(creatorAccount, creatorPubKey);
   const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.create-offer "${offerId}" "${creatorAccount}" ${amount.toFixed(8)} "${side}")`;
 
   return Pact.builder
     .execution(pactCode)
-    .addSigner(pk, (signFor) => [signFor("coin.GAS")])
+    .addSigner(signer, (signFor) => [signFor("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: creatorAccount,
@@ -290,10 +399,10 @@ export function buildAcceptOfferTx(
   buyerAccount: string,
   buyerPubKey: string
 ) {
-  const pk = signingPubKeyForAccount(buyerAccount, buyerPubKey);
+  const signer = signerPayloadForAccount(buyerAccount, buyerPubKey);
   return Pact.builder
     .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.accept-offer "${offerId}")`)
-    .addSigner(pk, (s) => [s("coin.GAS")])
+    .addSigner(signer, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: buyerAccount,
@@ -347,11 +456,11 @@ export function buildDepositTx(
   depositorPubKey: string,
   vaultAccount: string
 ) {
-  const pk = signingPubKeyForAccount(depositorAccount, depositorPubKey);
+  const signer = signerPayloadForAccount(depositorAccount, depositorPubKey);
   const amountDecimal = { decimal: amount.toFixed(8) };
   return Pact.builder
     .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.deposit "${offerId}")`)
-    .addSigner(pk, (s) => [
+    .addSigner(signer, (s) => [
       s("coin.GAS"),
       s("coin.TRANSFER", depositorAccount, vaultAccount, amountDecimal),
     ])
@@ -373,10 +482,10 @@ export function buildMarkPaidTx(
   buyerAccount: string,
   buyerPubKey: string
 ) {
-  const pk = signingPubKeyForAccount(buyerAccount, buyerPubKey);
+  const signer = signerPayloadForAccount(buyerAccount, buyerPubKey);
   return Pact.builder
     .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.mark-paid "${offerId}")`)
-    .addSigner(pk, (s) => [s("coin.GAS")])
+    .addSigner(signer, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: buyerAccount,
@@ -398,12 +507,12 @@ export function buildReleaseTx(
   amountFromEscrow: number,
   vaultAccount: string
 ) {
-  const pk = signingPubKeyForAccount(callerAccount, callerPubKey);
+  const signer = signerPayloadForAccount(callerAccount, callerPubKey);
   const safeId = offerId.replace(/"/g, '\\"');
   const amountDecimal = { decimal: amountFromEscrow.toFixed(8) };
   return Pact.builder
     .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.release "${safeId}")`)
-    .addSigner(pk, (s) => [
+    .addSigner(signer, (s) => [
       s("coin.GAS"),
       s("coin.TRANSFER", vaultAccount, recipientAccount, amountDecimal),
     ])
@@ -428,12 +537,12 @@ export function buildRefundTx(
   amountFromEscrow: number,
   vaultAccount: string
 ) {
-  const pk = signingPubKeyForAccount(arbiterAccount, arbiterPubKey);
+  const signer = signerPayloadForAccount(arbiterAccount, arbiterPubKey);
   const safeId = offerId.replace(/"/g, '\\"');
   const amountDecimal = { decimal: amountFromEscrow.toFixed(8) };
   return Pact.builder
     .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.refund "${safeId}")`)
-    .addSigner(pk, (s) => [
+    .addSigner(signer, (s) => [
       s("coin.GAS"),
       s("coin.TRANSFER", vaultAccount, refundRecipient, amountDecimal),
     ])
@@ -452,13 +561,13 @@ export function buildRefundTx(
 /* Kadena requires create-table in the DEPLOYMENT tx, signed by the deployer. See DEPLOY.md. */
 /* GOVERNANCE enforces (read-msg "sender") = DEPLOYER constant; add "sender" = deployer account. */
 export function buildInitTx(senderAccount: string, senderPubKey: string) {
-  const pk = signingPubKeyForAccount(senderAccount, senderPubKey);
+  const signer = signerPayloadForAccount(senderAccount, senderPubKey);
   const govCap = `${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.GOVERNANCE`;
   const createTableCode = `(with-capability (${govCap}) (create-table ${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.escrows))`;
   return Pact.builder
     .execution(createTableCode)
     .addData("sender", senderAccount)
-    .addSigner(pk, (s) => [s("coin.GAS"), s(govCap)])
+    .addSigner(signer, (s) => [s("coin.GAS"), s(govCap)])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount,
@@ -480,11 +589,11 @@ export function buildInitAllTx(senderAccount: string, senderPubKey: string) {
   (create-table ${ns}.${mod}.reputation)
   (create-table ${ns}.${mod}.config)
   (${ns}.${mod}.init-config))`;
-  const pk = signingPubKeyForAccount(senderAccount, senderPubKey);
+  const signer = signerPayloadForAccount(senderAccount, senderPubKey);
   return Pact.builder
     .execution(pactCode)
     .addData("sender", senderAccount)
-    .addSigner(pk, (s) => [s("coin.GAS"), s(govCap)])
+    .addSigner(signer, (s) => [s("coin.GAS"), s(govCap)])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount,
@@ -503,10 +612,10 @@ export function buildCloseOfferTx(
   creatorAccount: string,
   creatorPubKey: string
 ) {
-  const pk = signingPubKeyForAccount(creatorAccount, creatorPubKey);
+  const signer = signerPayloadForAccount(creatorAccount, creatorPubKey);
   return Pact.builder
     .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.close-offer "${offerId}")`)
-    .addSigner(pk, (s) => [s("coin.GAS")])
+    .addSigner(signer, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: creatorAccount,
@@ -525,10 +634,10 @@ export function buildDeleteOfferTx(
   creatorAccount: string,
   creatorPubKey: string
 ) {
-  const pk = signingPubKeyForAccount(creatorAccount, creatorPubKey);
+  const signer = signerPayloadForAccount(creatorAccount, creatorPubKey);
   return Pact.builder
     .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.delete-offer "${offerId}")`)
-    .addSigner(pk, (s) => [s("coin.GAS")])
+    .addSigner(signer, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: creatorAccount,
@@ -550,11 +659,11 @@ export function buildTimeoutFundedRefundTx(
   amount: number,
   vaultAccount: string
 ) {
-  const pk = signingPubKeyForAccount(sellerAccount, sellerPubKey);
+  const signer = signerPayloadForAccount(sellerAccount, sellerPubKey);
   const amountDecimal = { decimal: amount.toFixed(8) };
   return Pact.builder
     .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.timeout-funded-refund "${offerId}")`)
-    .addSigner(pk, (s) => [
+    .addSigner(signer, (s) => [
       s("coin.GAS"),
       s("coin.TRANSFER", vaultAccount, refundRecipient, amountDecimal),
     ])
@@ -575,10 +684,10 @@ export function buildTimeoutPaidDisputeTx(
   callerAccount: string,
   callerPubKey: string
 ) {
-  const pk = signingPubKeyForAccount(callerAccount, callerPubKey);
+  const signer = signerPayloadForAccount(callerAccount, callerPubKey);
   return Pact.builder
     .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.timeout-paid-dispute "${offerId}")`)
-    .addSigner(pk, (s) => [s("coin.GAS")])
+    .addSigner(signer, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: callerAccount,
@@ -602,13 +711,13 @@ export function getAccountExplorerUrl(account: string): string {
 
 /* ---------- ADMIN: init config (GOVERNANCE; run once after deploy) ---------- */
 export function buildInitConfigTx(senderAccount: string, senderPubKey: string) {
-  const pk = signingPubKeyForAccount(senderAccount, senderPubKey);
+  const signer = signerPayloadForAccount(senderAccount, senderPubKey);
   const govCap = `${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.GOVERNANCE`;
   const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.init-config)`;
   return Pact.builder
     .execution(`(with-capability (${govCap}) ${pactCode})`)
     .addData("sender", senderAccount)
-    .addSigner(pk, (s) => [s("coin.GAS"), s(govCap)])
+    .addSigner(signer, (s) => [s("coin.GAS"), s(govCap)])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount,
@@ -630,12 +739,12 @@ export function buildSetConfigTx(
   adminPubKey: string
 ) {
   const govCap = `${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.GOVERNANCE`;
-  const pk = signingPubKeyForAccount(adminAccount, adminPubKey);
+  const signer = signerPayloadForAccount(adminAccount, adminPubKey);
   const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.set-config "${arbiter}" ${t1Seconds} ${t2Seconds} ${t3Seconds})`;
   return Pact.builder
     .execution(`(with-capability (${govCap}) ${pactCode})`)
     .addData("sender", adminAccount)
-    .addSigner(pk, (s) => [s("coin.GAS"), s(govCap)])
+    .addSigner(signer, (s) => [s("coin.GAS"), s(govCap)])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: adminAccount,
@@ -884,7 +993,7 @@ export function buildProfileAuthTx(wallet: string, publicKey: string) {
     throw new Error("wallet must match k:pubKey");
   }
   const nonce = Date.now();
-  const pk = signingPubKeyForAccount(wallet, publicKey);
+  const signer = signerPayloadForAccount(wallet, publicKey);
   return Pact.builder
     .execution("(identity true)")
     .addData("profile-auth", {
@@ -892,7 +1001,7 @@ export function buildProfileAuthTx(wallet: string, publicKey: string) {
       wallet,
       nonce,
     })
-    .addSigner(pk, (s) => [s("coin.GAS")])
+    .addSigner(signer, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: wallet,

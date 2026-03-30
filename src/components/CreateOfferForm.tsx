@@ -7,14 +7,17 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useWallet } from "@/hooks/useWallet";
-import { 
-  CONTRACT_NAMESPACE,
-  CONTRACT_MODULE,
-  buildCreateOfferTx, 
-  signTransaction, 
+import {
+  buildCreateOfferTx,
+  signTransaction,
   submitTransaction,
   pollTransaction,
   getChainwebDebugInfo,
+  preflightSignedTransaction,
+  describePactFailure,
+  isPactExecutionFailure,
+  readCoinDetailsLocal,
+  CHAIN_ID,
 } from "@/lib/kadena";
 import { putOfferDetails } from "@/lib/offerDetailsApi";
 import { Plus, Loader2, ShoppingCart, Store, Info } from "lucide-react";
@@ -88,6 +91,13 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
     await new Promise((r) => setTimeout(r, 0));
 
     try {
+      const coinDetails = await readCoinDetailsLocal(account.account);
+      if (!coinDetails) {
+        throw new Error(
+          `No coin account on chain ${CHAIN_ID} for ${account.account}. Fund this account on this chain first.`
+        );
+      }
+
       // On-chain first: create-offer (id, creator, amount, side only)
       const tx = buildCreateOfferTx(
         offerId,
@@ -98,24 +108,41 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
       );
 
       const signedTx = await signTransaction(tx);
+
+      let preflightResult: unknown;
+      try {
+        preflightResult = await preflightSignedTransaction(signedTx);
+      } catch (preflightErr) {
+        console.warn(
+          "[CreateOffer] Preflight RPC failed (node may not support signed preflight) — submitting anyway:",
+          preflightErr
+        );
+        preflightResult = null;
+      }
+
+      if (preflightResult != null && isPactExecutionFailure(preflightResult)) {
+        const detail = describePactFailure(preflightResult, {
+          account: account.account,
+          operation: "create-offer (preflight)",
+        });
+        console.error("[CreateOffer] Preflight failure — raw:", JSON.stringify(preflightResult, null, 2));
+        console.error("[CreateOffer] Chain API:", getChainwebDebugInfo());
+        throw new Error(detail);
+      }
+
       console.debug("[CreateOffer] Sending create-offer tx — API:", getChainwebDebugInfo());
       const requestKey = await submitTransaction(signedTx);
       console.debug("[CreateOffer] Send OK, requestKey:", requestKey);
 
       const txResult = await pollTransaction(requestKey);
-      const res = txResult?.result;
-      if (res?.status === "failure") {
-        let errMsg = "Transaction failed on-chain";
-        const e = res.error;
-        if (typeof e === "string") errMsg = e;
-        else if (e && typeof e === "object") {
-          const o = e as Record<string, unknown>;
-          errMsg = String(o.message ?? o.msg ?? o.info ?? o.detail ?? errMsg);
-        }
-        // Debug: full chain response and API used (for "read-only" / node issues)
+      if (isPactExecutionFailure(txResult)) {
+        const detail = describePactFailure(txResult, {
+          account: account.account,
+          operation: "create-offer",
+        });
         console.error("[CreateOffer] On-chain failure — full poll result:", JSON.stringify(txResult, null, 2));
         console.error("[CreateOffer] Chain API used:", getChainwebDebugInfo());
-        throw new Error(`On-chain: ${errMsg}`);
+        throw new Error(detail);
       }
 
       // Then save off-chain offer details (price, limits, payment method)
