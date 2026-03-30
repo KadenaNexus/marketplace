@@ -214,12 +214,13 @@ const TEST_TRANSFER_RECIPIENT = "k:665976b8f985c0119c3afa74115fde19f71309cc85428
  * @returns requestKey
  */
 export async function sendTestTransfer(account: string, publicKey: string): Promise<string> {
+  const pk = signingPubKeyForAccount(account, publicKey);
   const amountCap = { decimal: "10" };
   // meta.sender = gas payer: must match coin-table key (try full k:account; some nodes key by it)
   // If you see "No value found in table coin_coin-table": account has no KDA on mainnet01 chain 1 — fund it first.
   const tx = Pact.builder
     .execution(`(coin.transfer "${account}" "${TEST_TRANSFER_RECIPIENT}" 10.0)`)
-    .addSigner(publicKey, (s) => [
+    .addSigner(pk, (s) => [
       s("coin.GAS"),
       s("coin.TRANSFER", account, TEST_TRANSFER_RECIPIENT, amountCap),
     ])
@@ -241,6 +242,20 @@ export async function sendTestTransfer(account: string, publicKey: string): Prom
    TRANSACTION BUILDERS (ALL OF THEM)
 ============================================================ */
 
+/**
+ * Pubkey for addSigner must match coin.details for `account` or enforce-guard fails
+ * ("Keyset failure (keys-all)"). `k:` accounts embed the 64-hex key — prefer that over
+ * wallet-reported key when casing/format differs.
+ */
+export function signingPubKeyForAccount(account: string, walletPubKey: string): string {
+  const acc = account.trim();
+  const fromK = /^k:([0-9a-fA-F]{64})$/i.exec(acc);
+  if (fromK) return fromK[1].toLowerCase();
+  const w = walletPubKey.replace(/^0x/i, "").trim();
+  if (/^[0-9a-fA-F]{64}$/i.test(w)) return w.toLowerCase();
+  return walletPubKey.trim();
+}
+
 /* ---------- CREATE OFFER (trustless: id, creator, amount, side; details off-chain) ---------- */
 /* Contract: (defun create-offer (id creator amount side)) */
 
@@ -251,11 +266,12 @@ export function buildCreateOfferTx(
   creatorPubKey: string,
   side: "BUY" | "SELL"
 ) {
+  const pk = signingPubKeyForAccount(creatorAccount, creatorPubKey);
   const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.create-offer "${offerId}" "${creatorAccount}" ${amount.toFixed(8)} "${side}")`;
 
   return Pact.builder
     .execution(pactCode)
-    .addSigner(creatorPubKey, (signFor) => [signFor("coin.GAS")])
+    .addSigner(pk, (signFor) => [signFor("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: creatorAccount,
@@ -274,9 +290,10 @@ export function buildAcceptOfferTx(
   buyerAccount: string,
   buyerPubKey: string
 ) {
+  const pk = signingPubKeyForAccount(buyerAccount, buyerPubKey);
   return Pact.builder
     .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.accept-offer "${offerId}")`)
-    .addSigner(buyerPubKey, (s) => [s("coin.GAS")])
+    .addSigner(pk, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: buyerAccount,
@@ -330,10 +347,11 @@ export function buildDepositTx(
   depositorPubKey: string,
   vaultAccount: string
 ) {
+  const pk = signingPubKeyForAccount(depositorAccount, depositorPubKey);
   const amountDecimal = { decimal: amount.toFixed(8) };
   return Pact.builder
     .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.deposit "${offerId}")`)
-    .addSigner(depositorPubKey, (s) => [
+    .addSigner(pk, (s) => [
       s("coin.GAS"),
       s("coin.TRANSFER", depositorAccount, vaultAccount, amountDecimal),
     ])
@@ -355,9 +373,10 @@ export function buildMarkPaidTx(
   buyerAccount: string,
   buyerPubKey: string
 ) {
+  const pk = signingPubKeyForAccount(buyerAccount, buyerPubKey);
   return Pact.builder
     .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.mark-paid "${offerId}")`)
-    .addSigner(buyerPubKey, (s) => [s("coin.GAS")])
+    .addSigner(pk, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: buyerAccount,
@@ -379,11 +398,12 @@ export function buildReleaseTx(
   amountFromEscrow: number,
   vaultAccount: string
 ) {
+  const pk = signingPubKeyForAccount(callerAccount, callerPubKey);
   const safeId = offerId.replace(/"/g, '\\"');
   const amountDecimal = { decimal: amountFromEscrow.toFixed(8) };
   return Pact.builder
     .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.release "${safeId}")`)
-    .addSigner(callerPubKey, (s) => [
+    .addSigner(pk, (s) => [
       s("coin.GAS"),
       s("coin.TRANSFER", vaultAccount, recipientAccount, amountDecimal),
     ])
@@ -408,11 +428,12 @@ export function buildRefundTx(
   amountFromEscrow: number,
   vaultAccount: string
 ) {
+  const pk = signingPubKeyForAccount(arbiterAccount, arbiterPubKey);
   const safeId = offerId.replace(/"/g, '\\"');
   const amountDecimal = { decimal: amountFromEscrow.toFixed(8) };
   return Pact.builder
     .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.refund "${safeId}")`)
-    .addSigner(arbiterPubKey, (s) => [
+    .addSigner(pk, (s) => [
       s("coin.GAS"),
       s("coin.TRANSFER", vaultAccount, refundRecipient, amountDecimal),
     ])
@@ -431,12 +452,13 @@ export function buildRefundTx(
 /* Kadena requires create-table in the DEPLOYMENT tx, signed by the deployer. See DEPLOY.md. */
 /* GOVERNANCE enforces (read-msg "sender") = DEPLOYER constant; add "sender" = deployer account. */
 export function buildInitTx(senderAccount: string, senderPubKey: string) {
+  const pk = signingPubKeyForAccount(senderAccount, senderPubKey);
   const govCap = `${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.GOVERNANCE`;
   const createTableCode = `(with-capability (${govCap}) (create-table ${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.escrows))`;
   return Pact.builder
     .execution(createTableCode)
     .addData("sender", senderAccount)
-    .addSigner(senderPubKey, (s) => [s("coin.GAS"), s(govCap)])
+    .addSigner(pk, (s) => [s("coin.GAS"), s(govCap)])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount,
@@ -458,10 +480,11 @@ export function buildInitAllTx(senderAccount: string, senderPubKey: string) {
   (create-table ${ns}.${mod}.reputation)
   (create-table ${ns}.${mod}.config)
   (${ns}.${mod}.init-config))`;
+  const pk = signingPubKeyForAccount(senderAccount, senderPubKey);
   return Pact.builder
     .execution(pactCode)
     .addData("sender", senderAccount)
-    .addSigner(senderPubKey, (s) => [s("coin.GAS"), s(govCap)])
+    .addSigner(pk, (s) => [s("coin.GAS"), s(govCap)])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount,
@@ -480,9 +503,10 @@ export function buildCloseOfferTx(
   creatorAccount: string,
   creatorPubKey: string
 ) {
+  const pk = signingPubKeyForAccount(creatorAccount, creatorPubKey);
   return Pact.builder
     .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.close-offer "${offerId}")`)
-    .addSigner(creatorPubKey, (s) => [s("coin.GAS")])
+    .addSigner(pk, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: creatorAccount,
@@ -501,9 +525,10 @@ export function buildDeleteOfferTx(
   creatorAccount: string,
   creatorPubKey: string
 ) {
+  const pk = signingPubKeyForAccount(creatorAccount, creatorPubKey);
   return Pact.builder
     .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.delete-offer "${offerId}")`)
-    .addSigner(creatorPubKey, (s) => [s("coin.GAS")])
+    .addSigner(pk, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: creatorAccount,
@@ -525,10 +550,11 @@ export function buildTimeoutFundedRefundTx(
   amount: number,
   vaultAccount: string
 ) {
+  const pk = signingPubKeyForAccount(sellerAccount, sellerPubKey);
   const amountDecimal = { decimal: amount.toFixed(8) };
   return Pact.builder
     .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.timeout-funded-refund "${offerId}")`)
-    .addSigner(sellerPubKey, (s) => [
+    .addSigner(pk, (s) => [
       s("coin.GAS"),
       s("coin.TRANSFER", vaultAccount, refundRecipient, amountDecimal),
     ])
@@ -549,9 +575,10 @@ export function buildTimeoutPaidDisputeTx(
   callerAccount: string,
   callerPubKey: string
 ) {
+  const pk = signingPubKeyForAccount(callerAccount, callerPubKey);
   return Pact.builder
     .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.timeout-paid-dispute "${offerId}")`)
-    .addSigner(callerPubKey, (s) => [s("coin.GAS")])
+    .addSigner(pk, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: callerAccount,
@@ -575,12 +602,13 @@ export function getAccountExplorerUrl(account: string): string {
 
 /* ---------- ADMIN: init config (GOVERNANCE; run once after deploy) ---------- */
 export function buildInitConfigTx(senderAccount: string, senderPubKey: string) {
+  const pk = signingPubKeyForAccount(senderAccount, senderPubKey);
   const govCap = `${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.GOVERNANCE`;
   const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.init-config)`;
   return Pact.builder
     .execution(`(with-capability (${govCap}) ${pactCode})`)
     .addData("sender", senderAccount)
-    .addSigner(senderPubKey, (s) => [s("coin.GAS"), s(govCap)])
+    .addSigner(pk, (s) => [s("coin.GAS"), s(govCap)])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount,
@@ -602,11 +630,12 @@ export function buildSetConfigTx(
   adminPubKey: string
 ) {
   const govCap = `${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.GOVERNANCE`;
+  const pk = signingPubKeyForAccount(adminAccount, adminPubKey);
   const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.set-config "${arbiter}" ${t1Seconds} ${t2Seconds} ${t3Seconds})`;
   return Pact.builder
     .execution(`(with-capability (${govCap}) ${pactCode})`)
     .addData("sender", adminAccount)
-    .addSigner(adminPubKey, (s) => [s("coin.GAS"), s(govCap)])
+    .addSigner(pk, (s) => [s("coin.GAS"), s(govCap)])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: adminAccount,
@@ -855,6 +884,7 @@ export function buildProfileAuthTx(wallet: string, publicKey: string) {
     throw new Error("wallet must match k:pubKey");
   }
   const nonce = Date.now();
+  const pk = signingPubKeyForAccount(wallet, publicKey);
   return Pact.builder
     .execution("(identity true)")
     .addData("profile-auth", {
@@ -862,7 +892,7 @@ export function buildProfileAuthTx(wallet: string, publicKey: string) {
       wallet,
       nonce,
     })
-    .addSigner(publicKey, (s) => [s("coin.GAS")])
+    .addSigner(pk, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: wallet,
