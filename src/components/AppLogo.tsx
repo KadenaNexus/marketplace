@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 
 /**
- * Custom app logo mark — Kadena P2P Escrow.
+ * Custom app logo mark — KadenaEscrow.
  * Hexagon (block) + K + escrow bars; distinct from generic icon packs.
  */
 export function AppLogo({
@@ -16,7 +16,7 @@ export function AppLogo({
     <Link
       to="/"
       className={`inline-flex items-center gap-3 no-underline text-foreground hover:opacity-90 transition-opacity ${className}`}
-      aria-label="Kadena P2P Escrow — Home"
+      aria-label="KadenaEscrow – Decentralized P2P Trading Marketplace — Home"
     >
       <span className="relative flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-primary/15 ring-1 ring-primary/20">
         <svg
@@ -52,7 +52,9 @@ export function AppLogo({
         </svg>
       </span>
       <div>
-        <span className="font-bold text-lg tracking-tight">Kadena P2P Escrow</span>
+        <span className="font-bold text-base sm:text-lg tracking-tight leading-snug">
+          KadenaEscrow – Decentralized P2P Trading Marketplace
+        </span>
         <p className="text-xs text-muted-foreground font-mono leading-tight" style={{ fontFamily: "var(--font-mono)" }}>
           {subtitle ?? "Secure • Trustless"}
         </p>

@@ -29,16 +29,15 @@ import {
   buildRefundTx,
   buildCloseOfferTx,
   buildDeleteOfferTx,
-  buildTimeoutAcceptedCloseTx,
   buildTimeoutFundedRefundTx,
   buildTimeoutPaidDisputeTx,
   buildProfileAuthTx,
+  getEscrowVaultAccount,
   getTxExplorerUrl,
   getReputation,
   signTransaction,
   submitTransaction,
   pollTransaction,
-  T1_SECONDS,
   T2_SECONDS,
   T3_SECONDS,
   type Escrow,
@@ -475,10 +474,11 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
     );
   };
 
-  const handleDeposit = () => {
+  const handleDeposit = async () => {
     if (!account || !selectedEscrow) return;
-    executeAction("Deposit", () => 
-      buildDepositTx(selectedEscrow.offerId, selectedEscrow.amount, account.account, account.publicKey)
+    const vaultAccount = await getEscrowVaultAccount(selectedEscrow.offerId);
+    executeAction("Deposit", () =>
+      buildDepositTx(selectedEscrow.offerId, selectedEscrow.amount, account.account, account.publicKey, vaultAccount)
     );
   };
 
@@ -489,21 +489,22 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
     );
   };
 
-  const handleRelease = () => {
+  const handleRelease = async () => {
     if (!account || !selectedEscrow) return;
     const releaseRecipient = selectedEscrow.side === "SELL" ? selectedEscrow.buyer! : selectedEscrow.creator;
+    const vaultAccount = await getEscrowVaultAccount(selectedEscrow.offerId);
     executeAction("Release", () =>
-      buildReleaseTx(selectedEscrow.offerId, account.account, account.publicKey, releaseRecipient, selectedEscrow.amount)
+      buildReleaseTx(selectedEscrow.offerId, account.account, account.publicKey, releaseRecipient, selectedEscrow.amount, vaultAccount)
     );
   };
 
-  const handleRefund = () => {
+  const handleRefund = async () => {
     if (!account || !selectedEscrow) return;
-    // Contract: SELL -> refund creator (seller), BUY -> refund buyer (depositor)
     const refundRecipient = selectedEscrow.side === "SELL" ? selectedEscrow.creator : selectedEscrow.buyer;
     if (!refundRecipient) return;
+    const vaultAccount = await getEscrowVaultAccount(selectedEscrow.offerId);
     executeAction("Refund", () =>
-      buildRefundTx(selectedEscrow.offerId, account.account, account.publicKey, refundRecipient, selectedEscrow.amount)
+      buildRefundTx(selectedEscrow.offerId, account.account, account.publicKey, refundRecipient, selectedEscrow.amount, vaultAccount)
     );
   };
 
@@ -527,19 +528,13 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
     if (selectedOfferId === offerId) setSelectedOfferId(null);
   };
 
-  const handleTimeoutAcceptedClose = () => {
-    if (!account || !selectedEscrow) return;
-    executeAction("Timeout: Close (T1)", () =>
-      buildTimeoutAcceptedCloseTx(selectedEscrow.offerId, account.account, account.publicKey)
-    );
-  };
-
-  const handleTimeoutFundedRefund = () => {
+  const handleTimeoutFundedRefund = async () => {
     if (!account || !selectedEscrow) return;
     const refundTo = selectedEscrow.side === "SELL" ? selectedEscrow.creator : selectedEscrow.buyer;
     if (!refundTo) return;
+    const vaultAccount = await getEscrowVaultAccount(selectedEscrow.offerId);
     executeAction("Timeout: Refund (T2)", () =>
-      buildTimeoutFundedRefundTx(selectedEscrow.offerId, account.account, account.publicKey, refundTo, selectedEscrow.amount)
+      buildTimeoutFundedRefundTx(selectedEscrow.offerId, account.account, account.publicKey, refundTo, selectedEscrow.amount, vaultAccount)
     );
   };
 
@@ -560,12 +555,13 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
   const canRefund = (selectedEscrow?.state === "FUNDED" || selectedEscrow?.state === "PAID" || selectedEscrow?.state === "DISPUTED") &&
     account?.account === selectedEscrow?.arbiter &&
     (selectedEscrow?.side === "SELL" || !!selectedEscrow?.buyer);
-  const canCloseOffer = selectedEscrow?.state === "CREATED" && account?.account === selectedEscrow?.creator;
+  const canCloseOffer =
+    (selectedEscrow?.state === "CREATED" || selectedEscrow?.state === "ACCEPTED") &&
+    account?.account === selectedEscrow?.creator;
   const canOpenDispute =
     (account?.account === selectedEscrow?.seller || account?.account === selectedEscrow?.buyer) &&
     (selectedEscrow?.state === "CREATED" || selectedEscrow?.state === "ACCEPTED" || selectedEscrow?.state === "FUNDED" || selectedEscrow?.state === "PAID") &&
     (!existingDispute || existingDispute.status !== "OPEN");
-  const canTimeoutAcceptedClose = selectedEscrow?.state === "ACCEPTED" && !!account?.account && isStepExpired(selectedEscrow.acceptedAt, T1_SECONDS);
   const canTimeoutFundedRefund = selectedEscrow?.state === "FUNDED" && account?.account === selectedEscrow?.seller && isStepExpired(selectedEscrow.fundedAt, T2_SECONDS);
   const canTimeoutPaidDispute = selectedEscrow?.state === "PAID" && !!account?.account && isStepExpired(selectedEscrow.paidAt, T3_SECONDS);
 
@@ -583,7 +579,6 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
   const canReleaseFinal = canRelease && !isInDisputeForParty;
   const canCloseOfferFinal = canCloseOffer && !isInDisputeForParty;
   const canOpenDisputeFinal = canOpenDispute && !isInDisputeForParty;
-  const canTimeoutAcceptedCloseFinal = canTimeoutAcceptedClose && !isInDisputeForParty;
   const canTimeoutFundedRefundFinal = canTimeoutFundedRefund && !isInDisputeForParty;
   const canTimeoutPaidDisputeFinal = canTimeoutPaidDispute && !isInDisputeForParty;
 
@@ -946,22 +941,6 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                   >
                     <AlertTriangle className="h-4 w-4" />
                     Open Dispute
-                  </Button>
-                )}
-
-                {canTimeoutAcceptedCloseFinal && (
-                  <Button 
-                    onClick={handleTimeoutAcceptedClose}
-                    disabled={!!actionLoading}
-                    variant="outline"
-                    className="gap-2"
-                  >
-                    {actionLoading === "Timeout: Close (T1)" ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <XCircle className="h-4 w-4" />
-                    )}
-                    Close (seller did not fund in time)
                   </Button>
                 )}
 

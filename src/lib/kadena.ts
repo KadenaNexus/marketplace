@@ -31,9 +31,23 @@ export const API_HOST = API_CHAINWEB_PACT;
 
 // Must match p2p-escrow.pact: (namespace "X") and (module Y ...). Override via env for custom namespace.
 export const CONTRACT_NAMESPACE =
-  (typeof import.meta.env?.VITE_CONTRACT_NAMESPACE === "string" && import.meta.env.VITE_CONTRACT_NAMESPACE) || "free";
-export const CONTRACT_MODULE =
-  (typeof import.meta.env?.VITE_CONTRACT_MODULE === "string" && import.meta.env.VITE_CONTRACT_MODULE) || "p2p-escrow7";
+  (typeof import.meta.env?.VITE_CONTRACT_NAMESPACE === "string" && import.meta.env.VITE_CONTRACT_NAMESPACE.trim()) ||
+  "free";
+const CONTRACT_MODULE_RAW =
+  (typeof import.meta.env?.VITE_CONTRACT_MODULE === "string" && import.meta.env.VITE_CONTRACT_MODULE.trim()) ||
+  "p2p-escrow7";
+/** Pact under namespace `free` treats bare `fn` as module `free.fn` — never use that as module name. */
+const INVALID_MODULE_NAMES = new Set(
+  ["fn", "module", "namespace", "defun", "defcap", "deftable", "let", "if", "true", "false"].map((s) =>
+    s.toLowerCase()
+  )
+);
+export const CONTRACT_MODULE = INVALID_MODULE_NAMES.has(CONTRACT_MODULE_RAW.toLowerCase())
+  ? (console.error(
+      `[Kadena-NEXUS] VITE_CONTRACT_MODULE="${CONTRACT_MODULE_RAW}" is invalid (reserved in Pact / breaks as free.${CONTRACT_MODULE_RAW}). Using p2p-escrow7. Set VITE_CONTRACT_MODULE to your (module ...) name in p2p-escrow.pact.`
+    ),
+    "p2p-escrow7")
+  : CONTRACT_MODULE_RAW;
 
 export const kadenaClient = createClient(API_HOST);
 
@@ -68,8 +82,7 @@ export type EscrowState =
   | "DELETED"
   | "DISPUTED";
 
-/** Time limits for timed steps (seconds). Match contract T1/T2/T3 (20 minutes). */
-export const T1_SECONDS = 1200;
+/** T2/T3: only after escrow is FUNDED (mark-paid window, then release/dispute). Pre-fund: no contract timers. */
 export const T2_SECONDS = 1200;
 export const T3_SECONDS = 1200;
 
@@ -85,7 +98,7 @@ export interface Escrow {
   amount: number;
   state: EscrowState;
   createdAt?: string;
-  /** ISO timestamp when offer was accepted (for T1 countdown). */
+  /** When offer was accepted (informational; no pre-fund time limits on-chain). */
   acceptedAt?: string;
   /** ISO timestamp when escrow was funded (for T2 countdown). */
   fundedAt?: string;
@@ -230,6 +243,8 @@ export async function sendTestTransfer(account: string, publicKey: string): Prom
 
 /* ---------- CREATE OFFER (trustless only: id, creator, amount, side; details off-chain) ---------- */
 
+const ACTOR_CAP = `${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.ACTOR`;
+
 export function buildCreateOfferTx(
   offerId: string,
   amount: number,
@@ -237,12 +252,11 @@ export function buildCreateOfferTx(
   creatorPubKey: string,
   side: "BUY" | "SELL"
 ) {
-  const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.create-offer "${offerId}" "${creatorAccount}" ${amount.toFixed(8)} "${side}")`;
+  const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.create-offer "${offerId}" "${creatorAccount}" ${amount.toFixed(8)} "${side}" "${creatorAccount}")`;
 
   return Pact.builder
     .execution(pactCode)
-    .addData("sender", creatorAccount)
-    .addSigner(creatorPubKey, (signFor) => [signFor("coin.GAS")])
+    .addSigner(creatorPubKey, (signFor) => [signFor("coin.GAS"), signFor(ACTOR_CAP, creatorAccount)])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: creatorAccount,
@@ -262,9 +276,8 @@ export function buildAcceptOfferTx(
   buyerPubKey: string
 ) {
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.accept-offer "${offerId}")`)
-    .addData("sender", buyerAccount)
-    .addSigner(buyerPubKey, (s) => [s("coin.GAS")])
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.accept-offer "${offerId}" "${buyerAccount}")`)
+    .addSigner(buyerPubKey, (s) => [s("coin.GAS"), s(ACTOR_CAP, buyerAccount)])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: buyerAccount,
@@ -277,23 +290,45 @@ export function buildAcceptOfferTx(
 }
 
 /* ---------- DEPOSIT ---------- */
-/* Vault is created by the contract with a capability user guard (ESCROW_VAULT_DEBIT id).
-   Only the module can transfer from the vault (release/refund); no keyset from client. */
-const VAULT_PREFIX = "p2p-escrow-vault";
+/* Vault is a principal from (create-principal (create-ESCROW_VAULT_DEBIT-guard ...)). Get vault via getEscrowVaultAccount(offerId). */
+
+/** Returns the escrow vault account (principal) for coin.TRANSFER. Call before buildDepositTx/buildReleaseTx/buildRefundTx/buildTimeoutFundedRefundTx. */
+export async function getEscrowVaultAccount(offerId: string): Promise<string> {
+  const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.get-escrow-vault "${offerId.replace(/"/g, '\\"')}")`;
+  const command = Pact.builder
+    .execution(pactCode)
+    .setMeta({
+      chainId: CHAIN_ID,
+      senderAccount: "free",
+      gasLimit: GAS_LIMIT_READ,
+      gasPrice: GAS_PRICE,
+      ttl: 600,
+    })
+    .setNetworkId(NETWORK_ID)
+    .createTransaction();
+  const result = await kadenaClient.local(
+    { cmd: command.cmd, hash: command.hash, sigs: [] },
+    { preflight: false }
+  );
+  if (result.result.status !== "success" || typeof result.result.data !== "string") {
+    throw new Error("Failed to get escrow vault account");
+  }
+  return result.result.data as string;
+}
 
 export function buildDepositTx(
   offerId: string,
   amount: number,
   depositorAccount: string,
-  depositorPubKey: string
+  depositorPubKey: string,
+  vaultAccount: string
 ) {
   const amountDecimal = { decimal: amount.toFixed(8) };
-  const vaultAccount = `${VAULT_PREFIX}-${offerId}`;
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.deposit "${offerId}")`)
-    .addData("sender", depositorAccount)
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.deposit "${offerId}" "${depositorAccount}")`)
     .addSigner(depositorPubKey, (s) => [
       s("coin.GAS"),
+      s(ACTOR_CAP, depositorAccount),
       s("coin.TRANSFER", depositorAccount, vaultAccount, amountDecimal),
     ])
     .setMeta({
@@ -315,9 +350,8 @@ export function buildMarkPaidTx(
   buyerPubKey: string
 ) {
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.mark-paid "${offerId}")`)
-    .addData("sender", buyerAccount)
-    .addSigner(buyerPubKey, (s) => [s("coin.GAS")])
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.mark-paid "${offerId}" "${buyerAccount}")`)
+    .addSigner(buyerPubKey, (s) => [s("coin.GAS"), s(ACTOR_CAP, buyerAccount)])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: buyerAccount,
@@ -330,21 +364,22 @@ export function buildMarkPaidTx(
 }
 
 /* ---------- RELEASE (KDA holder or arbiter; DISPUTED only arbiter) ---------- */
-/* Contract (defun release (offerId:string)). Chain requires coin.TRANSFER(vault, recipient, amount) in sigs. */
+/* Contract (defun release (offerId:string)). Chain requires coin.TRANSFER(vault, recipient, amount) in sigs. Pass vault from getEscrowVaultAccount(offerId). */
 export function buildReleaseTx(
   offerId: string,
   callerAccount: string,
   callerPubKey: string,
   recipientAccount: string,
-  amountFromEscrow: number
+  amountFromEscrow: number,
+  vaultAccount: string
 ) {
   const safeId = offerId.replace(/"/g, '\\"');
-  const vaultAccount = `${VAULT_PREFIX}-${offerId}`;
   const amountDecimal = { decimal: amountFromEscrow.toFixed(8) };
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.release "${safeId}")`)
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.release "${safeId}" "${callerAccount}")`)
     .addSigner(callerPubKey, (s) => [
       s("coin.GAS"),
+      s(ACTOR_CAP, callerAccount),
       s("coin.TRANSFER", vaultAccount, recipientAccount, amountDecimal),
     ])
     .setMeta({
@@ -359,21 +394,22 @@ export function buildReleaseTx(
 }
 
 /* ---------- REFUND (ARBITER only; FUNDED/PAID/DISPUTED; contract: SELL -> refund creator, BUY -> refund buyer) ---------- */
-/* Contract (defun refund (offerId:string)). Chain requires coin.TRANSFER(vault, refundTo, amount) in sigs. */
+/* Contract (defun refund (offerId:string)). Chain requires coin.TRANSFER(vault, refundTo, amount) in sigs. Pass vault from getEscrowVaultAccount(offerId). */
 export function buildRefundTx(
   offerId: string,
   arbiterAccount: string,
   arbiterPubKey: string,
   refundRecipient: string,
-  amountFromEscrow: number
+  amountFromEscrow: number,
+  vaultAccount: string
 ) {
   const safeId = offerId.replace(/"/g, '\\"');
-  const vaultAccount = `${VAULT_PREFIX}-${offerId}`;
   const amountDecimal = { decimal: amountFromEscrow.toFixed(8) };
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.refund "${safeId}")`)
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.refund "${safeId}" "${arbiterAccount}")`)
     .addSigner(arbiterPubKey, (s) => [
       s("coin.GAS"),
+      s(ACTOR_CAP, arbiterAccount),
       s("coin.TRANSFER", vaultAccount, refundRecipient, amountDecimal),
     ])
     .setMeta({
@@ -433,7 +469,7 @@ export function buildInitAllTx(senderAccount: string, senderPubKey: string) {
     .createTransaction();
 }
 
-/* ---------- CLOSE OFFER (creator only, CREATED state; sender must be creator) ---------- */
+/* ---------- CLOSE OFFER (creator only; CREATED or ACCEPTED before funded) ---------- */
 
 export function buildCloseOfferTx(
   offerId: string,
@@ -441,9 +477,8 @@ export function buildCloseOfferTx(
   creatorPubKey: string
 ) {
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.close-offer "${offerId}")`)
-    .addData("sender", creatorAccount)
-    .addSigner(creatorPubKey, (s) => [s("coin.GAS")])
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.close-offer "${offerId}" "${creatorAccount}")`)
+    .addSigner(creatorPubKey, (s) => [s("coin.GAS"), s(ACTOR_CAP, creatorAccount)])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: creatorAccount,
@@ -463,9 +498,8 @@ export function buildDeleteOfferTx(
   creatorPubKey: string
 ) {
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.delete-offer "${offerId}")`)
-    .addData("sender", creatorAccount)
-    .addSigner(creatorPubKey, (s) => [s("coin.GAS")])
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.delete-offer "${offerId}" "${creatorAccount}")`)
+    .addSigner(creatorPubKey, (s) => [s("coin.GAS"), s(ACTOR_CAP, creatorAccount)])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: creatorAccount,
@@ -477,43 +511,22 @@ export function buildDeleteOfferTx(
     .createTransaction();
 }
 
-/* ---------- TIMEOUT: ACCEPTED -> CLOSED (anyone; seller did not fund within T1) ---------- */
-export function buildTimeoutAcceptedCloseTx(
-  offerId: string,
-  callerAccount: string,
-  callerPubKey: string
-) {
-  return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.timeout-accepted-close "${offerId}")`)
-    .addData("sender", callerAccount)
-    .addSigner(callerPubKey, (s) => [s("coin.GAS")])
-    .setMeta({
-      chainId: CHAIN_ID,
-      senderAccount: callerAccount,
-      gasLimit: GAS_LIMIT,
-      gasPrice: GAS_PRICE,
-      ttl: 600,
-    })
-    .setNetworkId(NETWORK_ID)
-    .createTransaction();
-}
-
 /* ---------- TIMEOUT: FUNDED -> REFUNDED (seller only; buyer did not mark paid within T2) ---------- */
-/* Chain requires coin.TRANSFER(vault, refundTo, amount) in sigs. Seller signs to provide the capability. */
+/* Chain requires coin.TRANSFER(vault, refundTo, amount) in sigs. Pass vault from getEscrowVaultAccount(offerId). */
 export function buildTimeoutFundedRefundTx(
   offerId: string,
   sellerAccount: string,
   sellerPubKey: string,
   refundRecipient: string,
-  amount: number
+  amount: number,
+  vaultAccount: string
 ) {
-  const vaultAccount = `${VAULT_PREFIX}-${offerId}`;
   const amountDecimal = { decimal: amount.toFixed(8) };
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.timeout-funded-refund "${offerId}")`)
-    .addData("sender", sellerAccount)
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.timeout-funded-refund "${offerId}" "${sellerAccount}")`)
     .addSigner(sellerPubKey, (s) => [
       s("coin.GAS"),
+      s(ACTOR_CAP, sellerAccount),
       s("coin.TRANSFER", vaultAccount, refundRecipient, amountDecimal),
     ])
     .setMeta({
@@ -534,9 +547,8 @@ export function buildTimeoutPaidDisputeTx(
   callerPubKey: string
 ) {
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.timeout-paid-dispute "${offerId}")`)
-    .addData("sender", callerAccount)
-    .addSigner(callerPubKey, (s) => [s("coin.GAS")])
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.timeout-paid-dispute "${offerId}" "${callerAccount}")`)
+    .addSigner(callerPubKey, (s) => [s("coin.GAS"), s(ACTOR_CAP, callerAccount)])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: callerAccount,
@@ -607,6 +619,17 @@ export function buildSetConfigTx(
    READ-ONLY
 ============================================================ */
 
+/** Contract stores time type; API returns ISO string. Return undefined for empty/epoch (not set). */
+function timeFieldToIsoOrUndefined(v: unknown): string | undefined {
+  if (v == null) return undefined;
+  if (typeof v === "string") {
+    if (v === "" || v.startsWith("1970-01-01")) return undefined;
+    return v;
+  }
+  if (typeof v === "number" && v > 0) return new Date(v * 1000).toISOString();
+  return undefined;
+}
+
 export async function readEscrow(offerId: string): Promise<Escrow | null> {
   const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.get-escrow "${offerId}")`;
 
@@ -642,9 +665,10 @@ export async function readEscrow(offerId: string): Promise<Escrow | null> {
   if (Number.isNaN(amt)) return null;
 
   const side = (typeof o.side === "string" && (o.side === "BUY" || o.side === "SELL")) ? o.side as "BUY" | "SELL" : "SELL";
-  const acceptedAt = typeof o.acceptedAt === "string" ? o.acceptedAt : undefined;
-  const fundedAt = typeof o.fundedAt === "string" ? o.fundedAt : undefined;
-  const paidAt = typeof o.paidAt === "string" ? o.paidAt : undefined;
+  // Contract stores time type; API returns ISO string. Normalize to string for UI; epoch = "not set" -> undefined.
+  const acceptedAt = timeFieldToIsoOrUndefined(o.acceptedAt);
+  const fundedAt = timeFieldToIsoOrUndefined(o.fundedAt);
+  const paidAt = timeFieldToIsoOrUndefined(o.paidAt);
   const creator = typeof o.creator === "string" ? o.creator : "";
   const buyerField = typeof o.buyer === "string" ? o.buyer : null;
   const seller = side === "SELL" ? creator : (buyerField ?? "");

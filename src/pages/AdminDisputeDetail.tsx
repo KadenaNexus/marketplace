@@ -18,6 +18,7 @@ import {
   buildReleaseTx,
   buildRefundTx,
   buildTimeoutPaidDisputeTx,
+  getEscrowVaultAccount,
   submitTransaction,
   pollTransaction,
   T3_SECONDS,
@@ -182,7 +183,8 @@ export default function AdminDisputeDetail() {
     if (!confirm(`Release ${escrow.amount} KDA to the buyer (${recipient.slice(0, 12)}…)? This will complete the escrow on-chain.`)) return;
     setReleaseToBuyerLoading(true);
     try {
-      const tx = buildReleaseTx(offerId, account.account, account.publicKey, recipient, escrow.amount);
+      const vaultAccount = await getEscrowVaultAccount(offerId);
+      const tx = buildReleaseTx(offerId, account.account, account.publicKey, recipient, escrow.amount, vaultAccount);
       const signedTx = await signTransaction(tx);
       const requestKey = await submitTransaction(signedTx);
       const result = await pollTransaction(requestKey);
@@ -222,7 +224,8 @@ export default function AdminDisputeDetail() {
     if (!confirm(`Refund ${escrow.amount} KDA to the seller (${refundTo.slice(0, 12)}…)? This will refund the escrow on-chain.`)) return;
     setReleaseToSellerLoading(true);
     try {
-      const tx = buildRefundTx(offerId, account.account, account.publicKey, refundTo, escrow.amount);
+      const vaultAccount = await getEscrowVaultAccount(offerId);
+      const tx = buildRefundTx(offerId, account.account, account.publicKey, refundTo, escrow.amount, vaultAccount);
       const signedTx = await signTransaction(tx);
       const requestKey = await submitTransaction(signedTx);
       const result = await pollTransaction(requestKey);

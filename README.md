@@ -102,7 +102,7 @@ If you see CORS errors in the browser, the API may not allow requests from your 
 The Pact module is `free.p2p-escrow5` (see `CONTRACT_MODULE` in `src/lib/kadena.ts`; must match `(module ...)` in `p2p-escrow.pact`). It provides:
 
 - **Strict state machine** — CREATED → ACCEPTED → FUNDED → PAID → COMPLETED (or REFUNDED/CLOSED/DISPUTED via timeouts or arbiter).
-- **Timed transitions** — T1/T2/T3 (default 10 min each).
+- **Timed transitions (only after funded)** — T2 (mark paid) and T3 (release / dispute) start once KDA is in escrow. Before funding, creator can close the offer (CREATED or ACCEPTED); no contract time limits pre-fund. Config still stores `t1` for compatibility; it is unused for logic.
 - **Admin** — `init-config` and `set-config(arbiter, t1, t2, t3)` (GOVERNANCE). GOVERNANCE is restricted: only a signer that satisfies the keyset `admin-keyset` (provided in tx data) can grant it — so only the admin can upgrade the module or run init/set-config.
 - **Vault** — Per-offer accounts use a **capability user guard** (not a keyset). Only the module can transfer from vaults (release/refund); see [Kadena deprecation notice for module guards](https://medium.com/kadena-io/deprecation-notice-for-module-guards-and-pact-guards-2efbf64f488f).
 
