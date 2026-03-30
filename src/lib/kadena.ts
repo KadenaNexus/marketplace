@@ -241,9 +241,8 @@ export async function sendTestTransfer(account: string, publicKey: string): Prom
    TRANSACTION BUILDERS (ALL OF THEM)
 ============================================================ */
 
-/* ---------- CREATE OFFER (trustless only: id, creator, amount, side; details off-chain) ---------- */
-
-const ACTOR_CAP = `${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.ACTOR`;
+/* ---------- CREATE OFFER (trustless: id, creator, amount, side; details off-chain) ---------- */
+/* Contract: (defun create-offer (id creator amount side)) */
 
 export function buildCreateOfferTx(
   offerId: string,
@@ -252,11 +251,11 @@ export function buildCreateOfferTx(
   creatorPubKey: string,
   side: "BUY" | "SELL"
 ) {
-  const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.create-offer "${offerId}" "${creatorAccount}" ${amount.toFixed(8)} "${side}" "${creatorAccount}")`;
+  const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.create-offer "${offerId}" "${creatorAccount}" ${amount.toFixed(8)} "${side}")`;
 
   return Pact.builder
     .execution(pactCode)
-    .addSigner(creatorPubKey, (signFor) => [signFor("coin.GAS"), signFor(ACTOR_CAP, creatorAccount)])
+    .addSigner(creatorPubKey, (signFor) => [signFor("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: creatorAccount,
@@ -268,7 +267,7 @@ export function buildCreateOfferTx(
     .createTransaction();
 }
 
-/* ---------- ACCEPT OFFER (id only; caller becomes the buyer) ---------- */
+/* ---------- ACCEPT OFFER (id only; accepter = tx sender from chain-data) ---------- */
 
 export function buildAcceptOfferTx(
   offerId: string,
@@ -276,8 +275,8 @@ export function buildAcceptOfferTx(
   buyerPubKey: string
 ) {
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.accept-offer "${offerId}" "${buyerAccount}")`)
-    .addSigner(buyerPubKey, (s) => [s("coin.GAS"), s(ACTOR_CAP, buyerAccount)])
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.accept-offer "${offerId}")`)
+    .addSigner(buyerPubKey, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: buyerAccount,
@@ -292,9 +291,17 @@ export function buildAcceptOfferTx(
 /* ---------- DEPOSIT ---------- */
 /* Vault is a principal from (create-principal (create-ESCROW_VAULT_DEBIT-guard ...)). Get vault via getEscrowVaultAccount(offerId). */
 
-/** Returns the escrow vault account (principal) for coin.TRANSFER. Call before buildDepositTx/buildReleaseTx/buildRefundTx/buildTimeoutFundedRefundTx. */
+/** Vault = (create-principal (create-ESCROW_VAULT_DEBIT-guard id amount)); matches on-chain deposit/release/refund. */
 export async function getEscrowVaultAccount(offerId: string): Promise<string> {
-  const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.get-escrow-vault "${offerId.replace(/"/g, '\\"')}")`;
+  const escrow = await readEscrow(offerId);
+  if (!escrow) {
+    throw new Error("Failed to get escrow for vault address");
+  }
+  const safeId = offerId.replace(/"/g, '\\"');
+  const amt = escrow.amount.toFixed(8);
+  const ns = CONTRACT_NAMESPACE;
+  const mod = CONTRACT_MODULE;
+  const pactCode = `(create-principal (${ns}.${mod}.create-ESCROW_VAULT_DEBIT-guard "${safeId}" ${amt}))`;
   const command = Pact.builder
     .execution(pactCode)
     .setMeta({
@@ -325,10 +332,9 @@ export function buildDepositTx(
 ) {
   const amountDecimal = { decimal: amount.toFixed(8) };
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.deposit "${offerId}" "${depositorAccount}")`)
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.deposit "${offerId}")`)
     .addSigner(depositorPubKey, (s) => [
       s("coin.GAS"),
-      s(ACTOR_CAP, depositorAccount),
       s("coin.TRANSFER", depositorAccount, vaultAccount, amountDecimal),
     ])
     .setMeta({
@@ -350,8 +356,8 @@ export function buildMarkPaidTx(
   buyerPubKey: string
 ) {
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.mark-paid "${offerId}" "${buyerAccount}")`)
-    .addSigner(buyerPubKey, (s) => [s("coin.GAS"), s(ACTOR_CAP, buyerAccount)])
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.mark-paid "${offerId}")`)
+    .addSigner(buyerPubKey, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: buyerAccount,
@@ -376,10 +382,9 @@ export function buildReleaseTx(
   const safeId = offerId.replace(/"/g, '\\"');
   const amountDecimal = { decimal: amountFromEscrow.toFixed(8) };
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.release "${safeId}" "${callerAccount}")`)
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.release "${safeId}")`)
     .addSigner(callerPubKey, (s) => [
       s("coin.GAS"),
-      s(ACTOR_CAP, callerAccount),
       s("coin.TRANSFER", vaultAccount, recipientAccount, amountDecimal),
     ])
     .setMeta({
@@ -406,10 +411,9 @@ export function buildRefundTx(
   const safeId = offerId.replace(/"/g, '\\"');
   const amountDecimal = { decimal: amountFromEscrow.toFixed(8) };
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.refund "${safeId}" "${arbiterAccount}")`)
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.refund "${safeId}")`)
     .addSigner(arbiterPubKey, (s) => [
       s("coin.GAS"),
-      s(ACTOR_CAP, arbiterAccount),
       s("coin.TRANSFER", vaultAccount, refundRecipient, amountDecimal),
     ])
     .setMeta({
@@ -477,8 +481,8 @@ export function buildCloseOfferTx(
   creatorPubKey: string
 ) {
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.close-offer "${offerId}" "${creatorAccount}")`)
-    .addSigner(creatorPubKey, (s) => [s("coin.GAS"), s(ACTOR_CAP, creatorAccount)])
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.close-offer "${offerId}")`)
+    .addSigner(creatorPubKey, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: creatorAccount,
@@ -498,8 +502,8 @@ export function buildDeleteOfferTx(
   creatorPubKey: string
 ) {
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.delete-offer "${offerId}" "${creatorAccount}")`)
-    .addSigner(creatorPubKey, (s) => [s("coin.GAS"), s(ACTOR_CAP, creatorAccount)])
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.delete-offer "${offerId}")`)
+    .addSigner(creatorPubKey, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: creatorAccount,
@@ -523,10 +527,9 @@ export function buildTimeoutFundedRefundTx(
 ) {
   const amountDecimal = { decimal: amount.toFixed(8) };
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.timeout-funded-refund "${offerId}" "${sellerAccount}")`)
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.timeout-funded-refund "${offerId}")`)
     .addSigner(sellerPubKey, (s) => [
       s("coin.GAS"),
-      s(ACTOR_CAP, sellerAccount),
       s("coin.TRANSFER", vaultAccount, refundRecipient, amountDecimal),
     ])
     .setMeta({
@@ -547,8 +550,8 @@ export function buildTimeoutPaidDisputeTx(
   callerPubKey: string
 ) {
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.timeout-paid-dispute "${offerId}" "${callerAccount}")`)
-    .addSigner(callerPubKey, (s) => [s("coin.GAS"), s(ACTOR_CAP, callerAccount)])
+    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.timeout-paid-dispute "${offerId}")`)
+    .addSigner(callerPubKey, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: callerAccount,
