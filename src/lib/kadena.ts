@@ -29,13 +29,14 @@ const API_CHAINWEB_PACT =
 
 export const API_HOST = API_CHAINWEB_PACT;
 
-// Must match p2p-escrow.pact: (namespace "X") and (module Y ...). Override via env for custom namespace.
-export const CONTRACT_NAMESPACE =
-  (typeof import.meta.env?.VITE_CONTRACT_NAMESPACE === "string" && import.meta.env.VITE_CONTRACT_NAMESPACE.trim()) ||
-  "free";
+// Must match p2p-escrow.pact. Namespace is optional; allow empty string = root module (no namespace).
+const CONTRACT_NAMESPACE_ENV =
+  typeof import.meta.env?.VITE_CONTRACT_NAMESPACE === "string" ? import.meta.env.VITE_CONTRACT_NAMESPACE : undefined;
+export const CONTRACT_NAMESPACE = (CONTRACT_NAMESPACE_ENV ?? "free").trim();
+
 const CONTRACT_MODULE_RAW =
   (typeof import.meta.env?.VITE_CONTRACT_MODULE === "string" && import.meta.env.VITE_CONTRACT_MODULE.trim()) ||
-  "p2p-escrow7";
+  "p2p-escrow100";
 /** Pact under namespace `free` treats bare `fn` as module `free.fn` — never use that as module name. */
 const INVALID_MODULE_NAMES = new Set(
   ["fn", "module", "namespace", "defun", "defcap", "deftable", "let", "if", "true", "false"].map((s) =>
@@ -44,10 +45,13 @@ const INVALID_MODULE_NAMES = new Set(
 );
 export const CONTRACT_MODULE = INVALID_MODULE_NAMES.has(CONTRACT_MODULE_RAW.toLowerCase())
   ? (console.error(
-      `[Kadena-NEXUS] VITE_CONTRACT_MODULE="${CONTRACT_MODULE_RAW}" is invalid (reserved in Pact / breaks as free.${CONTRACT_MODULE_RAW}). Using p2p-escrow7. Set VITE_CONTRACT_MODULE to your (module ...) name in p2p-escrow.pact.`
+      `[Kadena-NEXUS] VITE_CONTRACT_MODULE="${CONTRACT_MODULE_RAW}" is invalid (reserved in Pact / breaks as free.${CONTRACT_MODULE_RAW}). Using p2p-escrow100. Set VITE_CONTRACT_MODULE to your (module ...) name in p2p-escrow.pact.`
     ),
-    "p2p-escrow7")
+    "p2p-escrow100")
   : CONTRACT_MODULE_RAW;
+
+/** Fully-qualified contract module reference used in pact code. */
+export const CONTRACT_FQN = CONTRACT_NAMESPACE ? `${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}` : CONTRACT_MODULE;
 
 export const kadenaClient = createClient(API_HOST);
 
@@ -376,11 +380,11 @@ export function buildCreateOfferTx(
   side: "BUY" | "SELL"
 ) {
   const signer = signerPayloadForAccount(creatorAccount, creatorPubKey);
-  const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.create-offer "${offerId}" "${creatorAccount}" ${amount.toFixed(8)} "${side}")`;
+  const pactCode = `(${CONTRACT_FQN}.create-offer "${offerId}" "${creatorAccount}" ${amount.toFixed(8)} "${side}")`;
 
   return Pact.builder
     .execution(pactCode)
-    .addSigner(signer, (signFor) => [signFor("coin.GAS")])
+    .addSigner(signer, () => [])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: creatorAccount,
@@ -401,7 +405,7 @@ export function buildAcceptOfferTx(
 ) {
   const signer = signerPayloadForAccount(buyerAccount, buyerPubKey);
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.accept-offer "${offerId}")`)
+    .execution(`(${CONTRACT_FQN}.accept-offer "${offerId}")`)
     .addSigner(signer, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
@@ -459,7 +463,7 @@ export function buildDepositTx(
   const signer = signerPayloadForAccount(depositorAccount, depositorPubKey);
   const amountDecimal = { decimal: amount.toFixed(8) };
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.deposit "${offerId}")`)
+    .execution(`(${CONTRACT_FQN}.deposit "${offerId}")`)
     .addSigner(signer, (s) => [
       s("coin.GAS"),
       s("coin.TRANSFER", depositorAccount, vaultAccount, amountDecimal),
@@ -484,7 +488,7 @@ export function buildMarkPaidTx(
 ) {
   const signer = signerPayloadForAccount(buyerAccount, buyerPubKey);
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.mark-paid "${offerId}")`)
+    .execution(`(${CONTRACT_FQN}.mark-paid "${offerId}")`)
     .addSigner(signer, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
@@ -511,7 +515,7 @@ export function buildReleaseTx(
   const safeId = offerId.replace(/"/g, '\\"');
   const amountDecimal = { decimal: amountFromEscrow.toFixed(8) };
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.release "${safeId}")`)
+    .execution(`(${CONTRACT_FQN}.release "${safeId}")`)
     .addSigner(signer, (s) => [
       s("coin.GAS"),
       s("coin.TRANSFER", vaultAccount, recipientAccount, amountDecimal),
@@ -541,7 +545,7 @@ export function buildRefundTx(
   const safeId = offerId.replace(/"/g, '\\"');
   const amountDecimal = { decimal: amountFromEscrow.toFixed(8) };
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.refund "${safeId}")`)
+    .execution(`(${CONTRACT_FQN}.refund "${safeId}")`)
     .addSigner(signer, (s) => [
       s("coin.GAS"),
       s("coin.TRANSFER", vaultAccount, refundRecipient, amountDecimal),
@@ -562,8 +566,8 @@ export function buildRefundTx(
 /* GOVERNANCE enforces (read-msg "sender") = DEPLOYER constant; add "sender" = deployer account. */
 export function buildInitTx(senderAccount: string, senderPubKey: string) {
   const signer = signerPayloadForAccount(senderAccount, senderPubKey);
-  const govCap = `${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.GOVERNANCE`;
-  const createTableCode = `(with-capability (${govCap}) (create-table ${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.escrows))`;
+  const govCap = `${CONTRACT_FQN}.GOVERNANCE`;
+  const createTableCode = `(with-capability (${govCap}) (create-table ${CONTRACT_FQN}.escrows))`;
   return Pact.builder
     .execution(createTableCode)
     .addData("sender", senderAccount)
@@ -581,7 +585,7 @@ export function buildInitTx(senderAccount: string, senderPubKey: string) {
 
 /** Initialize all tables and config. create-table is only allowed at tx top level; use this block once after deploy with GOVERNANCE key. */
 export function buildInitAllTx(senderAccount: string, senderPubKey: string) {
-  const govCap = `${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.GOVERNANCE`;
+  const govCap = `${CONTRACT_FQN}.GOVERNANCE`;
   const ns = CONTRACT_NAMESPACE;
   const mod = CONTRACT_MODULE;
   const pactCode = `(with-capability (${govCap})
@@ -614,7 +618,7 @@ export function buildCloseOfferTx(
 ) {
   const signer = signerPayloadForAccount(creatorAccount, creatorPubKey);
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.close-offer "${offerId}")`)
+    .execution(`(${CONTRACT_FQN}.close-offer "${offerId}")`)
     .addSigner(signer, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
@@ -636,7 +640,7 @@ export function buildDeleteOfferTx(
 ) {
   const signer = signerPayloadForAccount(creatorAccount, creatorPubKey);
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.delete-offer "${offerId}")`)
+    .execution(`(${CONTRACT_FQN}.delete-offer "${offerId}")`)
     .addSigner(signer, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
@@ -662,7 +666,7 @@ export function buildTimeoutFundedRefundTx(
   const signer = signerPayloadForAccount(sellerAccount, sellerPubKey);
   const amountDecimal = { decimal: amount.toFixed(8) };
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.timeout-funded-refund "${offerId}")`)
+    .execution(`(${CONTRACT_FQN}.timeout-funded-refund "${offerId}")`)
     .addSigner(signer, (s) => [
       s("coin.GAS"),
       s("coin.TRANSFER", vaultAccount, refundRecipient, amountDecimal),
@@ -686,7 +690,7 @@ export function buildTimeoutPaidDisputeTx(
 ) {
   const signer = signerPayloadForAccount(callerAccount, callerPubKey);
   return Pact.builder
-    .execution(`(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.timeout-paid-dispute "${offerId}")`)
+    .execution(`(${CONTRACT_FQN}.timeout-paid-dispute "${offerId}")`)
     .addSigner(signer, (s) => [s("coin.GAS")])
     .setMeta({
       chainId: CHAIN_ID,
@@ -712,8 +716,8 @@ export function getAccountExplorerUrl(account: string): string {
 /* ---------- ADMIN: init config (GOVERNANCE; run once after deploy) ---------- */
 export function buildInitConfigTx(senderAccount: string, senderPubKey: string) {
   const signer = signerPayloadForAccount(senderAccount, senderPubKey);
-  const govCap = `${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.GOVERNANCE`;
-  const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.init-config)`;
+  const govCap = `${CONTRACT_FQN}.GOVERNANCE`;
+  const pactCode = `(${CONTRACT_FQN}.init-config)`;
   return Pact.builder
     .execution(`(with-capability (${govCap}) ${pactCode})`)
     .addData("sender", senderAccount)
@@ -738,9 +742,9 @@ export function buildSetConfigTx(
   adminAccount: string,
   adminPubKey: string
 ) {
-  const govCap = `${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.GOVERNANCE`;
+  const govCap = `${CONTRACT_FQN}.GOVERNANCE`;
   const signer = signerPayloadForAccount(adminAccount, adminPubKey);
-  const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.set-config "${arbiter}" ${t1Seconds} ${t2Seconds} ${t3Seconds})`;
+  const pactCode = `(${CONTRACT_FQN}.set-config "${arbiter}" ${t1Seconds} ${t2Seconds} ${t3Seconds})`;
   return Pact.builder
     .execution(`(with-capability (${govCap}) ${pactCode})`)
     .addData("sender", adminAccount)
@@ -772,7 +776,7 @@ function timeFieldToIsoOrUndefined(v: unknown): string | undefined {
 }
 
 export async function readEscrow(offerId: string): Promise<Escrow | null> {
-  const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.get-escrow "${offerId}")`;
+  const pactCode = `(${CONTRACT_FQN}.get-escrow "${offerId}")`;
 
   const command = Pact.builder
     .execution(pactCode)
@@ -841,7 +845,7 @@ export async function readEscrow(offerId: string): Promise<Escrow | null> {
 
 /** Returns all offer IDs from the contract. */
 export async function listEscrowIds(): Promise<string[]> {
-  const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.list-escrow-ids)`;
+  const pactCode = `(${CONTRACT_FQN}.list-escrow-ids)`;
 
   const command = Pact.builder
     .execution(pactCode)
@@ -911,7 +915,7 @@ export async function listAllEscrows(): Promise<Escrow[]> {
 
 /** On-chain reputation counters only (score calculation & UI off-chain). */
 export async function getReputation(wallet: string): Promise<ChainReputation> {
-  const pactCode = `(${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}.get-reputation "${wallet}")`;
+  const pactCode = `(${CONTRACT_FQN}.get-reputation "${wallet}")`;
   const command = Pact.builder
     .execution(pactCode)
     .setMeta({ chainId: CHAIN_ID, senderAccount: "free", gasLimit: GAS_LIMIT_READ, gasPrice: GAS_PRICE, ttl: 600 })
