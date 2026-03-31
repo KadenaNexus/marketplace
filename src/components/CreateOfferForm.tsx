@@ -125,9 +125,13 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
           account: account.account,
           operation: "create-offer (preflight)",
         });
-        console.error("[CreateOffer] Preflight failure — raw:", JSON.stringify(preflightResult, null, 2));
-        console.error("[CreateOffer] Chain API:", getChainwebDebugInfo());
-        throw new Error(detail);
+        // Preflight is advisory only: some nodes differ from /send semantics.
+        // If /send succeeds, the chain will still record the tx.
+        console.warn("[CreateOffer] Preflight reported failure — submitting anyway:", detail);
+        console.warn("[CreateOffer] Preflight raw:", JSON.stringify(preflightResult, null, 2));
+        toast.warning("Preflight failed, submitting anyway", {
+          description: detail.length > 180 ? detail.slice(0, 180) + "…" : detail,
+        });
       }
 
       console.debug("[CreateOffer] Sending create-offer tx — API:", getChainwebDebugInfo());
