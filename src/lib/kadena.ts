@@ -316,10 +316,7 @@ export async function sendTestTransfer(account: string, publicKey: string): Prom
   // If you see "No value found in table coin_coin-table": account has no KDA on mainnet01 chain 1 — fund it first.
   const tx = Pact.builder
     .execution(`(coin.transfer "${account}" "${TEST_TRANSFER_RECIPIENT}" 10.0)`)
-    .addSigner(signer, (s) => [
-      s("coin.GAS"),
-      s("coin.TRANSFER", account, TEST_TRANSFER_RECIPIENT, amountCap),
-    ])
+    .addSigner(signer, () => [])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: account,
@@ -406,7 +403,7 @@ export function buildAcceptOfferTx(
   const signer = signerPayloadForAccount(buyerAccount, buyerPubKey);
   return Pact.builder
     .execution(`(${CONTRACT_FQN}.accept-offer "${offerId}")`)
-    .addSigner(signer, (s) => [s("coin.GAS")])
+    .addSigner(signer, () => [])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: buyerAccount,
@@ -464,10 +461,7 @@ export function buildDepositTx(
   const amountDecimal = { decimal: amount.toFixed(8) };
   return Pact.builder
     .execution(`(${CONTRACT_FQN}.deposit "${offerId}")`)
-    .addSigner(signer, (s) => [
-      s("coin.GAS"),
-      s("coin.TRANSFER", depositorAccount, vaultAccount, amountDecimal),
-    ])
+    .addSigner(signer, () => [])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: depositorAccount,
@@ -489,7 +483,7 @@ export function buildMarkPaidTx(
   const signer = signerPayloadForAccount(buyerAccount, buyerPubKey);
   return Pact.builder
     .execution(`(${CONTRACT_FQN}.mark-paid "${offerId}")`)
-    .addSigner(signer, (s) => [s("coin.GAS")])
+    .addSigner(signer, () => [])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: buyerAccount,
@@ -516,10 +510,7 @@ export function buildReleaseTx(
   const amountDecimal = { decimal: amountFromEscrow.toFixed(8) };
   return Pact.builder
     .execution(`(${CONTRACT_FQN}.release "${safeId}")`)
-    .addSigner(signer, (s) => [
-      s("coin.GAS"),
-      s("coin.TRANSFER", vaultAccount, recipientAccount, amountDecimal),
-    ])
+    .addSigner(signer, () => [])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: callerAccount,
@@ -546,10 +537,7 @@ export function buildRefundTx(
   const amountDecimal = { decimal: amountFromEscrow.toFixed(8) };
   return Pact.builder
     .execution(`(${CONTRACT_FQN}.refund "${safeId}")`)
-    .addSigner(signer, (s) => [
-      s("coin.GAS"),
-      s("coin.TRANSFER", vaultAccount, refundRecipient, amountDecimal),
-    ])
+    .addSigner(signer, () => [])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: arbiterAccount,
@@ -571,7 +559,7 @@ export function buildInitTx(senderAccount: string, senderPubKey: string) {
   return Pact.builder
     .execution(createTableCode)
     .addData("sender", senderAccount)
-    .addSigner(signer, (s) => [s("coin.GAS"), s(govCap)])
+    .addSigner(signer, () => [])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount,
@@ -597,7 +585,7 @@ export function buildInitAllTx(senderAccount: string, senderPubKey: string) {
   return Pact.builder
     .execution(pactCode)
     .addData("sender", senderAccount)
-    .addSigner(signer, (s) => [s("coin.GAS"), s(govCap)])
+    .addSigner(signer, () => [])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount,
@@ -619,7 +607,7 @@ export function buildCloseOfferTx(
   const signer = signerPayloadForAccount(creatorAccount, creatorPubKey);
   return Pact.builder
     .execution(`(${CONTRACT_FQN}.close-offer "${offerId}")`)
-    .addSigner(signer, (s) => [s("coin.GAS")])
+    .addSigner(signer, () => [])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: creatorAccount,
@@ -641,7 +629,7 @@ export function buildDeleteOfferTx(
   const signer = signerPayloadForAccount(creatorAccount, creatorPubKey);
   return Pact.builder
     .execution(`(${CONTRACT_FQN}.delete-offer "${offerId}")`)
-    .addSigner(signer, (s) => [s("coin.GAS")])
+    .addSigner(signer, () => [])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: creatorAccount,
@@ -667,10 +655,7 @@ export function buildTimeoutFundedRefundTx(
   const amountDecimal = { decimal: amount.toFixed(8) };
   return Pact.builder
     .execution(`(${CONTRACT_FQN}.timeout-funded-refund "${offerId}")`)
-    .addSigner(signer, (s) => [
-      s("coin.GAS"),
-      s("coin.TRANSFER", vaultAccount, refundRecipient, amountDecimal),
-    ])
+    .addSigner(signer, () => [])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: sellerAccount,
@@ -691,7 +676,7 @@ export function buildTimeoutPaidDisputeTx(
   const signer = signerPayloadForAccount(callerAccount, callerPubKey);
   return Pact.builder
     .execution(`(${CONTRACT_FQN}.timeout-paid-dispute "${offerId}")`)
-    .addSigner(signer, (s) => [s("coin.GAS")])
+    .addSigner(signer, () => [])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: callerAccount,
@@ -721,7 +706,7 @@ export function buildInitConfigTx(senderAccount: string, senderPubKey: string) {
   return Pact.builder
     .execution(`(with-capability (${govCap}) ${pactCode})`)
     .addData("sender", senderAccount)
-    .addSigner(signer, (s) => [s("coin.GAS"), s(govCap)])
+    .addSigner(signer, () => [])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount,
@@ -748,7 +733,7 @@ export function buildSetConfigTx(
   return Pact.builder
     .execution(`(with-capability (${govCap}) ${pactCode})`)
     .addData("sender", adminAccount)
-    .addSigner(signer, (s) => [s("coin.GAS"), s(govCap)])
+    .addSigner(signer, () => [])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: adminAccount,
