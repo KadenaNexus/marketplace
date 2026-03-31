@@ -13,7 +13,6 @@ import {
   submitTransaction,
   pollTransaction,
   getChainwebDebugInfo,
-  preflightSignedTransaction,
   describePactFailure,
   isPactExecutionFailure,
   readCoinDetailsLocal,
@@ -108,31 +107,6 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
       );
 
       const signedTx = await signTransaction(tx);
-
-      let preflightResult: unknown;
-      try {
-        preflightResult = await preflightSignedTransaction(signedTx);
-      } catch (preflightErr) {
-        console.warn(
-          "[CreateOffer] Preflight RPC failed (node may not support signed preflight) — submitting anyway:",
-          preflightErr
-        );
-        preflightResult = null;
-      }
-
-      if (preflightResult != null && isPactExecutionFailure(preflightResult)) {
-        const detail = describePactFailure(preflightResult, {
-          account: account.account,
-          operation: "create-offer (preflight)",
-        });
-        // Preflight is advisory only: some nodes differ from /send semantics.
-        // If /send succeeds, the chain will still record the tx.
-        console.warn("[CreateOffer] Preflight reported failure — submitting anyway:", detail);
-        console.warn("[CreateOffer] Preflight raw:", JSON.stringify(preflightResult, null, 2));
-        toast.warning("Preflight failed, submitting anyway", {
-          description: detail.length > 180 ? detail.slice(0, 180) + "…" : detail,
-        });
-      }
 
       console.debug("[CreateOffer] Sending create-offer tx — API:", getChainwebDebugInfo());
       const requestKey = await submitTransaction(signedTx);
