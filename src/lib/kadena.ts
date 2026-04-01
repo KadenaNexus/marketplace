@@ -461,7 +461,12 @@ export function buildDepositTx(
   const amountDecimal = { decimal: amount.toFixed(8) };
   return Pact.builder
     .execution(`(${CONTRACT_FQN}.deposit "${offerId}")`)
-    .addSigner(signer, () => [])
+    .addSigner(signer, (s) => [
+      s("coin.GAS"),
+      // Must match coin.transfer-create in contract deposit:
+      // (coin.transfer-create depositor vault guard amount)
+      s("coin.TRANSFER", depositorAccount, vaultAccount, amountDecimal),
+    ])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: depositorAccount,
