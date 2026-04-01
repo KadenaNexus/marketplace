@@ -476,6 +476,21 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
 
   const handleDeposit = async () => {
     if (!account || !selectedEscrow) return;
+    const expected =
+      selectedEscrow.side === "SELL" ? selectedEscrow.creator : selectedEscrow.buyer ?? null;
+    if (!expected) {
+      toast.error("Deposit failed", { description: "Offer has no buyer yet; accept it first." });
+      return;
+    }
+    if (account.account !== expected) {
+      toast.error("Deposit failed", {
+        description:
+          selectedEscrow.side === "SELL"
+            ? `Only the creator/KDA holder (${expected}) can deposit for SELL offers.`
+            : `Only the accepter/KDA holder (${expected}) can deposit for BUY offers.`,
+      });
+      return;
+    }
     const vaultAccount = await getEscrowVaultAccount(selectedEscrow.offerId);
     executeAction("Deposit", () =>
       buildDepositTx(selectedEscrow.offerId, selectedEscrow.amount, account.account, account.publicKey, vaultAccount)
@@ -546,7 +561,12 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
   };
 
   const canAccept = selectedEscrow?.state === "CREATED" && account?.account !== selectedEscrow?.creator;
-  const canDeposit = selectedEscrow?.state === "ACCEPTED" && account?.account === selectedEscrow?.seller;
+  // Contract deposit rules:
+  // - side SELL: creator (KDA holder) deposits
+  // - side BUY:  buyer field (accepter; KDA holder) deposits
+  const expectedDepositor =
+    selectedEscrow?.side === "SELL" ? selectedEscrow?.creator : selectedEscrow?.buyer ?? null;
+  const canDeposit = selectedEscrow?.state === "ACCEPTED" && !!expectedDepositor && account?.account === expectedDepositor;
   const canMarkPaid = selectedEscrow?.state === "FUNDED" &&
     (selectedEscrow?.side === "SELL" ? account?.account === selectedEscrow?.buyer : account?.account === selectedEscrow?.creator);
   const canRelease = (selectedEscrow?.state === "PAID" || selectedEscrow?.state === "DISPUTED") &&
