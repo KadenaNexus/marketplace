@@ -426,9 +426,7 @@ export async function getEscrowVaultAccount(offerId: string): Promise<string> {
   }
   const safeId = offerId.replace(/"/g, '\\"');
   const amt = escrow.amount.toFixed(8);
-  const ns = CONTRACT_NAMESPACE;
-  const mod = CONTRACT_MODULE;
-  const pactCode = `(create-principal (${ns}.${mod}.create-ESCROW_VAULT_DEBIT-guard "${safeId}" ${amt}))`;
+  const pactCode = `(create-principal (${CONTRACT_FQN}.create-ESCROW_VAULT_DEBIT-guard "${safeId}" ${amt}))`;
   const command = Pact.builder
     .execution(pactCode)
     .setMeta({

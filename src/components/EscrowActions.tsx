@@ -40,6 +40,7 @@ import {
   pollTransaction,
   T2_SECONDS,
   T3_SECONDS,
+  readEscrow,
   type Escrow,
 } from "@/lib/kadena";
 import { getOfferDetails } from "@/lib/offerDetailsApi";
@@ -433,17 +434,30 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
       if (actionName === "Deposit" && selectedEscrow && account) {
         try {
           const tx = buildProfileAuthTx(account.account, account.publicKey);
-          let signedCmd = await signTransaction(tx);
-          if (signedCmd?.signedCmd && !signedCmd.cmd) signedCmd = signedCmd.signedCmd;
-          const sigs = Array.isArray(signedCmd?.sigs) ? signedCmd.sigs : [];
-          if (sigs[0] && !sigs[0].pubKey) sigs[0] = { ...sigs[0], pubKey: account.publicKey };
-          if (sigs[0]?.signature && !sigs[0].sig) sigs[0] = { ...sigs[0], sig: sigs[0].signature };
+          const rawSigned = await signTransaction(tx);
+          const unwrapWalletCmd = (input: unknown): Record<string, unknown> => {
+            if (input && typeof input === "object" && "signedCmd" in input) {
+              const w = input as { signedCmd?: unknown; cmd?: unknown };
+              if (w.signedCmd != null && !w.cmd) return unwrapWalletCmd(w.signedCmd);
+            }
+            return input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+          };
+          const signedCmd = unwrapWalletCmd(rawSigned as unknown);
+          const sigsRaw = signedCmd.sigs;
+          const sigs = Array.isArray(sigsRaw) ? [...sigsRaw] : [];
+          if (sigs[0] && typeof sigs[0] === "object") {
+            const s0 = sigs[0] as Record<string, unknown>;
+            if (!s0.pubKey) s0.pubKey = account.publicKey;
+            const sigAlt = s0.signature;
+            if (typeof sigAlt === "string" && sigAlt && !s0.sig) s0.sig = sigAlt;
+            sigs[0] = s0;
+          }
           await putFundTxRequestKey({
             offerId: selectedEscrow.offerId,
             requestKey,
             wallet: account.account,
             publicKey: account.publicKey,
-            signedCmd,
+            signedCmd: { ...signedCmd, sigs },
           });
         } catch (e) {
           toast.error("Deposit saved; fund tx link could not be saved", {
@@ -454,9 +468,12 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
       loadAll();
     } catch (error) {
       console.error(`${actionName} error:`, error);
-      toast.error(`${actionName} failed`, {
-        description: error instanceof Error ? error.message : "Unknown error",
-      });
+      let desc = error instanceof Error ? error.message : "Unknown error";
+      if (actionName === "Deposit" && /Only KDA holder can deposit/i.test(desc)) {
+        desc +=
+          " Your tx sender must be the on-chain KDA holder (see Seller in details). Same chain as the app. Multisig accounts need every key to sign.";
+      }
+      toast.error(`${actionName} failed`, { description: desc });
     } finally {
       setActionLoading(null);
     }
@@ -476,19 +493,30 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
 
   const handleDeposit = async () => {
     if (!account || !selectedEscrow) return;
-    if (!selectedEscrow.seller) {
-      toast.error("Deposit failed", { description: "Offer must be accepted first (KDA seller not set)." });
+    const fresh = await readEscrow(selectedEscrow.offerId);
+    if (!fresh) {
+      toast.error("Deposit failed", { description: "Could not read this escrow from chain. Check contract name/network." });
       return;
     }
-    if (account.account !== selectedEscrow.seller) {
+    if (fresh.state !== "ACCEPTED") {
+      toast.error("Deposit failed", { description: `Escrow must be ACCEPTED (now: ${fresh.state}).` });
+      return;
+    }
+    // readEscrow maps the on-chain KDA depositor to `seller` for both SELL and BUY offers.
+    const kdaHolder = fresh.seller;
+    if (!kdaHolder) {
+      toast.error("Deposit failed", { description: "On-chain data has no KDA holder yet; accept the offer first." });
+      return;
+    }
+    if (account.account !== kdaHolder) {
       toast.error("Deposit failed", {
-        description: `Only the KDA holder (${selectedEscrow.seller}) can deposit.`,
+        description: `Deposit must be signed by the KDA holder. On-chain: ${kdaHolder}. Your wallet: ${account.account}.`,
       });
       return;
     }
     const vaultAccount = await getEscrowVaultAccount(selectedEscrow.offerId);
     executeAction("Deposit", () =>
-      buildDepositTx(selectedEscrow.offerId, selectedEscrow.amount, account.account, account.publicKey, vaultAccount)
+      buildDepositTx(selectedEscrow.offerId, fresh.amount, account.account, account.publicKey, vaultAccount)
     );
   };
 
