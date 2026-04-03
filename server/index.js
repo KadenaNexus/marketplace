@@ -1348,8 +1348,9 @@ app.get("/api/disputes/:offerId", validateParams(offerIdParamSchema), async (req
         }
       } else throw e;
     }
+    // 200 + null: no dispute row yet (normal for almost all offers). Avoids noisy browser 404 on every poll.
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: "Dispute not found" });
+      return res.status(200).json(null);
     }
     const dispute = result.rows[0];
     let fundTxRequestKey = null;

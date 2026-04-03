@@ -116,9 +116,11 @@ export async function openDispute(params: {
 
 export async function getDispute(offerId: string): Promise<Dispute | null> {
   const res = await fetch(`${API}/api/disputes/${encodeURIComponent(offerId)}`);
+  // Prefer 200 + null (no dispute). Legacy: 404 meant the same.
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(await res.text().catch(() => res.statusText));
-  return res.json();
+  const data = (await res.json()) as Dispute | null;
+  return data ?? null;
 }
 
 export async function submitEvidence(params: {
