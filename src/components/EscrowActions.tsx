@@ -34,6 +34,7 @@ import {
   buildProfileAuthTx,
   getEscrowVaultAccount,
   getTxExplorerUrl,
+  getAccountExplorerUrl,
   getReputation,
   signTransaction,
   submitTransaction,
@@ -471,7 +472,10 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
       let desc = error instanceof Error ? error.message : "Unknown error";
       if (actionName === "Deposit" && /Only KDA holder can deposit/i.test(desc)) {
         desc +=
-          " Your tx sender must be the on-chain KDA holder (see Seller in details). Same chain as the app. Multisig accounts need every key to sign.";
+          " Balance is not checked here — the chain verifies your signature against the coin guard for the KDA holder. Use the exact k: account shown as Seller; fund KDA on this app chain; multisig (keys-all) needs every key to sign. ";
+        if (selectedEscrow?.seller) {
+          desc += `Account on explorer: ${getAccountExplorerUrl(selectedEscrow.seller)}`;
+        }
       }
       toast.error(`${actionName} failed`, { description: desc });
     } finally {
