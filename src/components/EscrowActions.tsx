@@ -476,18 +476,13 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
 
   const handleDeposit = async () => {
     if (!account || !selectedEscrow) return;
-    const expected =
-      selectedEscrow.side === "SELL" ? selectedEscrow.creator : selectedEscrow.buyer ?? null;
-    if (!expected) {
-      toast.error("Deposit failed", { description: "Offer has no buyer yet; accept it first." });
+    if (!selectedEscrow.seller) {
+      toast.error("Deposit failed", { description: "Offer must be accepted first (KDA seller not set)." });
       return;
     }
-    if (account.account !== expected) {
+    if (account.account !== selectedEscrow.seller) {
       toast.error("Deposit failed", {
-        description:
-          selectedEscrow.side === "SELL"
-            ? `Only the creator/KDA holder (${expected}) can deposit for SELL offers.`
-            : `Only the accepter/KDA holder (${expected}) can deposit for BUY offers.`,
+        description: `Only the KDA holder (${selectedEscrow.seller}) can deposit.`,
       });
       return;
     }
@@ -561,12 +556,11 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
   };
 
   const canAccept = selectedEscrow?.state === "CREATED" && account?.account !== selectedEscrow?.creator;
-  // Contract deposit rules:
-  // - side SELL: creator (KDA holder) deposits
-  // - side BUY:  buyer field (accepter; KDA holder) deposits
-  const expectedDepositor =
-    selectedEscrow?.side === "SELL" ? selectedEscrow?.creator : selectedEscrow?.buyer ?? null;
-  const canDeposit = selectedEscrow?.state === "ACCEPTED" && !!expectedDepositor && account?.account === expectedDepositor;
+  // KDA depositor (contract): SELL → creator; BUY → on-chain `buyer` (accepter). readEscrow maps that to `seller` always.
+  const canDeposit =
+    selectedEscrow?.state === "ACCEPTED" &&
+    !!selectedEscrow?.seller &&
+    account?.account === selectedEscrow.seller;
   const canMarkPaid = selectedEscrow?.state === "FUNDED" &&
     (selectedEscrow?.side === "SELL" ? account?.account === selectedEscrow?.buyer : account?.account === selectedEscrow?.creator);
   const canRelease = (selectedEscrow?.state === "PAID" || selectedEscrow?.state === "DISPUTED") &&
@@ -594,7 +588,8 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
   const isInDisputeForParty = isInDispute && isSellerOrBuyer;
 
   const canAcceptFinal = canAccept && !isInDisputeForParty;
-  const canDepositFinal = canDeposit && !isInDisputeForParty;
+  // Deposit is a seller-mode action (KDA holder); hide in buyer-mode marketplace view.
+  const canDepositFinal = canDeposit && !isInDisputeForParty && role === "seller";
   const canMarkPaidFinal = canMarkPaid && !isInDisputeForParty;
   const canReleaseFinal = canRelease && !isInDisputeForParty;
   const canCloseOfferFinal = canCloseOffer && !isInDisputeForParty;
