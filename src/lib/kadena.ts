@@ -3,7 +3,7 @@ import {
   IUnsignedCommand,
   Pact,
   createClient,
-  createSignWithEckoWallet,
+  createQuicksignWithEckoWallet,
 } from "@kadena/client";
 
 /* ============================================================
@@ -160,7 +160,9 @@ export async function connectEckoWallet(): Promise<WalletAccount> {
 ============================================================ */
 
 export async function signTransaction(command: IUnsignedCommand) {
-  const wallet = createSignWithEckoWallet();
+  // quickSign supports multi-capability txs (e.g. ACCOUNT_AUTH + coin.TRANSFER) whereas
+  // legacy single-sign path rejects txs with >1 scoped capability on some Ecko builds.
+  const wallet = createQuicksignWithEckoWallet();
 
   if (!command?.cmd || !command?.hash) {
     console.error("Invalid command:", command);
@@ -378,10 +380,11 @@ export function buildCreateOfferTx(
 ) {
   const signer = signerPayloadForAccount(creatorAccount, creatorPubKey);
   const pactCode = `(${CONTRACT_FQN}.create-offer "${offerId}" "${creatorAccount}" ${amount.toFixed(8)} "${side}")`;
+  const authCap = `${CONTRACT_FQN}.ACCOUNT_AUTH`;
 
   return Pact.builder
     .execution(pactCode)
-    .addSigner(signer, () => [])
+    .addSigner(signer, (s) => [s("coin.GAS"), s(authCap, creatorAccount)])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: creatorAccount,
@@ -393,20 +396,21 @@ export function buildCreateOfferTx(
     .createTransaction();
 }
 
-/* ---------- ACCEPT OFFER (id only; accepter = tx sender from chain-data) ---------- */
+/* ---------- ACCEPT OFFER (id + accepter passed explicitly; contract guards via ACCOUNT_AUTH accepter) ---------- */
 
 export function buildAcceptOfferTx(
   offerId: string,
-  buyerAccount: string,
-  buyerPubKey: string
+  accepterAccount: string,
+  accepterPubKey: string
 ) {
-  const signer = signerPayloadForAccount(buyerAccount, buyerPubKey);
+  const signer = signerPayloadForAccount(accepterAccount, accepterPubKey);
+  const authCap = `${CONTRACT_FQN}.ACCOUNT_AUTH`;
   return Pact.builder
-    .execution(`(${CONTRACT_FQN}.accept-offer "${offerId}")`)
-    .addSigner(signer, () => [])
+    .execution(`(${CONTRACT_FQN}.accept-offer "${offerId}" "${accepterAccount}")`)
+    .addSigner(signer, (s) => [s("coin.GAS"), s(authCap, accepterAccount)])
     .setMeta({
       chainId: CHAIN_ID,
-      senderAccount: buyerAccount,
+      senderAccount: accepterAccount,
       gasLimit: GAS_LIMIT,
       gasPrice: GAS_PRICE,
       ttl: 600,
@@ -457,10 +461,13 @@ export function buildDepositTx(
 ) {
   const signer = signerPayloadForAccount(depositorAccount, depositorPubKey);
   const amountDecimal = { decimal: amount.toFixed(8) };
+  const authCap = `${CONTRACT_FQN}.ACCOUNT_AUTH`;
   return Pact.builder
     .execution(`(${CONTRACT_FQN}.deposit "${offerId}")`)
     .addSigner(signer, (s) => [
       s("coin.GAS"),
+      // ACCOUNT_AUTH gates (with-capability (ACCOUNT_AUTH depositor) ...) inside (defun deposit ...)
+      s(authCap, depositorAccount),
       // Must match coin.transfer-create in contract deposit:
       // (coin.transfer-create depositor vault guard amount)
       s("coin.TRANSFER", depositorAccount, vaultAccount, amountDecimal),
@@ -484,9 +491,10 @@ export function buildMarkPaidTx(
   buyerPubKey: string
 ) {
   const signer = signerPayloadForAccount(buyerAccount, buyerPubKey);
+  const authCap = `${CONTRACT_FQN}.ACCOUNT_AUTH`;
   return Pact.builder
     .execution(`(${CONTRACT_FQN}.mark-paid "${offerId}")`)
-    .addSigner(signer, () => [])
+    .addSigner(signer, (s) => [s("coin.GAS"), s(authCap, buyerAccount)])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: buyerAccount,
@@ -511,9 +519,16 @@ export function buildReleaseTx(
   const signer = signerPayloadForAccount(callerAccount, callerPubKey);
   const safeId = offerId.replace(/"/g, '\\"');
   const amountDecimal = { decimal: amountFromEscrow.toFixed(8) };
+  const authCap = `${CONTRACT_FQN}.ACCOUNT_AUTH`;
   return Pact.builder
     .execution(`(${CONTRACT_FQN}.release "${safeId}")`)
-    .addSigner(signer, () => [])
+    .addSigner(signer, (s) => [
+      s("coin.GAS"),
+      // Releaser auth: arbiter (DISPUTED) or KDA holder (SELL->creator, BUY->buyer) in PAID.
+      s(authCap, callerAccount),
+      // Vault -> recipient transfer inside (with-capability (ESCROW_VAULT_DEBIT ...)).
+      s("coin.TRANSFER", vaultAccount, recipientAccount, amountDecimal),
+    ])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: callerAccount,
@@ -538,9 +553,16 @@ export function buildRefundTx(
   const signer = signerPayloadForAccount(arbiterAccount, arbiterPubKey);
   const safeId = offerId.replace(/"/g, '\\"');
   const amountDecimal = { decimal: amountFromEscrow.toFixed(8) };
+  const authCap = `${CONTRACT_FQN}.ACCOUNT_AUTH`;
   return Pact.builder
     .execution(`(${CONTRACT_FQN}.refund "${safeId}")`)
-    .addSigner(signer, () => [])
+    .addSigner(signer, (s) => [
+      s("coin.GAS"),
+      // Contract enforces ACCOUNT_AUTH on arbiter.
+      s(authCap, arbiterAccount),
+      // Vault -> refund recipient transfer inside (with-capability (ESCROW_VAULT_DEBIT ...)).
+      s("coin.TRANSFER", vaultAccount, refundRecipient, amountDecimal),
+    ])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: arbiterAccount,
@@ -608,9 +630,10 @@ export function buildCloseOfferTx(
   creatorPubKey: string
 ) {
   const signer = signerPayloadForAccount(creatorAccount, creatorPubKey);
+  const authCap = `${CONTRACT_FQN}.ACCOUNT_AUTH`;
   return Pact.builder
     .execution(`(${CONTRACT_FQN}.close-offer "${offerId}")`)
-    .addSigner(signer, () => [])
+    .addSigner(signer, (s) => [s("coin.GAS"), s(authCap, creatorAccount)])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: creatorAccount,
@@ -630,9 +653,10 @@ export function buildDeleteOfferTx(
   creatorPubKey: string
 ) {
   const signer = signerPayloadForAccount(creatorAccount, creatorPubKey);
+  const authCap = `${CONTRACT_FQN}.ACCOUNT_AUTH`;
   return Pact.builder
     .execution(`(${CONTRACT_FQN}.delete-offer "${offerId}")`)
-    .addSigner(signer, () => [])
+    .addSigner(signer, (s) => [s("coin.GAS"), s(authCap, creatorAccount)])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: creatorAccount,
@@ -656,9 +680,16 @@ export function buildTimeoutFundedRefundTx(
 ) {
   const signer = signerPayloadForAccount(sellerAccount, sellerPubKey);
   const amountDecimal = { decimal: amount.toFixed(8) };
+  const authCap = `${CONTRACT_FQN}.ACCOUNT_AUTH`;
   return Pact.builder
     .execution(`(${CONTRACT_FQN}.timeout-funded-refund "${offerId}")`)
-    .addSigner(signer, () => [])
+    .addSigner(signer, (s) => [
+      s("coin.GAS"),
+      // Refunder = KDA holder (SELL->creator, BUY->buyer).
+      s(authCap, sellerAccount),
+      // Vault -> refund recipient transfer inside (with-capability (ESCROW_VAULT_DEBIT ...)).
+      s("coin.TRANSFER", vaultAccount, refundRecipient, amountDecimal),
+    ])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: sellerAccount,
@@ -677,9 +708,12 @@ export function buildTimeoutPaidDisputeTx(
   callerPubKey: string
 ) {
   const signer = signerPayloadForAccount(callerAccount, callerPubKey);
+  const authCap = `${CONTRACT_FQN}.ACCOUNT_AUTH`;
   return Pact.builder
     .execution(`(${CONTRACT_FQN}.timeout-paid-dispute "${offerId}")`)
-    .addSigner(signer, () => [])
+    // Contract: (enforce-one ... [(with-capability (ACCOUNT_AUTH c) true) (with-capability (ACCOUNT_AUTH b) true)])
+    // Caller signs ACCOUNT_AUTH for themselves; enforce-one accepts either branch.
+    .addSigner(signer, (s) => [s("coin.GAS"), s(authCap, callerAccount)])
     .setMeta({
       chainId: CHAIN_ID,
       senderAccount: callerAccount,
