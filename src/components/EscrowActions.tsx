@@ -428,7 +428,16 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
       }
 
       toast.success(`${actionName} succeeded`, {
-        description: `Request Key: ${requestKey.slice(0, 16)}...`,
+        description: (
+          <a
+            href={getTxExplorerUrl(requestKey)}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ textDecoration: "underline", wordBreak: "break-all" }}
+          >
+            View on Explorer ↗
+          </a>
+        ),
       });
 
       addTransaction(actionName, requestKey);

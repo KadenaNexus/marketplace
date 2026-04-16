@@ -53,6 +53,9 @@ export const CONTRACT_MODULE = INVALID_MODULE_NAMES.has(CONTRACT_MODULE_RAW.toLo
 /** Fully-qualified contract module reference used in pact code. */
 export const CONTRACT_FQN = CONTRACT_NAMESPACE ? `${CONTRACT_NAMESPACE}.${CONTRACT_MODULE}` : CONTRACT_MODULE;
 
+/** The platform arbiter wallet address — always has admin access regardless of active escrows. */
+export const PLATFORM_ARBITER = "k:eda1ef1f1528f5f72e153fcb9c2c8178317749429bd48aaf34b6b52fa16598e1";
+
 export const kadenaClient = createClient(API_HOST);
 
 /** Gas: lower values = cheaper txs. Mainnet-appropriate defaults. */
@@ -520,12 +523,15 @@ export function buildReleaseTx(
   const safeId = offerId.replace(/"/g, '\\"');
   const amountDecimal = { decimal: amountFromEscrow.toFixed(8) };
   const authCap = `${CONTRACT_FQN}.ACCOUNT_AUTH`;
+  const vaultDebitCap = `${CONTRACT_FQN}.ESCROW_VAULT_DEBIT`;
   return Pact.builder
     .execution(`(${CONTRACT_FQN}.release "${safeId}")`)
     .addSigner(signer, (s) => [
       s("coin.GAS"),
       // Releaser auth: arbiter (DISPUTED) or KDA holder (SELL->creator, BUY->buyer) in PAID.
       s(authCap, callerAccount),
+      // Declaring ESCROW_VAULT_DEBIT activates caller's key inside the defcap body's enforce-guard checks.
+      s(vaultDebitCap, safeId, amountDecimal),
       // Vault -> recipient transfer inside (with-capability (ESCROW_VAULT_DEBIT ...)).
       s("coin.TRANSFER", vaultAccount, recipientAccount, amountDecimal),
     ])
@@ -554,12 +560,15 @@ export function buildRefundTx(
   const safeId = offerId.replace(/"/g, '\\"');
   const amountDecimal = { decimal: amountFromEscrow.toFixed(8) };
   const authCap = `${CONTRACT_FQN}.ACCOUNT_AUTH`;
+  const vaultDebitCap = `${CONTRACT_FQN}.ESCROW_VAULT_DEBIT`;
   return Pact.builder
     .execution(`(${CONTRACT_FQN}.refund "${safeId}")`)
     .addSigner(signer, (s) => [
       s("coin.GAS"),
       // Contract enforces ACCOUNT_AUTH on arbiter.
       s(authCap, arbiterAccount),
+      // Declaring ESCROW_VAULT_DEBIT activates arbiter's key inside the defcap body's enforce-guard checks.
+      s(vaultDebitCap, safeId, amountDecimal),
       // Vault -> refund recipient transfer inside (with-capability (ESCROW_VAULT_DEBIT ...)).
       s("coin.TRANSFER", vaultAccount, refundRecipient, amountDecimal),
     ])
@@ -681,12 +690,15 @@ export function buildTimeoutFundedRefundTx(
   const signer = signerPayloadForAccount(sellerAccount, sellerPubKey);
   const amountDecimal = { decimal: amount.toFixed(8) };
   const authCap = `${CONTRACT_FQN}.ACCOUNT_AUTH`;
+  const vaultDebitCap = `${CONTRACT_FQN}.ESCROW_VAULT_DEBIT`;
   return Pact.builder
     .execution(`(${CONTRACT_FQN}.timeout-funded-refund "${offerId}")`)
     .addSigner(signer, (s) => [
       s("coin.GAS"),
       // Refunder = KDA holder (SELL->creator, BUY->buyer).
       s(authCap, sellerAccount),
+      // Declaring ESCROW_VAULT_DEBIT activates seller's key inside the defcap body's enforce-guard checks.
+      s(vaultDebitCap, offerId, amountDecimal),
       // Vault -> refund recipient transfer inside (with-capability (ESCROW_VAULT_DEBIT ...)).
       s("coin.TRANSFER", vaultAccount, refundRecipient, amountDecimal),
     ])

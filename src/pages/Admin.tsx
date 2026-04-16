@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useWallet } from "@/hooks/useWallet";
-import { listAllEscrows } from "@/lib/kadena";
+import { listAllEscrows, PLATFORM_ARBITER } from "@/lib/kadena";
 import { listDisputes } from "@/lib/disputeApi";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -23,6 +23,7 @@ export default function Admin() {
     enabled: !!account,
   });
 
+  const isPlatformArbiter = !!account && account.account === PLATFORM_ARBITER;
   const arbiterOfferIds = new Set(
     escrows.filter((e) => e.arbiter === account?.account).map((e) => e.offerId)
   );
@@ -37,30 +38,10 @@ export default function Admin() {
     );
   }
 
-  if (!arbiterOfferIds.size && !loadingEscrows) {
+  if (!isPlatformArbiter) {
     return (
-      <div className="min-h-screen bg-background">
-        <header className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-50">
-          <div className="container mx-auto px-4 py-4 flex items-center gap-4">
-            <Link to="/" className="text-muted-foreground hover:text-foreground">
-              <ArrowLeft className="h-5 w-5" />
-            </Link>
-            <span className="font-medium">Admin / Arbiter</span>
-          </div>
-        </header>
-        <main className="container mx-auto px-4 py-8 max-w-2xl">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Shield className="h-5 w-5" />
-                Admin Panel
-              </CardTitle>
-              <CardDescription>
-                You are not the arbiter for any offer. This panel is visible only to wallets that are set as arbiter on at least one escrow.
-              </CardDescription>
-            </CardHeader>
-          </Card>
-        </main>
+      <div className="min-h-screen flex items-center justify-center">
+        <p className="text-muted-foreground">Access denied. This panel is only accessible to the platform arbiter.</p>
       </div>
     );
   }

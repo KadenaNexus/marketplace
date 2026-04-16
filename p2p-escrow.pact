@@ -1,12 +1,29 @@
-(module p2p-escrow100 GOVERNANCE
-  (defconst GOV-KEYSET (read-keyset "gov-keyset"))
+(namespace 'free)
+
+;; Redefining the same keyset is safe — governance key must sign to rotate it.
+(define-keyset "free.p2p-escrow-v6-gov" (read-keyset "gov-keyset"))
+
+(module p2p-escrow-v6 GOVERNANCE
   (defcap GOVERNANCE ()
-    (enforce-keyset GOV-KEYSET))
+    (enforce-guard (keyset-ref-guard "free.p2p-escrow-v6-gov")))
 
   (defconst EPOCH:time (time "1970-01-01T00:00:00Z"))
 
+  ;; ACCOUNT_AUTH: proves the caller controls the given k: account.
+  ;; The signer declares (ACCOUNT_AUTH "k:xxx") in their capability list.
+  ;; enforce-guard runs INSIDE the defcap body, so the key is active at the
+  ;; time of the check — this fixes "Keyset failure" with Ecko wallet.
+  (defcap ACCOUNT_AUTH (account:string)
+    (enforce-guard (at "guard" (coin.details account))))
+
+  ;; ESCROW_VAULT_DEBIT: guards the vault account for coin transfers.
+  ;; Uses enforce-guard directly — Pact does not allow with-capability inside
+  ;; a defcap body. Callers (release/refund/timeout-funded-refund) must declare
+  ;; this capability in their signer clist so their key is active here.
   (defcap ESCROW_VAULT_DEBIT (id:string amount:decimal)
-    (with-read escrows id { "creator" := c, "buyer" := b, "arbiter" := a, "amount" := amt, "state" := s, "side" := side }
+    (with-read escrows id
+      { "creator" := c, "buyer" := b, "arbiter" := a
+      , "amount" := amt, "state" := s, "side" := side }
       (enforce (contains s ["PAID" "FUNDED" "DISPUTED"]) "Invalid state for vault debit")
       (enforce (= amount amt) "Debit amount must match escrow amount")
       (enforce-one "Only arbiter or KDA holder (for PAID/FUNDED) can debit vault"
@@ -23,7 +40,7 @@
   (defun create-ESCROW_VAULT_DEBIT-guard (id:string amount:decimal)
     (create-user-guard (require-ESCROW_VAULT_DEBIT id amount)))
 
-  (defconst PLATFORM_ARBITER "k:abc3827b5af0b9eb2a829b644b255fb7ab09fac5baf79db81890dc4cbff2d710")
+  (defconst PLATFORM_ARBITER "k:eda1ef1f1528f5f72e153fcb9c2c8178317749429bd48aaf34b6b52fa16598e1")
   (defconst T1_SECONDS 1200)
   (defconst T2_SECONDS 1200)
   (defconst T3_SECONDS 1200)
@@ -89,36 +106,38 @@
       { "totalTrades": total, "successfulTrades": ok, "disputesCount": disputes }))
 
   (defun create-offer (id creator amount side)
-    (enforce-guard (at "guard" (coin.details creator)))
-    (with-default-read escrows id { "creator": "" } { "creator" := c }
-      (enforce (= (length c) 0) "Escrow exists"))
-    (enforce (> amount 0.0) "Amount must be > 0")
-    (enforce (> (length creator) 0) "Creator required")
-    (enforce (!= creator (get-arbiter)) "Creator and arbiter must be different")
-    (insert escrows id
-      { "creator": creator, "buyer": "", "arbiter": (get-arbiter)
-      , "amount": amount, "state": "CREATED", "side": side
-      , "acceptedAt": EPOCH, "fundedAt": EPOCH, "paidAt": EPOCH }))
+    (with-capability (ACCOUNT_AUTH creator)
+      (with-default-read escrows id { "creator": "" } { "creator" := c }
+        (enforce (= (length c) 0) "Escrow exists"))
+      (enforce (> amount 0.0) "Amount must be > 0")
+      (enforce (> (length creator) 0) "Creator required")
+      (enforce (!= creator (get-arbiter)) "Creator and arbiter must be different")
+      (insert escrows id
+        { "creator": creator, "buyer": "", "arbiter": (get-arbiter)
+        , "amount": amount, "state": "CREATED", "side": side
+        , "acceptedAt": EPOCH, "fundedAt": EPOCH, "paidAt": EPOCH })))
 
-  (defun accept-offer (id)
-    (let ((accepter (at "sender" (chain-data)))
-          (now      (at "block-time" (chain-data))))
-      (with-read escrows id { "creator" := c, "state" := s }
-        (enforce (= s "CREATED") "Invalid state: must be CREATED")
-        (enforce (!= accepter c) "Cannot accept your own offer")
-        (update escrows id { "buyer": accepter, "state": "ACCEPTED", "acceptedAt": now }))))
+  ;; accepter is now an explicit parameter (frontend already passes it).
+  ;; ACCOUNT_AUTH proves the accepter controls their account.
+  (defun accept-offer (id accepter:string)
+    (with-capability (ACCOUNT_AUTH accepter)
+      (let ((now (at "block-time" (chain-data))))
+        (with-read escrows id { "creator" := c, "state" := s }
+          (enforce (= s "CREATED") "Invalid state: must be CREATED")
+          (enforce (!= accepter c) "Cannot accept your own offer")
+          (update escrows id { "buyer": accepter, "state": "ACCEPTED", "acceptedAt": now })))))
 
   (defun close-offer (id)
     (with-read escrows id { "creator" := c, "state" := s }
       (enforce (= s "CREATED") "Can only close in CREATED state")
-      (enforce-guard (at "guard" (coin.details c)))
-      (update escrows id { "state": "CLOSED" })))
+      (with-capability (ACCOUNT_AUTH c)
+        (update escrows id { "state": "CLOSED" }))))
 
   (defun delete-offer (id)
     (with-read escrows id { "creator" := c, "state" := s }
       (enforce (= s "CREATED") "Can only delete offer in CREATED state")
-      (enforce-guard (at "guard" (coin.details c)))
-      (update escrows id { "state": "DELETED" })))
+      (with-capability (ACCOUNT_AUTH c)
+        (update escrows id { "state": "DELETED" }))))
 
   (defun deposit (id)
     (let ((now (at "block-time" (chain-data)))
@@ -131,9 +150,9 @@
           "Funding period expired (T1) - call timeout-accepted-close")
         (enforce-one "Only KDA holder can deposit"
           [ (and (enforce (= side "SELL") "Not sell side")
-                 (enforce-guard (at "guard" (coin.details c))))
+                 (with-capability (ACCOUNT_AUTH c) true))
             (and (enforce (= side "BUY") "Not buy side")
-                 (enforce-guard (at "guard" (coin.details b)))) ])
+                 (with-capability (ACCOUNT_AUTH b) true)) ])
         (let* ((depositor (if (= side "SELL") c b))
                (guard     (create-ESCROW_VAULT_DEBIT-guard id a))
                (vault     (create-principal guard)))
@@ -151,9 +170,9 @@
           "Mark-paid period expired (T2) - seller can call timeout-funded-refund")
         (enforce-one "Only fiat payer can mark paid"
           [ (and (enforce (= side "SELL") "Not sell side")
-                 (enforce-guard (at "guard" (coin.details b))))
+                 (with-capability (ACCOUNT_AUTH b) true))
             (and (enforce (= side "BUY") "Not buy side")
-                 (enforce-guard (at "guard" (coin.details c)))) ])
+                 (with-capability (ACCOUNT_AUTH c) true)) ])
         (update escrows id { "state": "PAID", "paidAt": now }))))
 
   (defun release (offerId:string)
@@ -168,13 +187,13 @@
             "Release period expired (T3) - call timeout-paid-dispute")
           true)
         (enforce-one "Only KDA holder or arbiter can release - DISPUTED only arbiter"
-          [ (enforce-guard (at "guard" (coin.details a)))
+          [ (with-capability (ACCOUNT_AUTH a) true)
             (and (enforce (= s "PAID") "Not PAID state")
                  (and (enforce (= side "SELL") "Not sell side")
-                      (enforce-guard (at "guard" (coin.details c)))))
+                      (with-capability (ACCOUNT_AUTH c) true)))
             (and (enforce (= s "PAID") "Not PAID state")
                  (and (enforce (= side "BUY") "Not buy side")
-                      (enforce-guard (at "guard" (coin.details b))))) ])
+                      (with-capability (ACCOUNT_AUTH b) true))) ])
         (let ((vault (create-principal (create-ESCROW_VAULT_DEBIT-guard offerId amt))))
           (with-capability (ESCROW_VAULT_DEBIT offerId amt)
             (if (= side "SELL")
@@ -191,15 +210,15 @@
       { "creator" := c, "buyer" := b, "arbiter" := a
       , "amount" := amt, "state" := s, "side" := side }
       (enforce (contains s ["PAID" "FUNDED" "DISPUTED"]) "Invalid state for refund")
-      (enforce-guard (at "guard" (coin.details a)))
-      (let ((vault     (create-principal (create-ESCROW_VAULT_DEBIT-guard offerId amt)))
-            (refund-to (if (= side "SELL") c b))
-            (other     (if (= side "SELL") b c)))
-        (with-capability (ESCROW_VAULT_DEBIT offerId amt)
-          (coin.transfer vault refund-to amt))
-        (update escrows offerId { "buyer": "", "state": "REFUNDED" })
-        (inc-reputation refund-to false)
-        (if (> (length other) 0) (inc-reputation other false) true))))
+      (with-capability (ACCOUNT_AUTH a)
+        (let ((vault     (create-principal (create-ESCROW_VAULT_DEBIT-guard offerId amt)))
+              (refund-to (if (= side "SELL") c b))
+              (other     (if (= side "SELL") b c)))
+          (with-capability (ESCROW_VAULT_DEBIT offerId amt)
+            (coin.transfer vault refund-to amt))
+          (update escrows offerId { "buyer": "", "state": "REFUNDED" })
+          (inc-reputation refund-to false)
+          (if (> (length other) 0) (inc-reputation other false) true)))))
 
   (defun timeout-accepted-close (id)
     (let ((now (at "block-time" (chain-data)))
@@ -221,9 +240,9 @@
         (enforce (> now (add-time fundedAt t2)) "Mark-paid period not yet expired")
         (enforce-one "Only seller can timeout-refund"
           [ (and (enforce (= side "SELL") "Not sell side")
-                 (enforce-guard (at "guard" (coin.details c))))
+                 (with-capability (ACCOUNT_AUTH c) true))
             (and (enforce (= side "BUY") "Not buy side")
-                 (enforce-guard (at "guard" (coin.details b)))) ])
+                 (with-capability (ACCOUNT_AUTH b) true)) ])
         (let ((vault     (create-principal (create-ESCROW_VAULT_DEBIT-guard id amt)))
               (refund-to (if (= side "SELL") c b))
               (other     (if (= side "SELL") b c)))
@@ -236,13 +255,14 @@
   (defun timeout-paid-dispute (id)
     (let ((now (at "block-time" (chain-data)))
           (t3  (get-t3)))
-      (with-read escrows id { "creator" := c, "buyer" := b, "state" := s, "side" := side, "paidAt" := paidAt }
+      (with-read escrows id
+        { "creator" := c, "buyer" := b, "state" := s, "side" := side, "paidAt" := paidAt }
         (enforce (= s "PAID") "Invalid state")
         (enforce (!= paidAt EPOCH) "Missing paidAt")
         (enforce (> now (add-time paidAt t3)) "Release period not yet expired")
         (enforce-one "Only buyer or seller can dispute"
-          [ (enforce-guard (at "guard" (coin.details b)))
-            (enforce-guard (at "guard" (coin.details c))) ])
+          [ (with-capability (ACCOUNT_AUTH b) true)
+            (with-capability (ACCOUNT_AUTH c) true) ])
         (update escrows id { "state": "DISPUTED" }))))
 
   (defun get-escrow (id)
@@ -253,3 +273,9 @@
       (lambda (k obj) (!= (at "state" obj) "DELETED"))
       (lambda (k obj) k)))
 )
+
+
+(create-table free.p2p-escrow-v6.escrows)
+(create-table free.p2p-escrow-v6.reputation)
+(create-table free.p2p-escrow-v6.config)
+(free.p2p-escrow-v6.init-config)

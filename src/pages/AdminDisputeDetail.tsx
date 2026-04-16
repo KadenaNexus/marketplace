@@ -193,7 +193,13 @@ export default function AdminDisputeDetail() {
         const errMsg = typeof res.error === "string" ? res.error : (res.error as any)?.message ?? "Transaction failed";
         throw new Error(errMsg);
       }
-      toast.success("Released to buyer", { description: `Request Key: ${requestKey.slice(0, 16)}…` });
+      toast.success("Released to buyer", {
+        description: (
+          <a href={getTxExplorerUrl(requestKey)} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "underline", wordBreak: "break-all" }}>
+            View on Explorer ↗
+          </a>
+        ),
+      });
       try {
         const tx = buildProfileAuthTx(account.account, account.publicKey);
         let signedCmd = await signTransaction(tx);
@@ -234,7 +240,13 @@ export default function AdminDisputeDetail() {
         const errMsg = typeof res.error === "string" ? res.error : (res.error as any)?.message ?? "Transaction failed";
         throw new Error(errMsg);
       }
-      toast.success("Refunded to seller", { description: `Request Key: ${requestKey.slice(0, 16)}…` });
+      toast.success("Refunded to seller", {
+        description: (
+          <a href={getTxExplorerUrl(requestKey)} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "underline", wordBreak: "break-all" }}>
+            View on Explorer ↗
+          </a>
+        ),
+      });
       try {
         const tx = buildProfileAuthTx(account.account, account.publicKey);
         let signedCmd = await signTransaction(tx);

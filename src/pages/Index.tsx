@@ -12,7 +12,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useState } from "react";
 import { useWallet } from "@/hooks/useWallet";
 import { fetchProfile } from "@/lib/profileApi";
-import { CHAIN_ID, NETWORK_ID, listAllEscrows } from "@/lib/kadena";
+import { CHAIN_ID, NETWORK_ID, PLATFORM_ARBITER } from "@/lib/kadena";
 import { LogOut, Shield, Megaphone } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -31,13 +31,7 @@ const Index = () => {
     enabled: !!account && isConnected,
   });
 
-  const { data: escrows } = useQuery({
-    queryKey: ["escrows-for-arbiter", account?.account],
-    queryFn: () => listAllEscrows(),
-    enabled: !!account && isConnected,
-    staleTime: 60_000,
-  });
-  const isArbiter = !!account && !!escrows?.some((e) => e.arbiter === account.account);
+  const isArbiter = !!account && account.account === PLATFORM_ARBITER;
 
   const handleRoleSelect = (selectedRole: UserRole) => {
     setRole(selectedRole);
