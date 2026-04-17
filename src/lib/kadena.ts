@@ -798,9 +798,13 @@ export function buildSetConfigTx(
    READ-ONLY
 ============================================================ */
 
-/** Contract stores time type; API returns ISO string. Return undefined for empty/epoch (not set). */
+/** Contract stores time type; API returns ISO string or {time:"..."} object. Return undefined for empty/epoch (not set). */
 function timeFieldToIsoOrUndefined(v: unknown): string | undefined {
   if (v == null) return undefined;
+  if (typeof v === "object" && v !== null) {
+    if ("timep" in v) return timeFieldToIsoOrUndefined((v as Record<string, unknown>).timep);
+    if ("time" in v) return timeFieldToIsoOrUndefined((v as Record<string, unknown>).time);
+  }
   if (typeof v === "string") {
     if (v === "" || v.startsWith("1970-01-01")) return undefined;
     return v;
