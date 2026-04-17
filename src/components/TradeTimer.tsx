@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Clock, AlertTriangle } from "lucide-react";
-import { T2_SECONDS, T3_SECONDS, type Escrow } from "@/lib/kadena";
+import { T1_SECONDS, T2_SECONDS, T3_SECONDS, type Escrow } from "@/lib/kadena";
 import { cn } from "@/lib/utils";
 
 const WARNING_THRESHOLD_SEC = 2 * 60; // Last 2 minutes: show warning
@@ -43,7 +43,11 @@ export function TradeTimer({ escrow, className }: TradeTimerProps) {
   let deadlineIso: string | undefined;
   let limitSec = 0;
 
-  if (state === "FUNDED" && escrow.fundedAt) {
+  if (state === "ACCEPTED" && escrow.acceptedAt) {
+    label = "Time to fund escrow";
+    deadlineIso = escrow.acceptedAt;
+    limitSec = T1_SECONDS;
+  } else if (state === "FUNDED" && escrow.fundedAt) {
     label = "Time to mark payment sent";
     deadlineIso = escrow.fundedAt;
     limitSec = T2_SECONDS;

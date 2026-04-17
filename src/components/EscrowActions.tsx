@@ -615,7 +615,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
     account?.account === selectedEscrow?.creator;
   const canOpenDispute =
     (account?.account === selectedEscrow?.seller || account?.account === selectedEscrow?.buyer) &&
-    (selectedEscrow?.state === "CREATED" || selectedEscrow?.state === "ACCEPTED" || selectedEscrow?.state === "FUNDED" || selectedEscrow?.state === "PAID") &&
+    selectedEscrow?.state === "PAID" &&
     (!existingDispute || existingDispute.status !== "OPEN");
   const canTimeoutFundedRefund = selectedEscrow?.state === "FUNDED" && account?.account === selectedEscrow?.seller && isStepExpired(selectedEscrow.fundedAt, T2_SECONDS);
   const canTimeoutPaidDispute = selectedEscrow?.state === "PAID" && !!account?.account && isStepExpired(selectedEscrow.paidAt, T3_SECONDS);

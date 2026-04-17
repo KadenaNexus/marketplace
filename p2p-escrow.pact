@@ -1,11 +1,11 @@
 (namespace 'free)
 
 ;; Redefining the same keyset is safe — governance key must sign to rotate it.
-(define-keyset "free.p2p-escrow-v6-gov" (read-keyset "gov-keyset"))
+(define-keyset "free.p2p-escrow-v7-gov" (read-keyset "gov-keyset"))
 
-(module p2p-escrow-v6 GOVERNANCE
+(module p2p-escrow-v7 GOVERNANCE
   (defcap GOVERNANCE ()
-    (enforce-guard (keyset-ref-guard "free.p2p-escrow-v6-gov")))
+    (enforce-guard (keyset-ref-guard "free.p2p-escrow-v7-gov")))
 
   (defconst EPOCH:time (time "1970-01-01T00:00:00Z"))
 
@@ -41,9 +41,9 @@
     (create-user-guard (require-ESCROW_VAULT_DEBIT id amount)))
 
   (defconst PLATFORM_ARBITER "k:eda1ef1f1528f5f72e153fcb9c2c8178317749429bd48aaf34b6b52fa16598e1")
-  (defconst T1_SECONDS 1200)
-  (defconst T2_SECONDS 1200)
-  (defconst T3_SECONDS 1200)
+  (defconst T1_SECONDS 3600)
+  (defconst T2_SECONDS 14400)
+  (defconst T3_SECONDS 3600)
 
   (defschema escrow
     creator:string
@@ -107,6 +107,7 @@
 
   (defun create-offer (id creator amount side)
     (with-capability (ACCOUNT_AUTH creator)
+      (enforce (contains side ["SELL" "BUY"]) "Invalid side: must be SELL or BUY")
       (with-default-read escrows id { "creator": "" } { "creator" := c }
         (enforce (= (length c) 0) "Escrow exists"))
       (enforce (> amount 0.0) "Amount must be > 0")
@@ -275,7 +276,7 @@
 )
 
 
-(create-table free.p2p-escrow-v6.escrows)
-(create-table free.p2p-escrow-v6.reputation)
-(create-table free.p2p-escrow-v6.config)
-(free.p2p-escrow-v6.init-config)
+(create-table free.p2p-escrow-v7.escrows)
+(create-table free.p2p-escrow-v7.reputation)
+(create-table free.p2p-escrow-v7.config)
+(free.p2p-escrow-v7.init-config)

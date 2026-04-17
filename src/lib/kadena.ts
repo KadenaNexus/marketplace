@@ -89,9 +89,9 @@ export type EscrowState =
   | "DELETED"
   | "DISPUTED";
 
-/** T2/T3: only after escrow is FUNDED (mark-paid window, then release/dispute). Pre-fund: no contract timers. */
-export const T2_SECONDS = 1200;
-export const T3_SECONDS = 1200;
+export const T1_SECONDS = 3600;
+export const T2_SECONDS = 14400;
+export const T3_SECONDS = 3600;
 
 export interface Escrow {
   offerId: string;
