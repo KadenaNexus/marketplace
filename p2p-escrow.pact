@@ -1,11 +1,11 @@
 (namespace 'free)
 
 ;; Redefining the same keyset is safe — governance key must sign to rotate it.
-(define-keyset "free.p2p-escrow-v7-gov" (read-keyset "gov-keyset"))
+(define-keyset "free.p2p-escrow-v10-gov" (read-keyset "gov-keyset"))
 
-(module p2p-escrow-v7 GOVERNANCE
+(module p2p-escrow-v10 GOVERNANCE
   (defcap GOVERNANCE ()
-    (enforce-guard (keyset-ref-guard "free.p2p-escrow-v7-gov")))
+    (enforce-guard (keyset-ref-guard "free.p2p-escrow-v10-gov")))
 
   (defconst EPOCH:time (time "1970-01-01T00:00:00Z"))
 
@@ -139,6 +139,15 @@
       (enforce (= s "CREATED") "Can only delete offer in CREATED state")
       (with-capability (ACCOUNT_AUTH c)
         (update escrows id { "state": "DELETED" }))))
+
+  (defun cancel-accepted-offer (id)
+    (let ((now (at "block-time" (chain-data)))
+          (t1  (get-t1)))
+      (with-read escrows id { "creator" := c, "state" := s, "acceptedAt" := acceptedAt }
+        (enforce (= s "ACCEPTED") "Can only cancel in ACCEPTED state")
+        (enforce (<= now (add-time acceptedAt t1)) "T1 expired — use timeout-accepted-close instead")
+        (with-capability (ACCOUNT_AUTH c)
+          (update escrows id { "state": "CLOSED", "buyer": "", "acceptedAt": EPOCH })))))
 
   (defun deposit (id)
     (let ((now (at "block-time" (chain-data)))
@@ -276,7 +285,7 @@
 )
 
 
-(create-table free.p2p-escrow-v7.escrows)
-(create-table free.p2p-escrow-v7.reputation)
-(create-table free.p2p-escrow-v7.config)
-(free.p2p-escrow-v7.init-config)
+(create-table free.p2p-escrow-v10.escrows)
+(create-table free.p2p-escrow-v10.reputation)
+(create-table free.p2p-escrow-v10.config)
+(free.p2p-escrow-v10.init-config)

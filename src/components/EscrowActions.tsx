@@ -26,6 +26,8 @@ import {
   buildReleaseTx,
   buildRefundTx,
   buildDeleteOfferTx,
+  buildCancelAcceptedOfferTx,
+  buildTimeoutAcceptedCloseTx,
   buildTimeoutFundedRefundTx,
   buildTimeoutPaidDisputeTx,
   buildProfileAuthTx,
@@ -36,6 +38,7 @@ import {
   signTransaction,
   submitTransaction,
   pollTransaction,
+  T1_SECONDS,
   T2_SECONDS,
   T3_SECONDS,
   readEscrow,
@@ -60,6 +63,7 @@ import {
   MessageCircle,
   Star,
   Info,
+  XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -568,6 +572,20 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
     if (selectedOfferId === offerId) setSelectedOfferId(null);
   };
 
+  const handleCancelAcceptedOffer = () => {
+    if (!account || !selectedEscrow) return;
+    executeAction("Cancel Offer", () =>
+      buildCancelAcceptedOfferTx(selectedEscrow.offerId, account.account, account.publicKey)
+    );
+  };
+
+  const handleTimeoutAcceptedClose = () => {
+    if (!account || !selectedEscrow) return;
+    executeAction("Close (T1 Expired)", () =>
+      buildTimeoutAcceptedCloseTx(selectedEscrow.offerId, account.account, account.publicKey)
+    );
+  };
+
   const handleTimeoutFundedRefund = async () => {
     if (!account || !selectedEscrow) return;
     const refundTo = selectedEscrow.side === "SELL" ? selectedEscrow.creator : selectedEscrow.buyer;
@@ -661,6 +679,8 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
   const canRefund = (selectedEscrow?.state === "FUNDED" || selectedEscrow?.state === "PAID" || selectedEscrow?.state === "DISPUTED") &&
     account?.account === selectedEscrow?.arbiter &&
     (selectedEscrow?.side === "SELL" || !!selectedEscrow?.buyer);
+  const canCancelAcceptedOffer = selectedEscrow?.state === "ACCEPTED" && account?.account === selectedEscrow?.creator && !isStepExpired(selectedEscrow.acceptedAt, T1_SECONDS);
+  const canTimeoutAcceptedClose = selectedEscrow?.state === "ACCEPTED" && !!account?.account && isStepExpired(selectedEscrow.acceptedAt, T1_SECONDS);
   const canTimeoutFundedRefund = selectedEscrow?.state === "FUNDED" && account?.account === selectedEscrow?.seller && isStepExpired(selectedEscrow.fundedAt, T2_SECONDS);
   const canTimeoutPaidDispute = selectedEscrow?.state === "PAID" && !!account?.account && isStepExpired(selectedEscrow.paidAt, T3_SECONDS);
 
@@ -953,8 +973,40 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                   </Button>
                 )}
 
+                {canCancelAcceptedOffer && (
+                  <Button
+                    onClick={handleCancelAcceptedOffer}
+                    disabled={!!actionLoading}
+                    variant="outline"
+                    className="gap-2 border-destructive text-destructive hover:bg-destructive/10"
+                  >
+                    {actionLoading === "Cancel Offer" ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <XCircle className="h-4 w-4" />
+                    )}
+                    Cancel Offer
+                  </Button>
+                )}
+
+                {canTimeoutAcceptedClose && (
+                  <Button
+                    onClick={handleTimeoutAcceptedClose}
+                    disabled={!!actionLoading}
+                    variant="outline"
+                    className="gap-2 border-amber-500 text-amber-600 hover:bg-amber-500/10"
+                  >
+                    {actionLoading === "Close (T1 Expired)" ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <XCircle className="h-4 w-4" />
+                    )}
+                    Close offer (buyer did not fund in time)
+                  </Button>
+                )}
+
                 {canDepositFinal && (
-                  <Button 
+                  <Button
                     onClick={handleDeposit}
                     disabled={!!actionLoading}
                     className="gap-2"

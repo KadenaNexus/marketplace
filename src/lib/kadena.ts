@@ -677,6 +677,51 @@ export function buildDeleteOfferTx(
     .createTransaction();
 }
 
+/* ---------- CANCEL ACCEPTED OFFER (creator only; before T1 expires) ---------- */
+
+export function buildCancelAcceptedOfferTx(
+  offerId: string,
+  creatorAccount: string,
+  creatorPubKey: string
+) {
+  const signer = signerPayloadForAccount(creatorAccount, creatorPubKey);
+  const authCap = `${CONTRACT_FQN}.ACCOUNT_AUTH`;
+  return Pact.builder
+    .execution(`(${CONTRACT_FQN}.cancel-accepted-offer "${offerId}")`)
+    .addSigner(signer, (s) => [s("coin.GAS"), s(authCap, creatorAccount)])
+    .setMeta({
+      chainId: CHAIN_ID,
+      senderAccount: creatorAccount,
+      gasLimit: GAS_LIMIT,
+      gasPrice: GAS_PRICE,
+      ttl: 600,
+    })
+    .setNetworkId(NETWORK_ID)
+    .createTransaction();
+}
+
+/* ---------- TIMEOUT: ACCEPTED -> CLOSED (anyone; buyer did not fund within T1) ---------- */
+
+export function buildTimeoutAcceptedCloseTx(
+  offerId: string,
+  callerAccount: string,
+  callerPubKey: string
+) {
+  const signer = signerPayloadForAccount(callerAccount, callerPubKey);
+  return Pact.builder
+    .execution(`(${CONTRACT_FQN}.timeout-accepted-close "${offerId}")`)
+    .addSigner(signer, (s) => [s("coin.GAS")])
+    .setMeta({
+      chainId: CHAIN_ID,
+      senderAccount: callerAccount,
+      gasLimit: GAS_LIMIT,
+      gasPrice: GAS_PRICE,
+      ttl: 600,
+    })
+    .setNetworkId(NETWORK_ID)
+    .createTransaction();
+}
+
 /* ---------- TIMEOUT: FUNDED -> REFUNDED (seller only; buyer did not mark paid within T2) ---------- */
 /* Chain requires coin.TRANSFER(vault, refundTo, amount) in sigs. Pass vault from getEscrowVaultAccount(offerId). */
 export function buildTimeoutFundedRefundTx(
