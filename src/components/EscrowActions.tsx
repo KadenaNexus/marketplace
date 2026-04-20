@@ -25,7 +25,6 @@ import {
   buildMarkPaidTx,
   buildReleaseTx,
   buildRefundTx,
-  buildCloseOfferTx,
   buildDeleteOfferTx,
   buildTimeoutFundedRefundTx,
   buildTimeoutPaidDisputeTx,
@@ -54,7 +53,6 @@ import {
   DollarSign, 
   Unlock,
   RotateCcw,
-  XCircle,
   ExternalLink,
   RefreshCw,
   AlertTriangle,
@@ -556,12 +554,6 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
     );
   };
 
-  const handleCloseOffer = () => {
-    if (!account || !selectedEscrow) return;
-    executeAction("Close Offer", () =>
-      buildCloseOfferTx(selectedEscrow.offerId, account.account, account.publicKey)
-    );
-  };
 
   const handleDeleteOffer = (offerId: string) => {
     if (!account) {
@@ -669,9 +661,6 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
   const canRefund = (selectedEscrow?.state === "FUNDED" || selectedEscrow?.state === "PAID" || selectedEscrow?.state === "DISPUTED") &&
     account?.account === selectedEscrow?.arbiter &&
     (selectedEscrow?.side === "SELL" || !!selectedEscrow?.buyer);
-  const canCloseOffer =
-    (selectedEscrow?.state === "CREATED" || selectedEscrow?.state === "ACCEPTED") &&
-    account?.account === selectedEscrow?.creator;
   const canTimeoutFundedRefund = selectedEscrow?.state === "FUNDED" && account?.account === selectedEscrow?.seller && isStepExpired(selectedEscrow.fundedAt, T2_SECONDS);
   const canTimeoutPaidDispute = selectedEscrow?.state === "PAID" && !!account?.account && isStepExpired(selectedEscrow.paidAt, T3_SECONDS);
 
@@ -688,7 +677,6 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
   const canDepositFinal = canDeposit && !isInDisputeForParty && role === "seller";
   const canMarkPaidFinal = canMarkPaid && !isInDisputeForParty;
   const canReleaseFinal = canRelease && !isInDisputeForParty;
-  const canCloseOfferFinal = canCloseOffer && !isInDisputeForParty;
   const canTimeoutFundedRefundFinal = canTimeoutFundedRefund && !isInDisputeForParty;
   const canTimeoutPaidDisputeFinal = canTimeoutPaidDispute && !isInDisputeForParty;
 
@@ -949,23 +937,8 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                   </Alert>
                 )}
                 <div className="flex flex-wrap gap-3">
-                {canCloseOfferFinal && (
-                  <Button 
-                    onClick={handleCloseOffer}
-                    disabled={!!actionLoading}
-                    variant="outline"
-                    className="gap-2"
-                  >
-                    {actionLoading === "Close Offer" ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <XCircle className="h-4 w-4" />
-                    )}
-                    Close Offer
-                  </Button>
-                )}
 
-                {canAcceptFinal && (
+{canAcceptFinal && (
                   <Button 
                     onClick={handleAccept}
                     disabled={!!actionLoading}
