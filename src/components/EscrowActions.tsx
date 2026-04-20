@@ -8,10 +8,8 @@ import { EscrowStatus } from "./EscrowStatus";
 import { ProfileSummaryView } from "./ProfileSummary";
 import { OfferCard } from "./OfferCard";
 import { DisputeView } from "./DisputeView";
-import { OpenDisputeDialog } from "./OpenDisputeDialog";
 import { ChatBox } from "./ChatBox";
-import { getDispute } from "@/lib/disputeApi";
-import { putFundTxRequestKey } from "@/lib/disputeApi";
+import { getDispute, openDispute, putFundTxRequestKey } from "@/lib/disputeApi";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useWallet } from "@/hooks/useWallet";
@@ -89,7 +87,6 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [deletingOfferId, setDeletingOfferId] = useState<string | null>(null);
   const [transactions, setTransactions] = useState<TransactionResult[]>([]);
-  const [showDisputeDialog, setShowDisputeDialog] = useState(false);
   const [disputeTab, setDisputeTab] = useState("details");
   const [showRatingDialog, setShowRatingDialog] = useState(false);
   const [registeringCompletion, setRegisteringCompletion] = useState(false);
@@ -589,11 +586,73 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
     );
   };
 
-  const handleTimeoutPaidDispute = () => {
+  const handleTimeoutPaidDispute = async () => {
     if (!account || !selectedEscrow) return;
-    executeAction("Timeout: Dispute (T3)", () =>
-      buildTimeoutPaidDisputeTx(selectedEscrow.offerId, account.account, account.publicKey)
-    );
+
+    setActionLoading("Timeout: Dispute (T3)");
+    await new Promise((r) => setTimeout(r, 0));
+
+    try {
+      const tx = buildTimeoutPaidDisputeTx(selectedEscrow.offerId, account.account, account.publicKey);
+      const signedTx = await signTransaction(tx);
+      const requestKey = await submitTransaction(signedTx);
+      const txResult = await pollTransaction(requestKey);
+      const res = txResult?.result;
+      if (res?.status === "failure") {
+        let errMsg = "Transaction failed on-chain";
+        const e = res.error;
+        if (typeof e === "string") errMsg = e;
+        else if (e && typeof e === "object") {
+          const o = e as Record<string, unknown>;
+          errMsg = String(o.message ?? o.msg ?? o.info ?? o.detail ?? errMsg);
+        }
+        throw new Error(errMsg);
+      }
+
+      addTransaction("Timeout: Dispute (T3)", requestKey);
+
+      // Atomically create off-chain dispute record so arbiter panel is functional
+      try {
+        const authTx = buildProfileAuthTx(account.account, account.publicKey);
+        let signedCmd = await signTransaction(authTx) as any;
+        if (signedCmd?.signedCmd && !signedCmd.cmd) signedCmd = signedCmd.signedCmd;
+        const sigs = Array.isArray(signedCmd?.sigs) ? [...signedCmd.sigs] : [];
+        if (sigs[0] && !sigs[0].pubKey) sigs[0] = { ...sigs[0], pubKey: account.publicKey };
+        if (sigs[0]?.signature && !sigs[0].sig) sigs[0] = { ...sigs[0], sig: sigs[0].signature };
+
+        await openDispute({
+          offerId: selectedEscrow.offerId,
+          openedBy: account.account === selectedEscrow.buyer ? "buyer" : "seller",
+          reason: "Seller did not release within T3 timeout",
+          wallet: account.account,
+          publicKey: account.publicKey,
+          signedCmd: { ...signedCmd, sigs },
+        });
+
+        toast.success("Dispute opened — arbiter has been notified", {
+          description: (
+            <a href={getTxExplorerUrl(requestKey)} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "underline", wordBreak: "break-all" }}>
+              View on Explorer ↗
+            </a>
+          ),
+        });
+        setDisputeTab("dispute");
+        queryClient.invalidateQueries({ queryKey: ["dispute-check"] });
+      } catch (disputeErr) {
+        toast.warning("Moved to dispute on-chain, but arbiter record could not be created", {
+          description: `Please contact support with offer ID: ${selectedEscrow.offerId}`,
+        });
+      }
+
+      loadAll();
+    } catch (error) {
+      console.error("Timeout: Dispute (T3) error:", error);
+      toast.error("Timeout: Dispute (T3) failed", {
+        description: error instanceof Error ? error.message : "Unknown error",
+      });
+    } finally {
+      setActionLoading(null);
+    }
   };
 
   const canAccept = selectedEscrow?.state === "CREATED" && account?.account !== selectedEscrow?.creator;
@@ -613,10 +672,6 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
   const canCloseOffer =
     (selectedEscrow?.state === "CREATED" || selectedEscrow?.state === "ACCEPTED") &&
     account?.account === selectedEscrow?.creator;
-  const canOpenDispute =
-    (account?.account === selectedEscrow?.seller || account?.account === selectedEscrow?.buyer) &&
-    selectedEscrow?.state === "PAID" &&
-    (!existingDispute || existingDispute.status !== "OPEN");
   const canTimeoutFundedRefund = selectedEscrow?.state === "FUNDED" && account?.account === selectedEscrow?.seller && isStepExpired(selectedEscrow.fundedAt, T2_SECONDS);
   const canTimeoutPaidDispute = selectedEscrow?.state === "PAID" && !!account?.account && isStepExpired(selectedEscrow.paidAt, T3_SECONDS);
 
@@ -634,7 +689,6 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
   const canMarkPaidFinal = canMarkPaid && !isInDisputeForParty;
   const canReleaseFinal = canRelease && !isInDisputeForParty;
   const canCloseOfferFinal = canCloseOffer && !isInDisputeForParty;
-  const canOpenDisputeFinal = canOpenDispute && !isInDisputeForParty;
   const canTimeoutFundedRefundFinal = canTimeoutFundedRefund && !isInDisputeForParty;
   const canTimeoutPaidDisputeFinal = canTimeoutPaidDispute && !isInDisputeForParty;
 
@@ -988,18 +1042,6 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                   </Button>
                 )}
 
-                {canOpenDisputeFinal && (
-                  <Button 
-                    onClick={() => setShowDisputeDialog(true)}
-                    disabled={!!actionLoading}
-                    variant="outline"
-                    className="gap-2 border-destructive text-destructive hover:bg-destructive hover:text-destructive-foreground"
-                  >
-                    <AlertTriangle className="h-4 w-4" />
-                    Open Dispute
-                  </Button>
-                )}
-
                 {canTimeoutFundedRefundFinal && (
                   <Button 
                     onClick={handleTimeoutFundedRefund}
@@ -1135,20 +1177,6 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
             </Tabs>
           </CardContent>
         </Card>
-      )}
-
-      {/* Open Dispute Dialog */}
-      {selectedEscrow && (
-        <OpenDisputeDialog
-          open={showDisputeDialog}
-          onOpenChange={setShowDisputeDialog}
-          escrow={selectedEscrow}
-          onSuccess={() => {
-            setDisputeTab("dispute");
-            queryClient.invalidateQueries({ queryKey: ["dispute-check"] });
-            loadAll();
-          }}
-        />
       )}
 
       {/* Rate trade dialog (only for completed trades) */}
