@@ -3,22 +3,15 @@ import { Button } from "@/components/ui/button";
 import { AlertTriangle, Clock, MessageSquare, Zap, Shield } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 
-const storageKey = (account: string) => `kadena-nexus-trade-warning-acknowledged:${account}`;
-
 export function TradeWarningModal() {
-  const { isConnected, account } = useWallet();
+  const { isConnected } = useWallet();
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
-    if (isConnected && account?.account && !localStorage.getItem(storageKey(account.account))) {
-      setOpen(true);
-    }
-  }, [isConnected, account?.account]);
+    if (isConnected) setOpen(true);
+  }, [isConnected]);
 
-  const handleAcknowledge = () => {
-    if (account?.account) localStorage.setItem(storageKey(account.account), "true");
-    setOpen(false);
-  };
+  const handleAcknowledge = () => setOpen(false);
 
   if (!open) return null;
 
