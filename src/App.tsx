@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { WalletProvider } from "@/hooks/useWallet";
+import { TradeWarningModal } from "@/components/TradeWarningModal";
 import { ThemeProvider } from "next-themes";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { useNewMessageNotification } from "@/hooks/useNewMessageNotification";
@@ -30,6 +31,7 @@ const App = () => (
         <Sonner />
         <BrowserRouter>
           <WalletProvider>
+            <TradeWarningModal />
             <OnlineStatusProvider>
               <Routes>
                 <Route path="/" element={<Index />} />
