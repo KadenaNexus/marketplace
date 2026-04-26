@@ -170,3 +170,16 @@
 ::-webkit-scrollbar-thumb:active {
   background: hsl(160 84% 45% / 0.7);
 }
+
+.kadena-sub-brand {
+  font-size: 10px;
+  font-weight: 400;
+  opacity: 0.55;
+  line-height: 1.2;
+  transition: opacity 0.2s ease;
+}
+
+.kadena-sub-brand:hover {
+  opacity: 0.85;
+  text-decoration: underline;
+}
