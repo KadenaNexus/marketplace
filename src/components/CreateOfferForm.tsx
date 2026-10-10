@@ -162,7 +162,7 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
       const isReadOnly = /read-only|system-only|database operation/.test(msg);
       const isChain = /Send failed|On-chain:|requestKey|Transaction failed/.test(msg) || isReadOnly;
       const hint = isReadOnly
-        ? `The Chainweb API is in read-only mode (no table writes). Use a write-capable API: set VITE_CHAINWEB_API to the full Pact URL (e.g. https://api.chainweb.com/chainweb/0.0/mainnet01/chain/1/pact) and restart. Current API: ${getChainwebDebugInfo().apiHost}`
+        ? `The Chainweb API is in read-only mode (no table writes). Set VITE_CHAINWEB_API to the full Pact URL for a write-capable node and restart. Current API: ${getChainwebDebugInfo().apiHost}`
         : isChain
           ? "Chain/node: " + msg
           : msg;

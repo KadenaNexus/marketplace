@@ -4,7 +4,7 @@
 ;; GOVERNANCE requires "admin-keyset" in the transaction data. Include data: "admin-keyset" = { "keys": ["<your-admin-pubkey>"], "pred": "keys-all" }.
 ;;
 ;; "Module admin is necessary but has not been acquired" = the signer did not GRANT the capability, or "admin-keyset" is missing/wrong.
-;;   The transaction needs the capability free.p2p-escrow5.GOVERNANCE to run. A capability
+;;   The transaction needs the capability free.p2p-escrow-v10.GOVERNANCE to run. A capability
 ;;   is "granted" when a signer SIGNS FOR IT — and the signer must satisfy the keyset in "admin-keyset".
 ;;   So: add "admin-keyset" to the tx data, sign with that key, and add the GOVERNANCE capability when signing.
 ;;
@@ -13,8 +13,8 @@
 ;; The app builds the transaction WITH the GOVERNANCE capability and admin-keyset in data, so when you
 ;; sign in the wallet you are granting it. Then init succeeds.
 
-(with-capability (free.p2p-escrow5.GOVERNANCE)
-  (create-table free.p2p-escrow5.escrows)
-  (create-table free.p2p-escrow5.reputation)
-  (create-table free.p2p-escrow5.config)
-  (free.p2p-escrow5.init-config))
+(with-capability (free.p2p-escrow-v10.GOVERNANCE)
+  (create-table free.p2p-escrow-v10.escrows)
+  (create-table free.p2p-escrow-v10.reputation)
+  (create-table free.p2p-escrow-v10.config)
+  (free.p2p-escrow-v10.init-config))

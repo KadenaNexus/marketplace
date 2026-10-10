@@ -16,11 +16,11 @@ const CHAIN_ID_RAW =
   (typeof import.meta.env?.VITE_CHAIN_ID === "string" && import.meta.env.VITE_CHAIN_ID) || "1";
 export const CHAIN_ID: ChainId = CHAIN_ID_RAW as ChainId;
 
-// VITE_CHAINWEB_API overrides. Else: testnet → api.testnet.chainweb.com (often allows writes); mainnet → chainweb.chaddex.com (mainnet nodes may be read-only for user tables).
+// VITE_CHAINWEB_API overrides. The mainnet default is the active community Chainweb API.
 const DEFAULT_API_BASE =
   NETWORK_ID.startsWith("testnet")
     ? "https://api.testnet.chainweb.com"
-    : "https://chainweb.chaddex.com";
+    : "https://api.chainweb-community.org";
 // Direct Chainweb Pact API (no proxy). Set VITE_CHAINWEB_API to override base URL.
 const API_CHAINWEB_PACT =
   typeof import.meta.env?.VITE_CHAINWEB_API === "string" && import.meta.env.VITE_CHAINWEB_API
@@ -36,7 +36,7 @@ export const CONTRACT_NAMESPACE = (CONTRACT_NAMESPACE_ENV ?? "free").trim();
 
 const CONTRACT_MODULE_RAW =
   (typeof import.meta.env?.VITE_CONTRACT_MODULE === "string" && import.meta.env.VITE_CONTRACT_MODULE.trim()) ||
-  "p2p-escrow100";
+  "p2p-escrow-v10";
 /** Pact under namespace `free` treats bare `fn` as module `free.fn` — never use that as module name. */
 const INVALID_MODULE_NAMES = new Set(
   ["fn", "module", "namespace", "defun", "defcap", "deftable", "let", "if", "true", "false"].map((s) =>
@@ -45,9 +45,9 @@ const INVALID_MODULE_NAMES = new Set(
 );
 export const CONTRACT_MODULE = INVALID_MODULE_NAMES.has(CONTRACT_MODULE_RAW.toLowerCase())
   ? (console.error(
-      `[Kadena-NEXUS] VITE_CONTRACT_MODULE="${CONTRACT_MODULE_RAW}" is invalid (reserved in Pact / breaks as free.${CONTRACT_MODULE_RAW}). Using p2p-escrow100. Set VITE_CONTRACT_MODULE to your (module ...) name in p2p-escrow.pact.`
+      `[Kadena-NEXUS] VITE_CONTRACT_MODULE="${CONTRACT_MODULE_RAW}" is invalid (reserved in Pact / breaks as free.${CONTRACT_MODULE_RAW}). Using p2p-escrow-v10. Set VITE_CONTRACT_MODULE to your (module ...) name in p2p-escrow.pact.`
     ),
-    "p2p-escrow100")
+    "p2p-escrow-v10")
   : CONTRACT_MODULE_RAW;
 
 /** Fully-qualified contract module reference used in pact code. */

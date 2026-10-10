@@ -5,7 +5,7 @@ Part of [Kadena Nexus](https://kadena.ws). Live at https://marketplace.kadena.ws
 Built by Mica Dimic (winner of the Kadena Devs escrow challenge, January to April 2026), with contributions from Mirza Muhammad Baig (April 2026) and Mustafa Zahid (contract v6 to v10 fixes, timers, trade warning pop-up; maintainer since April 2026).
 
 - Deploying: see `DEPLOY.md`. Contract versions: see `contracts/README.md`.
-- This branch (`marketplace`) is the home of the marketplace code. It continues the old `Cool-Dev` branch (commit 11a381b), which was overwritten by a force-push on 12 Aug 2026 and restored as `recovered/Cool-Dev-marketplace`.
+- The `main` branch is the current home of the marketplace code. It continues the old `Cool-Dev` branch (commit 11a381b), which was overwritten by a force-push on 12 Aug 2026 and restored as `recovered/Cool-Dev-marketplace`.
 
 ---
 
@@ -90,10 +90,10 @@ DATABASE_URL=postgresql://user:password@host:port/kadena_nexus npm run dev:serve
 
 This starts the profile API on port 3001. The Vite dev server proxies `/api` and `/socket.io` (WebSocket) to it. If you see **ws proxy error: ECONNRESET** in the Vite terminal, run `npm run dev:server` in another terminal so the profile API is up.
 
-App runs at `http://localhost:8080`. Chainweb is called **directly** (no proxy): the app uses `VITE_CHAINWEB_API` or the default API base (e.g. `https://chainweb.chaddex.com`). Override with:
+App runs at `http://localhost:8080`. Chainweb is called **directly** (no proxy): the app uses `VITE_CHAINWEB_API` or defaults to the community Chainweb API. Override with:
 
 ```sh
-VITE_CHAINWEB_API=https://api.chainweb.com/chainweb/0.0/mainnet01/chain/1/pact npm run dev
+VITE_CHAINWEB_API=https://api.chainweb-community.org/chainweb/0.0/mainnet01/chain/1/pact npm run dev
 ```
 
 If you see CORS errors in the browser, the API may not allow requests from your origin; you can try another API or run a small proxy yourself.
@@ -110,7 +110,7 @@ If you see CORS errors in the browser, the API may not allow requests from your 
 
 ## Contract Deployment
 
-The Pact module is `free.p2p-escrow5` (see `CONTRACT_MODULE` in `src/lib/kadena.ts`; must match `(module ...)` in `p2p-escrow.pact`). It provides:
+The Pact module is `free.p2p-escrow-v10` (see `CONTRACT_MODULE` in `src/lib/kadena.ts`; must match `(module ...)` in `p2p-escrow.pact`). It provides:
 
 - **Strict state machine** — CREATED → ACCEPTED → FUNDED → PAID → COMPLETED (or REFUNDED/CLOSED/DISPUTED via timeouts or arbiter).
 - **Timed transitions (only after funded)** — T2 (mark paid) and T3 (release / dispute) start once KDA is in escrow. Before funding, creator can close the offer (CREATED or ACCEPTED); no contract time limits pre-fund. Config still stores `t1` for compatibility; it is unused for logic.
@@ -123,8 +123,8 @@ The Pact module is `free.p2p-escrow5` (see `CONTRACT_MODULE` in `src/lib/kadena.
 
 1. Deploy the **entire** `p2p-escrow.pact` file (module + the block at the end) in one transaction.
 2. The deploy tx **must include** in its data the keyset `admin-keyset` (e.g. `{ "keys": ["<your-admin-pubkey>"], "pred": "keys-all" }`). Only a signer that satisfies this keyset can grant GOVERNANCE.
-3. When signing the deploy tx you **must grant** the capability `free.p2p-escrow5.GOVERNANCE` (or `{namespace}.{module}.GOVERNANCE` if you changed the module name):
-   - **Chainweaver:** Add the capability `free.p2p-escrow5.GOVERNANCE` to the signer and include `admin-keyset` in the transaction data with your admin public key. If you don't add it, you get "Module admin is necessary but has not been acquired."
+3. When signing the deploy tx you **must grant** the capability `free.p2p-escrow-v10.GOVERNANCE` (or `{namespace}.{module}.GOVERNANCE` if you changed the module name):
+   - **Chainweaver:** Add the capability `free.p2p-escrow-v10.GOVERNANCE` to the signer and include `admin-keyset` in the transaction data with your admin public key. If you don't add it, you get "Module admin is necessary but has not been acquired."
 4. For **upgrades** (tables already exist), remove or comment out the block at the end of the file to avoid "table already exists."
 
 ### Tables and init in same tx
@@ -147,7 +147,7 @@ After you deploy `p2p-escrow.pact`, run **one** transaction to create tables and
 2. Go to **Interact** (or the Pact REPL / “Run” screen).
 3. In the **Pact code** field, paste the full block from `p2p-escrow-deploy-init.pact` (with-capability + create-table x3 + init-config). Do not use init-all alone — tables must be created at tx top level.
 4. Set **Sender** to the account that deployed the module (the one that has GOVERNANCE).
-5. Add the **GOVERNANCE** capability when signing (sign with the deployer key so `free.p2p-escrow5.GOVERNANCE` is granted).
+5. Add the **GOVERNANCE** capability when signing (sign with the deployer key so `free.p2p-escrow-v10.GOVERNANCE` is granted).
 6. Send the transaction.
 
 Run init in a **separate** transaction after deploy (two-step deploy). Use the block from `p2p-escrow-deploy-init.pact` or `buildInitAllTx` — this creates tables and sets config. After it succeeds, `create-offer` will work (if the node allows writes).
@@ -161,13 +161,13 @@ Call `buildInitAllTx(governanceAccount, governancePubKey)` (in `src/lib/kadena.t
 This happens when you run the init transaction (p2p-escrow-deploy-init.pact) but the **GOVERNANCE** capability was not granted. Fix:
 
 1. **Sign with the same key that deployed the module** — The account/key that deployed `p2p-escrow.pact` is the "module admin" and the only one who can grant GOVERNANCE.
-2. **Grant the capability when signing** — In Chainweaver, when you sign the init tx, you must **add** the capability `free.p2p-escrow5.GOVERNANCE` (or your module name) to the signer so you are granting it. If you don't add it, the capability is not acquired and you get this error.
+2. **Grant the capability when signing** — In Chainweaver, when you sign the init tx, you must **add** the capability `free.p2p-escrow-v10.GOVERNANCE` (or your module name) to the signer so you are granting it. If you don't add it, the capability is not acquired and you get this error.
 
-So: **Sender** = deployer account, **Signer** = deployer key, **Data** = include `admin-keyset` with `{ "keys": ["<deployer-pubkey>"], "pred": "keys-all" }`, and when signing add the capability **free.p2p-escrow5.GOVERNANCE**.
+So: **Sender** = deployer account, **Signer** = deployer key, **Data** = include `admin-keyset` with `{ "keys": ["<deployer-pubkey>"], "pred": "keys-all" }`, and when signing add the capability **free.p2p-escrow-v10.GOVERNANCE**.
 
 ### "Operation is not allowed in read-only or system-only mode" (mainnet chain 1)
 
-Your console shows: tx **mined** (blockHeight, events), but **result.status: "failure"** at the `insert escrows` step. The **node** that executed the tx (e.g. chainweb.chaddex.com on mainnet) is **read-only for user table writes** — the contract and frontend are correct.
+Your console shows: tx **mined** (blockHeight, events), but **result.status: "failure"** at the `insert escrows` step. The selected node is **read-only for user table writes** — the contract and frontend are correct.
 
 **For mainnet chain 1 only:** You need a **write-capable** node. The public community API may be read-only for user tables. Options:
 
@@ -182,13 +182,13 @@ Your console shows: tx **mined** (blockHeight, events), but **result.status: "fa
 
 The on-chain table for that module was created with an **older schema** (e.g. different field types). Pact tables keep their schema forever; upgrading the module code does not change the existing table.
 
-**Fix:** This repo now uses module **p2p-escrow5** so a **new** table is created with the current schema. Redeploy the **entire** `p2p-escrow.pact` file (module + init block at the end) as one transaction, and when signing **grant** `free.p2p-escrow5.GOVERNANCE`. The app defaults to `p2p-escrow5`; no `.env` change needed. Create new offers after that; accept/deposit/release will work. Old offers in p2p-escrow4 remain on-chain but the app will only list and use offers in p2p-escrow5.
+**Fix:** This repo uses module **p2p-escrow-v10**. Redeploy the **entire** `p2p-escrow.pact` file (module + init block at the end) as one transaction, and when signing **grant** `free.p2p-escrow-v10.GOVERNANCE`. The app defaults to `p2p-escrow-v10`. Offers in older module versions remain on-chain but the app lists offers from `p2p-escrow-v10`.
 
 ## Configuration
 
 - **Network:** `mainnet01`, **Chain:** `1`
-- **Chainweb API:** `VITE_CHAINWEB_API` — configurable (e.g. in `.env`). Use a write-capable node or provider for mainnet; some public endpoints are read-only for user table writes. Default may be a community API; override to point at your node or a write-capable provider.
-- **Contract:** `free.p2p-escrow5` by default (`CONTRACT_NAMESPACE`, `CONTRACT_MODULE` in `src/lib/kadena.ts`; overridable via `VITE_CONTRACT_NAMESPACE`, `VITE_CONTRACT_MODULE`. Must match the module name in `p2p-escrow.pact`.)
+- **Chainweb API:** `VITE_CHAINWEB_API` — configurable (e.g. in `.env`). The default mainnet endpoint is `api.chainweb-community.org`; public endpoints may restrict user table writes. Override it to point at your node or a write-capable provider.
+- **Contract:** `free.p2p-escrow-v10` by default (`CONTRACT_NAMESPACE`, `CONTRACT_MODULE` in `src/lib/kadena.ts`; overridable via `VITE_CONTRACT_NAMESPACE`, `VITE_CONTRACT_MODULE`. Must match the module name in `p2p-escrow.pact`.)
 - **Arbiter:** Set in the Pact constant `PLATFORM_ARBITER` before deployment
 - **PostgreSQL (profiles only):** `DATABASE_URL` — offers/escrows are **not** in PostgreSQL; they stay on-chain (Pact)
 
