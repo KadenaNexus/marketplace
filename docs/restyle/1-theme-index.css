@@ -1,0 +1,86 @@
+/* ===== Kadena Nexus theme for the P2P Marketplace =====
+   In src/index.css, replace the existing :root { ... } and .dark { ... } blocks
+   (inside @layer base) with the two blocks below. Then add the .nx-pulse block
+   anywhere after them. Nothing else in index.css changes. */
+
+:root {
+  --background: 0 0% 100%;
+  --foreground: 196 60% 18%;
+  --card: 0 0% 100%;
+  --card-foreground: 196 60% 18%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 196 60% 18%;
+  --primary: 195 63% 30%;            /* Nexus teal #1C637B */
+  --primary-foreground: 0 0% 100%;
+  --secondary: 192 24% 96%;
+  --secondary-foreground: 196 60% 18%;
+  --muted: 192 24% 96%;
+  --muted-foreground: 197 20% 39%;
+  --accent: 29 92% 46%;              /* Nexus orange #E2710A */
+  --accent-foreground: 0 0% 100%;
+  --destructive: 0 72% 50%;
+  --destructive-foreground: 0 0% 100%;
+  --success: 195 63% 30%;
+  --success-foreground: 0 0% 100%;
+  --warning: 29 92% 46%;
+  --warning-foreground: 0 0% 100%;
+  --border: 197 21% 87%;
+  --input: 197 21% 87%;
+  --ring: 195 63% 30%;
+  --radius: .6rem;
+  --sidebar-background: 0 0% 100%;
+  --sidebar-foreground: 196 60% 18%;
+  --sidebar-primary: 195 63% 30%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 192 24% 96%;
+  --sidebar-accent-foreground: 196 60% 18%;
+  --sidebar-border: 197 21% 87%;
+  --sidebar-ring: 195 63% 30%;
+  --font-sans: "Instrument Sans", system-ui, sans-serif;
+  --font-display: "Bricolage Grotesque", "Instrument Sans", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+.dark {
+  --background: 196 52% 12%;
+  --foreground: 196 35% 94%;
+  --card: 196 53% 15%;
+  --card-foreground: 196 35% 94%;
+  --popover: 196 53% 15%;
+  --popover-foreground: 196 35% 94%;
+  --primary: 195 54% 59%;
+  --primary-foreground: 196 52% 12%;
+  --secondary: 197 50% 18%;
+  --secondary-foreground: 196 35% 94%;
+  --muted: 197 50% 18%;
+  --muted-foreground: 198 24% 73%;
+  --accent: 26 86% 58%;
+  --accent-foreground: 196 52% 12%;
+  --destructive: 0 72% 62%;
+  --destructive-foreground: 0 0% 100%;
+  --success: 195 54% 59%;
+  --success-foreground: 196 52% 12%;
+  --warning: 26 86% 58%;
+  --warning-foreground: 196 52% 12%;
+  --border: 200 40% 25%;
+  --input: 197 50% 18%;
+  --ring: 195 54% 59%;
+  --sidebar-background: 196 53% 15%;
+  --sidebar-foreground: 196 35% 94%;
+  --sidebar-primary: 195 54% 59%;
+  --sidebar-primary-foreground: 196 52% 12%;
+  --sidebar-accent: 197 50% 18%;
+  --sidebar-accent-foreground: 196 35% 94%;
+  --sidebar-border: 200 40% 25%;
+  --sidebar-ring: 195 54% 59%;
+}
+
+/* Pulse used by the current step in the landing page's example trade */
+@keyframes nx-ring {
+  0%   { box-shadow: 0 0 0 0 hsl(var(--accent) / .45); }
+  70%  { box-shadow: 0 0 0 7px hsl(var(--accent) / 0); }
+  100% { box-shadow: 0 0 0 0 hsl(var(--accent) / 0); }
+}
+.nx-pulse { animation: nx-ring 1.8s ease-out infinite; }
+@media (prefers-reduced-motion: reduce) { .nx-pulse { animation: none; } }
+h1, h2, h3 { text-wrap: balance; }
