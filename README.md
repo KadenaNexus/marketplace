@@ -1,3 +1,14 @@
+# Kadena P2P Marketplace
+
+Part of [Kadena Nexus](https://kadena.ws). Live at https://marketplace.kadena.ws. Peer-to-peer KDA trading with the seller's coins held by the `free.p2p-escrow-v10` Pact module on chain 1 until the buyer's payment is confirmed; a platform arbiter settles disputes and timeouts.
+
+Built by Mica Dimic (winner of the Kadena Devs escrow challenge, January to April 2026), with contributions from Mirza Muhammad Baig (April 2026) and Mustafa Zahid (contract v6 to v10 fixes, timers, trade warning pop-up; maintainer since April 2026).
+
+- Deploying: see `DEPLOY.md`. Contract versions: see `contracts/README.md`.
+- This branch (`marketplace`) is the home of the marketplace code. It continues the old `Cool-Dev` branch (commit 11a381b), which was overwritten by a force-push on 12 Aug 2026 and restored as `recovered/Cool-Dev-marketplace`.
+
+---
+
 # Kadena P2P Escrow
 
 Non-custodial peer-to-peer escrow dApp on **Kadena** (mainnet01, chain 1). Trades are secured by the `free.p2p-escrow` Pact module; funds are held in the contract until release or refund.

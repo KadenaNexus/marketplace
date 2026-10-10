@@ -86,7 +86,7 @@ export function TradeWarningModal() {
                 </li>
                 <li className="flex items-center gap-2">
                   <span className="w-1.5 h-1.5 rounded-full bg-amber-500 flex-shrink-0" />
-                  2 hours to release after payment is marked
+                  1 hour to release after payment is marked
                 </li>
               </ul>
               <p className="mt-2 text-destructive/80 dark:text-red-400 font-medium">
