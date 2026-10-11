@@ -49,9 +49,9 @@ const Index = () => {
     <div className="min-h-screen bg-background">
       {/* Header */}
       <header className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-50">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-          <AppLogo showBack={false} />
-          <div className="flex items-center gap-4">
+        <div className="container mx-auto flex flex-wrap items-center justify-between gap-y-3 px-4 py-4">
+          <AppLogo />
+          <div className="ml-auto flex items-center gap-4">
             <span className="hidden rounded-full border border-border bg-secondary px-3 py-1 text-xs font-medium text-muted-foreground sm:inline-flex">
               {NETWORK_ID === "mainnet01" ? "Mainnet" : NETWORK_ID} · Chain {CHAIN_ID}
             </span>
@@ -132,10 +132,17 @@ const Index = () => {
 
       {/* Footer */}
       <footer className="border-t border-border mt-16 py-6">
-        <div className="container mx-auto px-4 text-center text-sm text-muted-foreground">
-          <p>
-            Built on Kadena • Powered by Pact Smart Contracts
-          </p>
+        <div className="container mx-auto flex flex-col items-center gap-3 px-4 text-center text-sm text-muted-foreground">
+          <p>Built on Kadena • Powered by Pact Smart Contracts</p>
+          <nav aria-label="Kadena Nexus links" className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
+            <a className="transition-colors hover:text-foreground" href="https://kadena.ws/">
+              Part of Kadena Nexus
+            </a>
+            <span aria-hidden="true">·</span>
+            <a className="transition-colors hover:text-foreground" href="https://github.com/KadenaNexus">
+              Kadena Nexus on GitHub
+            </a>
+          </nav>
         </div>
       </footer>
     </div>
