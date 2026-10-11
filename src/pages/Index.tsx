@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { WalletConnect } from "@/components/WalletConnect";
 import { AppLogo } from "@/components/AppLogo";
-import { Dashboard } from "@/components/Dashboard";
+import NexusLanding from "@/components/NexusLanding";
 import { RoleSelection } from "@/components/RoleSelection";
 import { EscrowActions } from "@/components/EscrowActions";
 import { BuyerView } from "@/components/BuyerView";
@@ -50,8 +50,11 @@ const Index = () => {
       {/* Header */}
       <header className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-50">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-          <AppLogo subtitle={`${NETWORK_ID} • Chain ${CHAIN_ID}`} />
+          <AppLogo showBack={false} />
           <div className="flex items-center gap-4">
+            <span className="hidden rounded-full border border-border bg-secondary px-3 py-1 text-xs font-medium text-muted-foreground sm:inline-flex">
+              {NETWORK_ID === "mainnet01" ? "Mainnet" : NETWORK_ID} · Chain {CHAIN_ID}
+            </span>
             <ThemeToggle />
             {isArbiter && (
               <Link to="/admin" title="Admin / Arbiter panel">
@@ -80,9 +83,9 @@ const Index = () => {
         </div>
       </header>
 
-      <main className="container mx-auto px-4 py-8">
+      <main className={isConnected ? "container mx-auto px-4 py-8" : "w-full"}>
         {!isConnected ? (
-          <Dashboard />
+          <NexusLanding walletAction={<WalletConnect />} />
         ) : (
           <>
             {/* Top announcement — visible after sign-in (orange theme) */}

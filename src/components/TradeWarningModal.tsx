@@ -90,8 +90,9 @@ export function TradeWarningModal() {
                 </li>
               </ul>
               <p className="mt-2 text-destructive/80 dark:text-red-400 font-medium">
-                Missing a deadline triggers an automatic timeout, cancels the trade, and damages
-                your reputation score.
+                When a deadline passes, the next action depends on the trade state: an unfunded
+                trade can be closed, an unpaid funded trade can be refunded, and a missed release
+                deadline moves the trade into a dispute for arbiter review.
               </p>
             </div>
           </div>
@@ -113,7 +114,7 @@ export function TradeWarningModal() {
               <Shield className="h-4 w-4 text-muted-foreground" />
             </div>
             <div>
-              <p className="font-semibold text-foreground mb-0.5">Kadena Nexus Marketplace is decentralized</p>
+              <p className="font-semibold text-foreground mb-0.5">Kadena P2P Marketplace is decentralized</p>
               <p>
                 The platform cannot intervene to extend timeouts or reverse transactions.
               </p>
