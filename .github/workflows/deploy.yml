@@ -1,0 +1,22 @@
+# https://marketplace.kadena.ws/: every push is built; main is deployed only if the build passes (see KadenaNexus/homepage docs/DEPLOY-STANDARD.md)
+name: deploy
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+  deploy:
+    needs: test
+    uses: KadenaNexus/homepage/.github/workflows/deploy-app.yml@main
+    with:
+      url: https://marketplace.kadena.ws/
+    secrets: inherit
