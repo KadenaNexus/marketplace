@@ -107,7 +107,7 @@ jobs:
 
           printf '%s\n' "$deploy_output"
           deployed_short_sha="$(printf '%s\n' "$deploy_output" \
-            | sed -nE 's/^Marketplace deployment succeeded at ([0-9a-f]{7,40})\..*/\1/p' \
+            | sed -nE 's/^Marketplace deployment succeeded at ([0-9a-f]{7,40})\..*/\1/p; s/^Marketplace is already at origin\/main \(([0-9a-f]{7,40})\)\.?/\1/p' \
             | tail -n 1)"
           if [[ ! "$deployed_short_sha" =~ ^[0-9a-f]{7,40}$ ]]; then
             echo "Could not read the deployed commit from the server response." >&2
@@ -122,6 +122,8 @@ jobs:
           set -euo pipefail
           git fetch --no-tags origin main
           deployed_sha="$(git rev-parse --verify "${DEPLOYED_SHORT_SHA}^{commit}")"
-          tag="deploy-marketplace-$(date -u +%F-%H%M)-${DEPLOYED_SHORT_SHA}"
+          tag="deploy-marketplace-$(date -u +%F-%H%M)-${DEPLOYED_SHORT_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag "$tag" "$deployed_sha"
           git push origin "refs/tags/$tag"
