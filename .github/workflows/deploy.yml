@@ -1,0 +1,53 @@
+name: Marketplace CI and deployment
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  checks:
+    name: checks
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: kadena_nexus
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d kadena_nexus"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/kadena_nexus
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Initialize disposable test database
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f server/schema.sql
+      - name: Build frontend
+        run: npm run build
+      - name: Run database hardening acceptance tests
+        run: npm run test:db-hardening
+  deploy:
+    name: deploy
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: checks
+    permissions:
+      contents: write
+    uses: KadenaNexus/homepage/.github/workflows/deploy-app.yml@main
+    with:
+      url: https://marketplace.kadena.ws/
+    secrets: inherit
