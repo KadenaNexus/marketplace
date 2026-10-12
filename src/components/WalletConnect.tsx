@@ -47,14 +47,15 @@ export function WalletConnect() {
 
   if (isConnected && account) {
     return (
-      <div className="flex items-center gap-3">
-        <div className="flex flex-col items-end">
+      <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+        <div className="flex min-w-0 flex-col items-end">
           <span className="text-xs text-muted-foreground">Connected</span>
-          <span className="font-mono text-sm text-primary">
-            {shortenAddress(account.account)}
+          <span className="font-mono text-sm text-primary whitespace-nowrap" title={account.account}>
+            <span className="hidden sm:inline">{shortenAddress(account.account)}</span>
+            <span className="sm:hidden">{`${account.account.slice(0, 6)}…${account.account.slice(-4)}`}</span>
           </span>
           {chainBalance !== undefined && (
-            <span className="text-[11px] text-muted-foreground tabular-nums" title={`Only KDA on chain ${CHAIN_ID} can be used here; your wallet may show a total across all chains.`}>
+            <span className="whitespace-nowrap text-[11px] text-muted-foreground tabular-nums" title={`Only KDA on chain ${CHAIN_ID} can be used here; your wallet may show a total across all chains.`}>
               Chain {CHAIN_ID}: {chainBalance.toLocaleString("en-US", { maximumFractionDigits: 4 })} KDA
             </span>
           )}
@@ -78,10 +79,12 @@ export function WalletConnect() {
           variant="outline" 
           size="sm" 
           onClick={disconnect}
-          className="gap-2"
+          className="shrink-0 gap-2 px-2 sm:px-3"
+          aria-label="Disconnect"
+          title="Disconnect"
         >
           <LogOut className="h-4 w-4" />
-          Disconnect
+          <span className="hidden sm:inline">Disconnect</span>
         </Button>
       </div>
     );
