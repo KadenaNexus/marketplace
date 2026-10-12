@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
   T1_SECONDS, T2_SECONDS, T3_SECONDS, type Escrow,
-  buildRefundTx, getEscrowVaultAccount, signTransaction, submitTransaction, pollTransaction, getTxExplorerUrl,
+  buildRefundTx, buildTimeoutAcceptedCloseTx, getEscrowVaultAccount, signTransaction, submitTransaction, pollTransaction, getTxExplorerUrl,
 } from "@/lib/kadena";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -43,30 +43,38 @@ const LABEL: Record<Item["kind"], { badge: string; variant: "destructive" | "sec
   disputed: { badge: "Disputed on-chain", variant: "destructive", text: "Only you can settle it: release to the buyer or refund the seller." },
   "paid-expired": { badge: "Release overdue", variant: "destructive", text: "Buyer marked paid but the seller did not release within 1 hour. Either party can now press Open dispute; after that you can release or refund." },
   "funded-expired": { badge: "Payment window expired", variant: "secondary", text: "Seller funded, but the buyer never marked the payment within 4 hours. The seller can reclaim it from the trade, or you can refund the seller." },
-  "accepted-expired": { badge: "Never funded", variant: "outline", text: "Accepted but not funded within 1 hour. No KDA is locked; anyone can close it." },
+  "accepted-expired": { badge: "Never funded", variant: "outline", text: "Accepted but not funded within 1 hour. No KDA is locked; anyone can close it to clear the list." },
 };
 
 export function NeedsAttention({ escrows, account, onDone }: { escrows: Escrow[]; account: { account: string; publicKey: string }; onDone: () => void }) {
   const items = needsAttention(escrows, account.account);
   const [busy, setBusy] = useState<string | null>(null);
 
-  async function refundSeller(e: Escrow) {
-    if (!e.seller) return toast.error("Cannot determine the seller");
-    if (!confirm(`Refund ${e.amount} KDA to the seller (${short(e.seller)})? The buyer never marked the payment as sent.`)) return;
+  async function run(e: Escrow, build: () => Promise<any>, done: string, failed: string) {
     setBusy(e.offerId);
     try {
-      const vault = await getEscrowVaultAccount(e.offerId);
-      const signed = await signTransaction(buildRefundTx(e.offerId, account.account, account.publicKey, e.seller, e.amount, vault));
+      const signed = await signTransaction(await build());
       const key = await submitTransaction(signed);
       const res = (await pollTransaction(key))?.result;
       if (res?.status === "failure") throw new Error(typeof res.error === "string" ? res.error : (res.error as any)?.message ?? "Transaction failed");
-      toast.success("Refunded to seller", { description: <a href={getTxExplorerUrl(key)} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "underline" }}>View on Explorer ↗</a> });
+      toast.success(done, { description: <a href={getTxExplorerUrl(key)} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "underline" }}>View on Explorer ↗</a> });
       onDone();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Refund failed");
+      toast.error(err instanceof Error ? err.message : failed);
     } finally {
       setBusy(null);
     }
+  }
+
+  function refundSeller(e: Escrow) {
+    if (!e.seller) return toast.error("Cannot determine the seller");
+    if (!confirm(`Refund ${e.amount} KDA to the seller (${short(e.seller)})? The buyer never marked the payment as sent.`)) return;
+    run(e, async () => buildRefundTx(e.offerId, account.account, account.publicKey, e.seller, e.amount, await getEscrowVaultAccount(e.offerId)), "Refunded to seller", "Refund failed");
+  }
+
+  function closeUnfunded(e: Escrow) {
+    if (!confirm(`Close this never-funded trade? No KDA moves; the offer is marked CLOSED on-chain. You pay a tiny gas fee.`)) return;
+    run(e, async () => buildTimeoutAcceptedCloseTx(e.offerId, account.account, account.publicKey), "Trade closed", "Close failed");
   }
 
   return (
@@ -110,7 +118,13 @@ export function NeedsAttention({ escrows, account, onDone }: { escrows: Escrow[]
                           {busy === e.offerId ? <Loader2 className="h-4 w-4 animate-spin" /> : "Refund seller"}
                         </Button>
                       )}
+                      {kind === "accepted-expired" && (
+                        <Button size="sm" variant="ghost" disabled={busy === e.offerId} onClick={() => closeUnfunded(e)}>
+                          {busy === e.offerId ? <Loader2 className="h-4 w-4 animate-spin" /> : "Close"}
+                        </Button>
+                      )}
                       {kind === "disputed" && (
+
                         <Link to={`/admin/disputes/${encodeURIComponent(e.offerId)}`}><Button size="sm" variant="ghost">Open</Button></Link>
                       )}
                     </td>
