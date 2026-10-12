@@ -859,7 +859,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
               <TabsContent value="details" className="space-y-6 mt-4">
             {/* Timed step countdown (contract is source of truth) */}
             {(selectedEscrow.state === "ACCEPTED" || selectedEscrow.state === "FUNDED" || selectedEscrow.state === "PAID") && (
-              <TradeTimer escrow={selectedEscrow} />
+              <TradeTimer escrow={selectedEscrow} me={account?.account} />
             )}
 
             {/* Details Grid */}
