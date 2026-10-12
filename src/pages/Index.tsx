@@ -1,19 +1,21 @@
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { WalletConnect } from "@/components/WalletConnect";
 import { AppLogo } from "@/components/AppLogo";
-import NexusLanding from "@/components/NexusLanding";
+import NexusLanding, { useLang } from "@/components/NexusLanding";
+import { OfferAlertsButton, useAlertsStatus } from "@/components/OfferAlerts";
+import { ALERTS_COPY } from "@/lib/alertsCopy";
 import { RoleSelection } from "@/components/RoleSelection";
 import { EscrowActions } from "@/components/EscrowActions";
 import { BuyerView } from "@/components/BuyerView";
 import { SellerView } from "@/components/SellerView";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card, CardContent } from "@/components/ui/card";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useWallet } from "@/hooks/useWallet";
 import { fetchProfile } from "@/lib/profileApi";
-import { CHAIN_ID, NETWORK_ID, PLATFORM_ARBITER } from "@/lib/kadena";
-import { LogOut, Shield, Megaphone } from "lucide-react";
+import { CHAIN_ID, NETWORK_ID, PLATFORM_ARBITER, readEscrow } from "@/lib/kadena";
+import { LogOut, Shield, Megaphone, Bell } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { toast } from "sonner";
@@ -32,6 +34,23 @@ const Index = () => {
   });
 
   const isArbiter = !!account && account.account === PLATFORM_ARBITER;
+
+  // Offer alerts: sign-up strip, and links from alert emails (?offer=ID)
+  const [lang] = useLang();
+  const alerts = useAlertsStatus();
+  const [params] = useSearchParams();
+  const linkedOffer = params.get("offer");
+  const linkHandled = useRef(false);
+  useEffect(() => {
+    if (!linkedOffer || !isConnected || role !== null || linkHandled.current) return;
+    linkHandled.current = true;
+    readEscrow(linkedOffer)
+      .then((e) => {
+        if (e && e.state === "CREATED") setRole(e.side === "SELL" ? "buyer" : "seller");
+        else toast.info(ALERTS_COPY[lang].offerGone);
+      })
+      .catch(() => {});
+  }, [linkedOffer, isConnected, role, lang]);
 
   const handleRoleSelect = (selectedRole: UserRole) => {
     setRole(selectedRole);
@@ -85,7 +104,7 @@ const Index = () => {
 
       <main className={isConnected ? "container mx-auto px-4 py-8" : "w-full"}>
         {!isConnected ? (
-          <NexusLanding walletAction={<WalletConnect />} />
+          <NexusLanding walletAction={<WalletConnect />} fromAlert={!!linkedOffer} />
         ) : (
           <>
             {/* Top announcement — visible after sign-in (orange theme) */}
@@ -102,6 +121,16 @@ const Index = () => {
                 </div>
               </CardContent>
             </Card>
+
+            {alerts.data?.enabled && (
+              <div className="mb-8 flex flex-col gap-3 rounded-lg border border-border bg-card p-4 sm:flex-row sm:items-center sm:justify-between" dir={lang === "ar" ? "rtl" : "ltr"}>
+                <p className="flex items-center gap-2 text-sm">
+                  <Bell className="h-4 w-4 shrink-0 text-primary" />
+                  {ALERTS_COPY[lang].strip}
+                </p>
+                <OfferAlertsButton lang={lang} className="shrink-0" />
+              </div>
+            )}
 
             {!role ? (
               <div className="space-y-10">

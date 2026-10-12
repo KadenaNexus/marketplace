@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useQuery, useQueries, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -338,6 +338,21 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
     });
     return set;
   }, [disputeQueries, displayedEscrows]);
+
+  // Link from an offer alert email (?offer=ID): select that offer once it is in the list and scroll to it.
+  const deepLinkDone = useRef(false);
+  useEffect(() => {
+    if (deepLinkDone.current || viewMode !== "new") return;
+    const id = new URLSearchParams(window.location.search).get("offer");
+    if (!id) { deepLinkDone.current = true; return; }
+    if (!displayedEscrows.some((e) => e.offerId === id)) return;
+    deepLinkDone.current = true;
+    setSelectedOfferId(id);
+    setTimeout(() => document.getElementById(`offer-card-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 150);
+    const u = new URL(window.location.href);
+    u.searchParams.delete("offer");
+    window.history.replaceState(window.history.state, "", u.pathname + u.search + u.hash);
+  }, [displayedEscrows, viewMode]);
 
   // On-chain reputation (minimal counters; score calculation off-chain)
   const { data: sellerRep } = useQuery({
