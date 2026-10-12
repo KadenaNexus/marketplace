@@ -20,17 +20,55 @@ export function isStepExpired(deadlineIso: string | undefined, limitSeconds: num
 }
 
 function formatCountdown(seconds: number): string {
-  const m = Math.floor(seconds / 60);
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;
-  return `${m}:${s.toString().padStart(2, "0")}`;
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
+/**
+ * One plain sentence telling this person what happens next and whose turn it is.
+ * Button names match the trade actions: Deposit, Mark Paid, Release,
+ * Timeout: Refund (T2), Timeout: Dispute (T3), Close (T1 Expired).
+ */
+export function nextStep(escrow: Escrow, me: string | undefined, expired: boolean): string {
+  const kda = `${escrow.amount} KDA`;
+  const seller = !!me && me === escrow.seller;
+  const buyer = !!me && me === escrow.buyer;
+  if (escrow.state === "ACCEPTED") {
+    if (expired) return "The seller did not lock the KDA in time. Nothing was paid and nothing is at risk; the trade can be closed with Close (T1 Expired).";
+    if (seller) return `Your turn: press Deposit to lock ${kda} in escrow. The buyer will only send payment after that.`;
+    if (buyer) return `Waiting for the seller to lock ${kda} in escrow. Do not send any payment until the trade shows Funded.`;
+    return `Waiting for the seller to lock ${kda} in escrow.`;
+  }
+  if (escrow.state === "FUNDED") {
+    if (expired) {
+      if (seller) return "The buyer did not mark the payment in time. You can take your KDA back with Timeout: Refund (T2).";
+      if (buyer) return "The payment deadline passed, so the seller can now take the KDA back. If you already paid, message the seller in the trade chat right away.";
+      return "The payment deadline passed; the seller can take the KDA back.";
+    }
+    if (buyer) return `Your turn: the ${kda} is locked in escrow. Send the payment to the seller as agreed, then press Mark Paid before the time runs out.`;
+    if (seller) return "Your KDA is locked in escrow. Waiting for the buyer to send the payment and press Mark Paid. Do not release anything yet.";
+    return "KDA is locked in escrow. Waiting for the buyer to pay and press Mark Paid.";
+  }
+  if (escrow.state === "PAID") {
+    if (expired) return "The release deadline passed. Either side can press Timeout: Dispute (T3); the arbiter then reviews the trade and decides.";
+    if (seller) return `Your turn: the buyer says the payment is sent. Check that you received it in full, then press Release to send the ${kda}.`;
+    if (buyer) return `Payment marked as sent. Waiting for the seller to confirm and release the ${kda} to you. If they do not release in time, you can open a dispute.`;
+    return "Payment marked as sent. Waiting for the seller to release the KDA.";
+  }
+  return "";
 }
 
 interface TradeTimerProps {
   escrow: Escrow;
+  /** Connected wallet, to say whose turn it is. */
+  me?: string;
   className?: string;
 }
 
-export function TradeTimer({ escrow, className }: TradeTimerProps) {
+export function TradeTimer({ escrow, me, className }: TradeTimerProps) {
   const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
@@ -78,7 +116,7 @@ export function TradeTimer({ escrow, className }: TradeTimerProps) {
         <>
           <AlertTriangle className="h-4 w-4 text-destructive shrink-0" />
           <span className="font-medium text-destructive">
-            Time expired — {state === "ACCEPTED" ? "trade can be closed (no funds)." : state === "FUNDED" ? "seller can refund." : "trade moved to dispute."}
+            Time expired
           </span>
         </>
       ) : (
@@ -89,10 +127,13 @@ export function TradeTimer({ escrow, className }: TradeTimerProps) {
           </span>
           {warning && (
             <span className="text-amber-600 dark:text-amber-400">
-              (Last 2 min — complete this step soon)
+              (Last 2 min: complete this step soon)
             </span>
           )}
         </>
+      )}
+      {nextStep(escrow, me, expired) && (
+        <p className="basis-full text-muted-foreground">{nextStep(escrow, me, expired)}</p>
       )}
     </div>
   );

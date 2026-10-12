@@ -42,10 +42,10 @@ export function remindersFor(escrows: Escrow[], me: string, now = Date.now()): R
     }
     if (left <= 0 && left > -48 * 3600) {
       if (e.state === "FUNDED" && other === me) {
-        out.push({ key: `${id}:FUNDED:expired`, urgent: false, title: "Payment window ended: you can reclaim your KDA", body: `${tag}. The buyer did not mark the payment within 4 hours. Open the trade and use Refund.` });
+        out.push({ key: `${id}:FUNDED:expired`, urgent: false, title: "Payment window ended: you can reclaim your KDA", body: `${tag}. The buyer did not mark the payment within 4 hours. Open the trade and press Timeout: Refund (T2).` });
       }
       if (e.state === "PAID" && (actor === me || other === me)) {
-        out.push({ key: `${id}:PAID:expired`, urgent: true, title: "Release deadline passed", body: `${tag}. Either side can now open a dispute so the arbiter can settle it.` });
+        out.push({ key: `${id}:PAID:expired`, urgent: true, title: "Release deadline passed", body: `${tag}. Either side can now press Timeout: Dispute (T3) so the arbiter can settle it.` });
       }
     }
   }
