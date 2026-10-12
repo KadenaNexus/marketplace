@@ -171,6 +171,30 @@ const Index = () => {
             <a className="transition-colors hover:text-foreground" href="https://github.com/KadenaNexus">
               Kadena Nexus on GitHub
             </a>
+            <span aria-hidden="true">·</span>
+            <a className="transition-colors hover:text-foreground" href="https://nodes.kadena.ws/">
+              Network Monitor
+            </a>
+            <span aria-hidden="true">·</span>
+            <a className="transition-colors hover:text-foreground" href="https://adoption.kadena.ws/">
+              Adoption Index
+            </a>
+            <span aria-hidden="true">·</span>
+            <a className="transition-colors hover:text-foreground" href="https://earn.kadena.ws/">
+              Kadena Earn
+            </a>
+            <span aria-hidden="true">·</span>
+            <a className="transition-colors hover:text-foreground" href="https://quantum.kadena.ws/">
+              Quantum-Safe Kadena
+            </a>
+            <span aria-hidden="true">·</span>
+            <a className="transition-colors hover:text-foreground" href="https://kadenadevs.kadena.ws/">
+              Kadena Devs
+            </a>
+            <span aria-hidden="true">·</span>
+            <a className="transition-colors hover:text-foreground" href="https://kadena.ws/community-edition/">
+              Kadena Community Edition
+            </a>
           </nav>
         </div>
       </footer>
