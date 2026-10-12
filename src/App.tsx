@@ -7,6 +7,7 @@ import { WalletProvider } from "@/hooks/useWallet";
 import { ThemeProvider } from "next-themes";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { useNewMessageNotification } from "@/hooks/useNewMessageNotification";
+import { useTradeDeadlineReminders } from "@/hooks/useTradeDeadlineReminders";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import Profile from "./pages/Profile";
@@ -19,6 +20,7 @@ const queryClient = new QueryClient();
 function OnlineStatusProvider({ children }: { children: React.ReactNode }) {
   useOnlineStatus(); // Initialize WebSocket connection
   useNewMessageNotification(); // Toast + invalidate when user receives a message
+  useTradeDeadlineReminders(); // Toast (and background notification) before a trade deadline the user must meet
   return <>{children}</>;
 }
 
