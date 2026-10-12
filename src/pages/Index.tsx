@@ -51,16 +51,16 @@ const Index = () => {
       <header className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-50">
         <div className="container mx-auto flex flex-wrap items-center justify-between gap-y-3 px-4 py-4">
           <AppLogo />
-          <div className="ml-auto flex items-center gap-4">
+          <div className="ml-auto flex min-w-0 items-center gap-2 sm:gap-4">
             <span className="hidden rounded-full border border-border bg-secondary px-3 py-1 text-xs font-medium text-muted-foreground sm:inline-flex">
               {NETWORK_ID === "mainnet01" ? "Mainnet" : NETWORK_ID} · Chain {CHAIN_ID}
             </span>
             <ThemeToggle />
             {isArbiter && (
               <Link to="/admin" title="Admin / Arbiter panel">
-                <Button variant="outline" size="sm" className="gap-1.5">
+                <Button variant="outline" size="sm" className="gap-1.5 px-2 sm:px-3" aria-label="Admin">
                   <Shield className="h-4 w-4" />
-                  Admin
+                  <span className="hidden sm:inline">Admin</span>
                 </Button>
               </Link>
             )}
