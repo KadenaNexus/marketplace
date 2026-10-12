@@ -1,12 +1,15 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useWallet } from "@/hooks/useWallet";
+import { useAppChainBalance } from "@/hooks/useAppChainBalance";
+import { CHAIN_ID } from "@/lib/kadena";
 import { sendTestTransfer } from "@/lib/kadena";
 import { Wallet, LogOut, AlertCircle, Loader2, Send } from "lucide-react";
 import { toast } from "sonner";
 
 export function WalletConnect() {
   const { account, isConnecting, isConnected, isWalletAvailable, error, connect, disconnect } = useWallet();
+  const { data: chainBalance } = useAppChainBalance(isConnected ? account?.account : undefined);
   const [isSending, setIsSending] = useState(false);
 
   const handleTestTransfer = async () => {
@@ -50,6 +53,11 @@ export function WalletConnect() {
           <span className="font-mono text-sm text-primary">
             {shortenAddress(account.account)}
           </span>
+          {chainBalance !== undefined && (
+            <span className="text-[11px] text-muted-foreground tabular-nums" title={`Only KDA on chain ${CHAIN_ID} can be used here; your wallet may show a total across all chains.`}>
+              Chain {CHAIN_ID}: {chainBalance.toLocaleString("en-US", { maximumFractionDigits: 4 })} KDA
+            </span>
+          )}
         </div>
         <Button
           variant="outline"

@@ -267,6 +267,73 @@ export async function readCoinDetailsLocal(account: string): Promise<{ balance: 
   return { balance: Number.isFinite(n) ? n : 0 };
 }
 
+/* ---------- Balance on chain 1 vs. other chains ----------
+ * Wallets such as Ecko show the total KDA across all 20 chains, but this app only uses
+ * CHAIN_ID. These helpers explain a shortfall in plain words before anything is signed. */
+
+/** KDA paid in gas by one transaction at our gas settings (limit x price). */
+export const TX_GAS_KDA = GAS_LIMIT * GAS_PRICE;
+
+async function balanceOnChain(account: string, chain: string): Promise<number> {
+  const safe = account.replace(/"/g, '\\"');
+  const command = Pact.builder
+    .execution(`(try 0.0 (coin.get-balance "${safe}"))`)
+    .setMeta({ chainId: chain as ChainId, senderAccount: "free", gasLimit: GAS_LIMIT_READ, gasPrice: GAS_PRICE, ttl: 600 })
+    .setNetworkId(NETWORK_ID)
+    .createTransaction();
+  const client = chain === CHAIN_ID ? kadenaClient : createClient(API_HOST.replace(`/chain/${CHAIN_ID}/`, `/chain/${chain}/`));
+  const result = await client.local({ cmd: command.cmd, hash: command.hash, sigs: [] }, { preflight: false, signatureVerification: false });
+  if (result.result.status !== "success") return 0;
+  const v = result.result.data as unknown;
+  const n = typeof v === "number" ? v : typeof v === "object" && v && "decimal" in (v as object) ? Number((v as { decimal: string }).decimal) : Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** Balance on this app's chain. */
+export function readAppChainBalance(account: string): Promise<number> {
+  return balanceOnChain(account, CHAIN_ID);
+}
+
+/** KDA the account holds on the other 19 chains (only chains with a balance), largest first. */
+export async function readOtherChainBalances(account: string): Promise<{ chain: string; balance: number }[]> {
+  const chains = Array.from({ length: 20 }, (_, i) => String(i)).filter((c) => c !== CHAIN_ID);
+  const settled = await Promise.allSettled(chains.map((c) => balanceOnChain(account, c)));
+  return chains
+    .map((chain, i) => ({ chain, balance: settled[i].status === "fulfilled" ? (settled[i] as PromiseFulfilledResult<number>).value : 0 }))
+    .filter((x) => x.balance > 0)
+    .sort((a, b) => b.balance - a.balance);
+}
+
+const kda = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 4 });
+
+/**
+ * Null when the account has `needed` KDA (plus gas) on this app's chain; otherwise a title and a
+ * plain explanation naming where the person's KDA actually is and how to move it.
+ */
+export async function appChainShortfall(account: string, needed: number): Promise<{ title: string; description: string } | null> {
+  const need = needed + TX_GAS_KDA;
+  const have = await readAppChainBalance(account);
+  if (have + 1e-9 >= need) return null;
+  const others = await readOtherChainBalances(account).catch(() => []);
+  const top = others[0];
+  const move = Math.ceil((need - have + 0.005) * 100) / 100;
+  const where = others.length
+    ? `Your other KDA: ${others.slice(0, 3).map((o) => `${kda(o.balance)} KDA on chain ${o.chain}`).join(", ")}.`
+    : `This account has no KDA on any other chain either.`;
+  const how = top && top.balance >= move
+    ? `In your wallet, send at least ${kda(move)} KDA from chain ${top.chain} to chain ${CHAIN_ID} (to your same account), wait until it completes, then try again.`
+    : `Add at least ${kda(move)} KDA to this account on chain ${CHAIN_ID}, then try again.`;
+  return {
+    title: `Not enough KDA on chain ${CHAIN_ID}`,
+    description: `This marketplace only uses chain ${CHAIN_ID}; your wallet may show your total across all chains. On chain ${CHAIN_ID} you have ${kda(have)} KDA, and this needs ${kda(need)} KDA (${kda(needed)} KDA plus gas). ${where} ${how}`,
+  };
+}
+
+/** True when a chain error is the coin contract's "not enough funds" failure. */
+export function isInsufficientFunds(message: string): boolean {
+  return /insufficient (funds|balance)/i.test(message);
+}
+
 export async function submitTransaction(signedCmd: any): Promise<string> {
   const cmd = signedCmd?.signedCmd ?? signedCmd;
   const body = { cmds: Array.isArray(cmd) ? cmd : [cmd] };
