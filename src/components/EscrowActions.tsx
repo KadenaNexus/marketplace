@@ -13,6 +13,7 @@ import { getDispute, openDispute, putFundTxRequestKey } from "@/lib/disputeApi";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useWallet } from "@/hooks/useWallet";
+import { useAppChainBalance } from "@/hooks/useAppChainBalance";
 import { fetchProfilesBulk, type ProfileSummary } from "@/lib/profileApi";
 import { fetchRatingSummariesBulk, registerCompletion, checkCanRate, fetchTradeRatings, type RatingSummary } from "@/lib/ratingApi";
 import { initializeOnlineStatus, useOnlineStatusMap } from "@/hooks/useOnlineStatus";
@@ -20,6 +21,10 @@ import { RatingDisplay } from "./RatingDisplay";
 import { RatingSubmitDialog } from "./RatingSubmitDialog";
 import {
   listAllEscrows,
+  TX_GAS_KDA,
+  CHAIN_ID,
+  appChainShortfall,
+  isInsufficientFunds,
   buildAcceptOfferTx,
   buildDepositTx,
   buildMarkPaidTx,
@@ -82,6 +87,7 @@ interface EscrowActionsProps {
 
 export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", viewMode = "all" }: EscrowActionsProps) {
   const { account, isConnected } = useWallet();
+  const { data: appChainBalance, refetch: refetchAppChainBalance } = useAppChainBalance(isConnected ? account?.account : undefined);
   const queryClient = useQueryClient();
   const [allEscrows, setAllEscrows] = useState<Escrow[]>([]);
   const [selectedOfferId, setSelectedOfferId] = useState<string | null>(null);
@@ -485,6 +491,14 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
           desc += `Account on explorer: ${getAccountExplorerUrl(selectedEscrow.seller)}`;
         }
       }
+      if (isInsufficientFunds(desc) && account) {
+        const needed = actionName === "Deposit" && selectedEscrow ? selectedEscrow.amount : 0;
+        const shortfall = await appChainShortfall(account.account, needed).catch(() => null);
+        if (shortfall) {
+          toast.error(shortfall.title, { description: shortfall.description, duration: 20000 });
+          return;
+        }
+      }
       toast.error(`${actionName} failed`, { description: desc });
     } finally {
       setActionLoading(null);
@@ -524,6 +538,13 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
       toast.error("Deposit failed", {
         description: `Deposit must be signed by the KDA holder. On-chain: ${kdaHolder}. Your wallet: ${account.account}.`,
       });
+      return;
+    }
+    // Wallets show the total across all chains; the deposit can only use chain 1. Stop with a
+    // clear explanation instead of letting the chain answer "Insufficient funds".
+    const shortfall = await appChainShortfall(account.account, fresh.amount).catch(() => null);
+    if (shortfall) {
+      toast.error(shortfall.title, { description: shortfall.description, duration: 20000 });
       return;
     }
     const vaultAccount = await getEscrowVaultAccount(selectedEscrow.offerId);
@@ -1018,6 +1039,15 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                     )}
                     Deposit {selectedEscrow.amount.toFixed(4)} KDA
                   </Button>
+                )}
+
+                {canDepositFinal && appChainBalance !== undefined && (
+                  <p className={`basis-full text-xs ${appChainBalance < selectedEscrow.amount + TX_GAS_KDA ? "text-destructive" : "text-muted-foreground"}`}>
+                    Your chain {CHAIN_ID} balance: {appChainBalance.toLocaleString("en-US", { maximumFractionDigits: 4 })} KDA
+                    {appChainBalance < selectedEscrow.amount + TX_GAS_KDA
+                      ? ` (not enough: this deposit needs ${(selectedEscrow.amount + TX_GAS_KDA).toLocaleString("en-US", { maximumFractionDigits: 4 })} KDA on chain ${CHAIN_ID}. If your KDA is on another chain, move it to chain ${CHAIN_ID} in your wallet first.)`
+                      : " (enough for this deposit)"}
+                  </p>
                 )}
 
                 {canMarkPaidFinal && (

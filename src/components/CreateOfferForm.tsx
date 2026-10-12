@@ -17,6 +17,8 @@ import {
   isPactExecutionFailure,
   readCoinDetailsLocal,
   CHAIN_ID,
+  appChainShortfall,
+  isInsufficientFunds,
 } from "@/lib/kadena";
 import { putOfferDetails } from "@/lib/offerDetailsApi";
 import { Plus, Loader2, ShoppingCart, Store, Info } from "lucide-react";
@@ -90,6 +92,14 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
     await new Promise((r) => setTimeout(r, 0));
 
     try {
+      // Check chain 1 before anything is signed. A seller must later deposit the full amount,
+      // so they find out now (not after someone accepts); a buyer only needs gas.
+      const shortfall = await appChainShortfall(account.account, side === "SELL" ? amountNum : 0);
+      if (shortfall) {
+        toast.error(shortfall.title, { description: shortfall.description, duration: 20000 });
+        return;
+      }
+
       const coinDetails = await readCoinDetailsLocal(account.account);
       if (!coinDetails) {
         throw new Error(
@@ -166,6 +176,13 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
         : isChain
           ? "Chain/node: " + msg
           : msg;
+      if (isInsufficientFunds(msg) && account) {
+        const shortfall = await appChainShortfall(account.account, side === "SELL" ? parseFloat(amount) || 0 : 0).catch(() => null);
+        if (shortfall) {
+          toast.error(shortfall.title, { description: shortfall.description, duration: 20000 });
+          return;
+        }
+      }
       toast.error("Failed to create offer", { description: hint });
     } finally {
       setIsLoading(false);

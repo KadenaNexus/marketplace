@@ -194,7 +194,7 @@ const COPY: Record<Lang, Copy> = {
         ],
         [
           "A little KDA on Chain 1 for gas",
-          "Each transaction costs under 0.0001 KDA, so 0.1 KDA covers dozens of trades. Sellers also need the KDA they want to sell on Chain 1."
+          "Each transaction costs under 0.0001 KDA, so 0.1 KDA covers dozens of trades. Sellers also need the KDA they want to sell on Chain 1. Your wallet may show your total across all chains; only the KDA on Chain 1 counts here."
         ],
         [
           "A payment method the other side accepts",
@@ -434,7 +434,7 @@ const COPY: Record<Lang, Copy> = {
         ],
         [
           "قليل من KDA على السلسلة 1 لرسوم الشبكة",
-          "كل معاملة تكلف أقل من 0.0001 KDA، لذا 0.1 KDA تكفي لعشرات الصفقات. يحتاج البائعون أيضاً إلى عملات KDA التي يريدون بيعها على السلسلة 1."
+          "كل معاملة تكلف أقل من 0.0001 KDA، لذا 0.1 KDA تكفي لعشرات الصفقات. يحتاج البائعون أيضاً إلى عملات KDA التي يريدون بيعها على السلسلة 1. قد تعرض محفظتك مجموع رصيدك على كل السلاسل؛ هنا يُحتسب فقط رصيدك على السلسلة 1."
         ],
         [
           "طريقة دفع يقبلها الطرف الآخر",
