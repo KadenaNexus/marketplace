@@ -9,6 +9,7 @@
  */
 
 import "dotenv/config";
+import { registerAlertRoutes, startAlertWatcher } from "./alerts.js";
 import express from "express";
 import rateLimit from "express-rate-limit";
 import cors from "cors";
@@ -289,6 +290,9 @@ app.use("/uploads/chat", (req, res, next) => {
 
 /** @type {pg.Pool} */
 let pool;
+
+// Offer alerts by email (off until RESEND_API_KEY is set)
+registerAlertRoutes(app, () => pool);
 
 // WebSocket server for online status tracking
 const httpServer = createServer(app);
@@ -2287,6 +2291,7 @@ async function start() {
 
   httpServer.listen(PORT, () => {
     console.log(`Profile API listening on http://localhost:${PORT}`);
+    startAlertWatcher(() => pool);
     console.log(`WebSocket server ready for online status tracking`);
   });
 }

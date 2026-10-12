@@ -245,3 +245,46 @@ BEGIN
     END IF;
 EXCEPTION WHEN undefined_table THEN NULL;
 END $$;
+
+-- Offer alerts by email (server/alerts.js). One row per address; the token is the manage/unsubscribe key.
+CREATE TABLE IF NOT EXISTS alert_subscriptions (
+    id SERIAL PRIMARY KEY,
+    email VARCHAR(254) NOT NULL UNIQUE,
+    token VARCHAR(64) NOT NULL UNIQUE,
+    want_sell BOOLEAN NOT NULL DEFAULT TRUE,
+    want_buy BOOLEAN NOT NULL DEFAULT FALSE,
+    currencies VARCHAR(100) NOT NULL DEFAULT '',
+    min_kda DECIMAL,
+    max_kda DECIMAL,
+    frequency VARCHAR(10) NOT NULL DEFAULT 'instant' CHECK (frequency IN ('instant', 'daily')),
+    lang VARCHAR(2) NOT NULL DEFAULT 'en' CHECK (lang IN ('en', 'ar')),
+    confirmed_at TIMESTAMP WITH TIME ZONE,
+    unsubscribed_at TIMESTAMP WITH TIME ZONE,
+    confirm_sent_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_alert_subscriptions_active ON alert_subscriptions(frequency) WHERE confirmed_at IS NOT NULL AND unsubscribed_at IS NULL;
+
+-- Offers the alert watcher has seen (announced_at set once emailed or no longer open).
+CREATE TABLE IF NOT EXISTS alert_offers_seen (
+    offer_id VARCHAR(255) PRIMARY KEY,
+    first_seen_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    announced_at TIMESTAMP WITH TIME ZONE
+);
+
+-- Every alert email attempt (for the daily sending limit).
+CREATE TABLE IF NOT EXISTS alert_mail_log (
+    id SERIAL PRIMARY KEY,
+    subscription_id INTEGER,
+    kind VARCHAR(20) NOT NULL,
+    ok BOOLEAN NOT NULL,
+    sent_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_alert_mail_log_sent_at ON alert_mail_log(sent_at);
+
+-- Small key/value store for the alert watcher (first-run marker, last daily summary date).
+CREATE TABLE IF NOT EXISTS alert_state (
+    key VARCHAR(64) PRIMARY KEY,
+    value TEXT
+);

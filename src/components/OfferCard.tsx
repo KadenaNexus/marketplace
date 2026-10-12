@@ -48,7 +48,8 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, onSelect, onDe
 
   return (
     <Card 
-      className={`transition-all cursor-pointer relative ${
+      id={`offer-card-${escrow.offerId}`}
+      className={`transition-all cursor-pointer relative scroll-mt-28 ${
         isDeleting ? "opacity-70 pointer-events-none" : ""
       } ${
         isSelected 

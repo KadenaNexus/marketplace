@@ -7,6 +7,7 @@
     "dev": "vite",
     "dev:server": "node server/index.js",
     "test:db-hardening": "node server/acceptance-db-hardening.js",
+    "test:alerts": "node --test server/alerts.test.js",
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",

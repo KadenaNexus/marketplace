@@ -18,6 +18,8 @@
 // needs `lang` and `setLang` (export `useLang` below).
 
 import { ReactNode, useEffect, useState } from "react";
+import { OfferAlertsButton } from "@/components/OfferAlerts";
+import { ALERTS_COPY } from "@/lib/alertsCopy";
 
 export type Lang = "en" | "ar";
 
@@ -645,9 +647,11 @@ export type NexusLandingProps = {
   practiceVideoUrl?: string;
   /** Link to the contract source (GitHub file or explorer page). The "View the contract source" link hides when empty. */
   contractUrl?: string;
+  /** Arrived from an offer alert email while not connected: say why to connect. */
+  fromAlert?: boolean;
 };
 
-export default function NexusLanding({ walletAction, practiceVideoUrl, contractUrl }: NexusLandingProps) {
+export default function NexusLanding({ walletAction, practiceVideoUrl, contractUrl, fromAlert }: NexusLandingProps) {
   const [lang, setLang] = useLang();
   const t = COPY[lang];
   const rtl = lang === "ar";
@@ -657,6 +661,11 @@ export default function NexusLanding({ walletAction, practiceVideoUrl, contractU
 
   return (
     <div className="font-sans text-foreground" dir={rtl ? "rtl" : "ltr"} lang={lang}>
+      {fromAlert && (
+        <div className="border-b border-primary/30 bg-primary/10">
+          <p className="mx-auto max-w-6xl px-5 py-3 text-sm font-medium">{ALERTS_COPY[lang].offerNotice}</p>
+        </div>
+      )}
       {/* Hero */}
       <section className="mx-auto grid max-w-6xl items-center gap-12 px-5 py-14 lg:grid-cols-[1.05fr_.95fr] lg:py-20">
         <div className="min-w-0">
@@ -677,6 +686,7 @@ export default function NexusLanding({ walletAction, practiceVideoUrl, contractU
               {t.hero.try}
             </a>
           </div>
+          <OfferAlertsButton lang={lang} variant="secondary" className="mt-3 h-11 rounded-full px-5" />
           <p className="mt-5 text-sm text-muted-foreground">{t.hero.note}</p>
         </div>
         <ExampleTrade t={t.example} />
