@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useWallet } from "@/hooks/useWallet";
 import { listAllEscrows, PLATFORM_ARBITER } from "@/lib/kadena";
 import { listDisputes } from "@/lib/disputeApi";
+import { NeedsAttention } from "@/components/NeedsAttention";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -11,7 +12,7 @@ import { ArrowLeft, Shield, Loader2, AlertCircle, RefreshCw } from "lucide-react
 export default function Admin() {
   const { account, isConnected } = useWallet();
 
-  const { data: escrows = [], isLoading: loadingEscrows } = useQuery({
+  const { data: escrows = [], isLoading: loadingEscrows, refetch: refetchEscrows } = useQuery({
     queryKey: ["admin-escrows", account?.account],
     queryFn: () => listAllEscrows(),
     enabled: !!account && isConnected,
@@ -59,14 +60,19 @@ export default function Admin() {
               Admin / Arbiter
             </span>
           </div>
-          <Button variant="outline" size="sm" onClick={() => refetch()} disabled={loadingDisputes}>
-            {loadingDisputes ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+          <Button variant="outline" size="sm" onClick={() => { refetch(); refetchEscrows(); }} disabled={loadingDisputes || loadingEscrows}>
+            {loadingDisputes || loadingEscrows ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             Refresh
           </Button>
         </div>
       </header>
 
       <main className="container mx-auto px-4 py-8">
+        {loadingEscrows && escrows.length === 0 ? (
+          <div className="flex justify-center py-8 mb-6"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+        ) : (
+          <NeedsAttention escrows={escrows} account={account} onDone={() => refetchEscrows()} />
+        )}
         <Card>
           <CardHeader>
             <CardTitle>Dispute inbox</CardTitle>
