@@ -234,7 +234,7 @@ export function ChatBox({ otherWallet, otherProfile, onClose, className, context
             ) : (
               <span className="text-xs text-muted-foreground flex items-center gap-1">
                 <Clock className="h-3 w-3" />
-                Offline
+                Not online now
               </span>
             )}
           </div>
@@ -258,7 +258,7 @@ export function ChatBox({ otherWallet, otherProfile, onClose, className, context
               <p className="text-sm">No messages yet</p>
               {!isOtherOnline && (
                 <p className="text-xs mt-2">
-                  User is offline. Your message will be delivered when they come online.
+                  They're not on the site right now. Your message is saved, and they get a notification.
                 </p>
               )}
             </div>
@@ -352,7 +352,7 @@ export function ChatBox({ otherWallet, otherProfile, onClose, className, context
             placeholder={
               isOtherOnline
                 ? "Type your message..."
-                : "User is offline. Leave a message and they'll see it when online..."
+                : "Type your message…"
             }
             className="min-h-[60px] resize-none flex-1"
             disabled={isSending}

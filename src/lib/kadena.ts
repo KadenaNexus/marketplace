@@ -963,7 +963,7 @@ export async function readEscrow(offerId: string): Promise<Escrow | null> {
   const o = d as Record<string, unknown>;
   if (typeof o.creator !== "string" || typeof o.arbiter !== "string" || typeof o.state !== "string")
     return null;
-  const amt = Number(o.amount);
+  const amt = pactNumber(o.amount);
   if (Number.isNaN(amt)) return null;
 
   const side = (typeof o.side === "string" && (o.side === "BUY" || o.side === "SELL")) ? o.side as "BUY" | "SELL" : "SELL";
@@ -1070,6 +1070,13 @@ export async function listAllEscrows(): Promise<Escrow[]> {
   return results;
 }
 
+/** A Pact number from the chain: integers arrive as {"int": n}, some decimals as {"decimal": "…"}. */
+export function pactNumber(v: unknown): number {
+  const x = v && typeof v === "object" ? ((v as { int?: unknown; decimal?: unknown }).int ?? (v as { decimal?: unknown }).decimal) : v;
+  const n = Number(x);
+  return Number.isFinite(n) ? n : 0;
+}
+
 /** On-chain reputation counters only (score calculation & UI off-chain). */
 export async function getReputation(wallet: string): Promise<ChainReputation> {
   const pactCode = `(${CONTRACT_FQN}.get-reputation "${wallet}")`;
@@ -1088,9 +1095,9 @@ export async function getReputation(wallet: string): Promise<ChainReputation> {
   const o = result.result.data as Record<string, unknown> | null;
   if (!o) return { totalTrades: 0, successfulTrades: 0, disputesCount: 0 };
   return {
-    totalTrades: Number(o.totalTrades) || 0,
-    successfulTrades: Number(o.successfulTrades) || 0,
-    disputesCount: Number(o.disputesCount) || 0,
+    totalTrades: pactNumber(o.totalTrades),
+    successfulTrades: pactNumber(o.successfulTrades),
+    disputesCount: pactNumber(o.disputesCount),
   };
 }
 
