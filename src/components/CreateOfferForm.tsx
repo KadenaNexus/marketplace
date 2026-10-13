@@ -21,6 +21,8 @@ import {
   isInsufficientFunds,
 } from "@/lib/kadena";
 import { putOfferDetails } from "@/lib/offerDetailsApi";
+import { payoutHint, putPayout } from "@/lib/payoutApi";
+import { authProof } from "@/lib/session";
 import { Plus, Loader2, ShoppingCart, Store, Info } from "lucide-react";
 import { toast } from "sonner";
 
@@ -42,6 +44,8 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
   const [price, setPrice] = useState("");
   const [amount, setAmount] = useState("");
   const [paymentMethods, setPaymentMethods] = useState<string[]>([]);
+  // SELL offers: where the seller is paid, per payment method (shown to the buyer once someone accepts)
+  const [payout, setPayout] = useState<Record<string, string>>({});
   const [fiatCurrency, setFiatCurrency] = useState("USD");
   const [isLoading, setIsLoading] = useState(false);
 
@@ -76,6 +80,12 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
 
     if (paymentMethods.length === 0) {
       toast.error("Please select at least one payment method");
+      return;
+    }
+
+    const payoutItems = paymentMethods.map((m) => ({ method: m, value: (payout[m] ?? "").trim() })).filter((x) => x.value);
+    if (side === "SELL" && payoutItems.length === 0) {
+      toast.error("Add where you want to be paid", { description: "Fill in at least one payment detail, e.g. your USDT address or bank IBAN." });
       return;
     }
 
@@ -157,6 +167,16 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
         toast.warning("Offer created on-chain. Server could not save price/payment details (check DB write access).");
       }
 
+      if (side === "SELL") {
+        try {
+          const signedCmd = await authProof(account.account, account.publicKey);
+          await putPayout(offerId, payoutItems, { wallet: account.account, publicKey: account.publicKey, signedCmd });
+        } catch (payErr) {
+          console.warn("Payout details save failed:", payErr);
+          toast.warning("Offer created. Your payment details were not saved: add them in the trade details before you deposit.");
+        }
+      }
+
       toast.success("Offer created!", {
         description: offChainSaved
           ? `Request Key: ${requestKey.slice(0, 16)}...`
@@ -170,6 +190,7 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
       setPrice("");
       setAmount("");
       setPaymentMethods([]);
+      setPayout({});
     } catch (error) {
       console.error("Create offer error:", error);
       console.error("[CreateOffer] Chain API at time of error:", getChainwebDebugInfo());
@@ -333,6 +354,23 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
               <p className="text-xs text-destructive">Select at least one payment method</p>
             )}
           </div>
+
+          {/* Where the seller gets paid: private, shown only to the buyer after they accept */}
+          {side === "SELL" && paymentMethods.length > 0 && (
+            <div className="space-y-3 rounded-lg border-2 border-amber-300 bg-amber-50/60 p-4 dark:border-amber-700 dark:bg-amber-950/30">
+              <div>
+                <Label className="text-base">Where you get paid</Label>
+                <p className="text-xs text-muted-foreground">Only the buyer sees this, after accepting your offer. You can change it until you deposit.</p>
+              </div>
+              {paymentMethods.map((m) => (
+                <div key={m} className="space-y-1">
+                  <Label htmlFor={`payout-${m}`} className="text-sm font-normal">{m}</Label>
+                  <Input id={`payout-${m}`} value={payout[m] ?? ""} placeholder={payoutHint(m)} dir="ltr" autoComplete="off" maxLength={300}
+                    onChange={(e) => setPayout((p) => ({ ...p, [m]: e.target.value }))} />
+                </div>
+              ))}
+            </div>
+          )}
 
           <p className="text-xs text-muted-foreground">
             Platform arbiter is set in the contract and can release or refund in disputes.
