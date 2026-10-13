@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, ChevronRight, Copy, ExternalLink, Loader2, Monitor, QrCode, Smartphone, X } from "lucide-react";
+import { Check, ChevronRight, Copy, Loader2, Monitor, QrCode, Smartphone, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { isPhone, onPendingApproval } from "@/lib/walletconnect";
@@ -67,7 +67,9 @@ export function WalletApprovalBanner() {
 
 /**
  * Connecting a phone wallet. Kadena wallets mostly connect by scanning or pasting a WalletConnect link,
- * so: a QR code on a computer; on a phone, Copy link (to paste in the wallet) and Open wallet app.
+ * so: a QR code on a computer; on a phone, Copy link (to paste in the wallet's WalletConnect screen).
+ * (No generic "open wallet" wc: link: iPhone hands it to whichever wallet app claimed wc: links,
+ * which may not be a Kadena wallet.)
  */
 export function PhoneWalletSheet({ state }: { state: { uri: string | null; cancel: () => void } | null }) {
   const phone = typeof navigator !== "undefined" && isPhone();
@@ -135,10 +137,6 @@ export function PhoneWalletSheet({ state }: { state: { uri: string | null; cance
               </li>
             </ol>
             <div className="space-y-2 border-t border-border pt-4">
-              <a href={uri} className="flex h-11 w-full items-center justify-center gap-2 rounded-md border border-border text-sm font-medium hover:border-primary">
-                <ExternalLink className="h-4 w-4" />Open wallet app
-              </a>
-              <p className="text-center text-xs text-muted-foreground">Works when your wallet opens WalletConnect links. If nothing happens, use Copy link.</p>
               {!showQr ? (
                 <button type="button" onClick={() => setShowQr(true)} className="flex w-full items-center justify-center gap-2 py-1 text-sm text-primary">
                   <QrCode className="h-4 w-4" />Wallet on another phone? Show QR code

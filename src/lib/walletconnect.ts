@@ -3,8 +3,11 @@
  *
  * Most Kadena wallets are not listed in WalletConnect's wallet directory, so instead of a directory
  * picker we show our own screen: a QR code on a computer; on a phone, "Copy link" (paste it into the
- * wallet's WalletConnect screen) and "Open wallet app" (wc: link). The WalletConnect client loads only
- * when someone chooses a phone wallet.
+ * wallet's WalletConnect screen). The WalletConnect client loads only when someone chooses a phone wallet.
+ *
+ * Pinned to @walletconnect/sign-client 2.20.3: from 2.21 on, connect() moves requiredNamespaces into
+ * optionalNamespaces, and wallets on older WalletConnect code (as Kadena wallets are) then refuse with
+ * "The proposal does not include a list of required chains".
  *
  * Kadena on WalletConnect: namespace "kadena", chain "kadena:mainnet01", accounts reported as
  * "kadena:mainnet01:<public key>", methods kadena_quicksign_v1 / kadena_sign_v1 / kadena_getAccounts_v1.
