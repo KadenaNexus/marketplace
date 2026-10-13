@@ -3,6 +3,7 @@ import { MarketTag } from "./MarketTag";
 import { TradeCode } from "./TradeCode";
 import { TurnLine } from "./MobileTrade";
 import { currencyPrefix } from "@/lib/markets";
+import { NEW_TRADER_TRADES, isNewTrader } from "@/lib/trust";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { EscrowStatus } from "./EscrowStatus";
@@ -23,6 +24,8 @@ interface OfferCardProps {
   escrow: Escrow;
   profileMap: Record<string, { username: string | null; avatar: string | null; wallet: string }>;
   ratingSummaryMap?: Record<string, RatingSummary>;
+  /** Completed trades per wallet, counted on the chain */
+  completedMap?: Record<string, number>;
   onSelect: (offerId: string) => void;
   onDelete?: (offerId: string) => void;
   isDeletingOfferId?: string | null;
@@ -32,7 +35,7 @@ interface OfferCardProps {
   hasOpenDispute?: boolean;
 }
 
-export function OfferCard({ escrow, profileMap, ratingSummaryMap, onSelect, onDelete, isDeletingOfferId, role, isSelected = false, hasOpenDispute = false }: OfferCardProps) {
+export function OfferCard({ escrow, profileMap, ratingSummaryMap, completedMap, onSelect, onDelete, isDeletingOfferId, role, isSelected = false, hasOpenDispute = false }: OfferCardProps) {
   const { account } = useWallet();
   const isMobile = useIsMobile();
   const [showChat, setShowChat] = useState(false);
@@ -59,7 +62,8 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, onSelect, onDe
     const other = mySide === "buyer" ? escrow.seller : mySide === "seller" ? escrow.buyer : escrow.creator;
     const otherLabel = mySide === "buyer" ? "Seller" : mySide === "seller" ? "Buyer" : escrow.side === "SELL" ? "Seller" : "Buyer";
     const otherName = other ? profileMap[other]?.username || `${other.slice(0, 6)}…${other.slice(-4)}` : null;
-    const trades = other ? ratingSummaryMap?.[other]?.completedTrades : undefined;
+    const trades = other ? completedMap?.[other] ?? ratingSummaryMap?.[other]?.completedTrades : undefined;
+    const otherIsNew = !!other && !isMyOffer && isNewTrader(completedMap?.[other]);
     const showStatus = escrow.state !== "CREATED" || isMyOffer;
     return (
       <div
@@ -92,6 +96,9 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, onSelect, onDe
             <span className="rounded-full bg-muted px-2.5 py-1">
               {otherLabel}: {trades ? `${trades} trade${trades === 1 ? "" : "s"}` : otherName}
             </span>
+          )}
+          {otherIsNew && (
+            <span className="rounded-full bg-amber-500/15 px-2.5 py-1 font-medium text-amber-700 dark:text-amber-300" title={`Fewer than ${NEW_TRADER_TRADES} completed trades`}>New trader</span>
           )}
         </div>
         <div className="mt-3 flex gap-2">

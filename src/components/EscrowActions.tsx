@@ -14,6 +14,8 @@ import { OfferCard } from "./OfferCard";
 import { PayoutCard } from "./PayoutCard";
 import { MarkPaidDialog, ProofCard, ReleaseDialog } from "./TradeSafety";
 import { TradeEmailGate, useNeedsTradeEmail } from "./TradeEmail";
+import { useCompletedCounts, useTermsGate } from "./Trust";
+import { NEW_TRADER_MAX_KDA, newTraderProblem } from "@/lib/trust";
 import { getSocket } from "@/hooks/useOnlineStatus";
 import { currencyPrefix } from "@/lib/markets";
 import { getPayout } from "@/lib/payoutApi";
@@ -320,6 +322,12 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
 
   const onlineStatusMap = useOnlineStatusMap(allWallets);
 
+  // Completed trades on the chain: "New trader" on cards, and the new-trader limit when accepting
+  const { data: completedMap } = useCompletedCounts(
+    account ? [...allWallets, ...escrowsWithDetails.map((e) => e.creator), account.account] : [...allWallets, ...escrowsWithDetails.map((e) => e.creator)],
+  );
+  const myCompleted = account ? completedMap?.[account.account] : undefined;
+
   // Apply reputation (min stars) and online-now filters for display
   const displayedEscrows = useMemo(() => {
     let list = escrowsWithDetails;
@@ -615,9 +623,14 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
   // A confirmed email is required to trade (trade notices go there)
   const needsEmail = useNeedsTradeEmail();
   const [emailGateOpen, setEmailGateOpen] = useState(false);
-  const handleAccept = () => {
+  const terms = useTermsGate(() => handleAccept());
+  const acceptLimit = selectedEscrow && selectedEscrow.state === "CREATED" && selectedEscrow.creator !== account?.account
+    ? newTraderProblem(selectedEscrow.amount, myCompleted) : null;
+  async function handleAccept() {
     if (!account || !selectedEscrow) return;
     if (needsEmail) { setEmailGateOpen(true); return; }
+    if (acceptLimit) { toast.error(`Up to ${NEW_TRADER_MAX_KDA} KDA for now`, { description: acceptLimit }); return; }
+    if (!(await terms.check())) return;
     executeAction("Accept Offer", () => 
       buildAcceptOfferTx(selectedEscrow.offerId, account.account, account.publicKey)
     );
@@ -1222,6 +1235,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
       escrow={e}
       profileMap={profileMap}
       ratingSummaryMap={ratingSummaryMap}
+      completedMap={completedMap}
       onSelect={setSelectedOfferId}
       onDelete={handleDeleteOffer}
       isDeletingOfferId={deletingOfferId}
@@ -1354,6 +1368,9 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
           </header>
           <div className="flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-4">
             <YourTurnCard escrow={selectedEscrow} me={account?.account} canAccept={canAcceptFinal} />
+            {canAcceptFinal && acceptLimit && (
+              <p role="note" className="rounded-xl border border-amber-500/50 bg-amber-500/10 p-3 text-sm">{acceptLimit}</p>
+            )}
             <TradeSteps escrow={selectedEscrow} me={account?.account} />
             {detailTabs}
           </div>
@@ -1400,6 +1417,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
       )}
 
       <TradeEmailGate open={emailGateOpen} onOpenChange={setEmailGateOpen} />
+      {terms.gate}
 
       {/* Rate trade dialog (only for completed trades) */}
       {counterpartyWallet && selectedEscrow && (

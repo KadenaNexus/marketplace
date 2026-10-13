@@ -17,6 +17,7 @@ import Admin from "./pages/Admin";
 import AdminDisputeDetail from "./pages/AdminDisputeDetail";
 import Alerts from "./pages/Alerts";
 import WalletCheck from "./pages/WalletCheck";
+import Terms from "./pages/Terms";
 
 const queryClient = new QueryClient();
 
@@ -51,6 +52,7 @@ const App = () => (
                 <Route path="/admin" element={<Admin />} />
                 <Route path="/alerts" element={<Alerts />} />
                 <Route path="/wallet-check" element={<WalletCheck />} />
+                <Route path="/terms" element={<Terms />} />
                 <Route path="/admin/disputes/:offerId" element={<AdminDisputeDetail />} />
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
