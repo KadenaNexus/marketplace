@@ -9,7 +9,7 @@ import {
 } from "@/lib/kadena";
 import { checkSession, clearSession } from "@/lib/session";
 import * as wc from "@/lib/walletconnect";
-import { WalletPicker, WalletApprovalBanner } from "@/components/WalletPicker";
+import { WalletPicker, WalletApprovalBanner, PhoneWalletSheet } from "@/components/WalletPicker";
 
 export type WalletKind = "ecko" | "walletconnect";
 
@@ -45,6 +45,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [hasEcko, setHasEcko] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  // phone-wallet connection screen: open while waiting; uri once the link is ready
+  const [wcSheet, setWcSheet] = useState<{ uri: string | null; cancel: () => void } | null>(null);
   const phoneWalletsReady = wc.walletConnectReady();
 
   const reset = useCallback(() => {
@@ -116,14 +118,19 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setPickerOpen(false);
     setIsConnecting(true);
     setError(null);
+    let cancel: () => void = () => {};
+    const cancelled = new Promise<never>((_, reject) => { cancel = () => reject(new Error("cancelled")); });
+    cancelled.catch(() => {});
+    setWcSheet({ uri: null, cancel });
     try {
-      const r = await wc.connectWalletConnect();
+      const r = await wc.connectWalletConnect((uri) => setWcSheet((s) => (s ? { ...s, uri } : s)), cancelled);
       await adoptPhoneWallet(r.account, r.name);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to connect wallet";
-      // closing the wallet list is not an error
-      if (!/closed|rejected|cancel/i.test(msg)) setError(msg.replace(/^Error connecting to wallet: /, ""));
+      // closing the connection screen is not an error
+      if (!/cancel|closed/i.test(msg)) setError(/reject/i.test(msg) ? "The wallet declined the connection." : msg);
     } finally {
+      setWcSheet(null);
       setIsConnecting(false);
     }
   }, [adoptPhoneWallet]);
@@ -169,6 +176,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       {children}
       <WalletPicker open={pickerOpen} onOpenChange={setPickerOpen} onEcko={connectEcko} onPhone={connectPhoneWallet} />
       <WalletApprovalBanner />
+      <PhoneWalletSheet state={wcSheet} />
     </WalletContext.Provider>
   );
 }

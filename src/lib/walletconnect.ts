@@ -1,56 +1,49 @@
 /**
- * Phone wallets (Ecko app, Linx, Koala and other Kadena wallets) through WalletConnect, using Reown's
- * Universal Connector. Everything here loads only when someone chooses a phone wallet, so the page
- * stays small for everyone else.
+ * Phone wallets (Ecko app, Linx, Koala and other Kadena wallets) through WalletConnect.
+ *
+ * Most Kadena wallets are not listed in WalletConnect's wallet directory, so instead of a directory
+ * picker we show our own screen: a QR code on a computer; on a phone, "Copy link" (paste it into the
+ * wallet's WalletConnect screen) and "Open wallet app" (wc: link). The WalletConnect client loads only
+ * when someone chooses a phone wallet.
  *
  * Kadena on WalletConnect: namespace "kadena", chain "kadena:mainnet01", accounts reported as
  * "kadena:mainnet01:<public key>", methods kadena_quicksign_v1 / kadena_sign_v1 / kadena_getAccounts_v1.
  */
 import type { IUnsignedCommand } from "@kadena/client";
 import { createQuicksignWithWalletConnect, createSignWithWalletConnect } from "@kadena/client";
-import { API_HOST, CHAIN_ID, NETWORK_ID, type WalletAccount } from "@/lib/kadena";
+import { CHAIN_ID, NETWORK_ID, type WalletAccount } from "@/lib/kadena";
 
-// The Reown project ID is public (it identifies the site to the WalletConnect relay); set it here or in VITE_WALLETCONNECT_PROJECT_ID.
-const DEFAULT_PROJECT_ID = "f4249de4e19f3c57f77d259b691a8d0e"; // Reown project "Kadena Adoption Index", shared; marketplace.kadena.ws is on its domain allowlist
+// The Reown project ID is public (it identifies the site to the WalletConnect relay).
+// Shared with the Adoption Index; marketplace.kadena.ws is on its domain allowlist.
+const DEFAULT_PROJECT_ID = "f4249de4e19f3c57f77d259b691a8d0e";
 export const WC_PROJECT_ID = String(import.meta.env?.VITE_WALLETCONNECT_PROJECT_ID || DEFAULT_PROJECT_ID).trim();
 export const WC_CHAIN = `kadena:${NETWORK_ID}` as const;
 export const walletConnectReady = () => WC_PROJECT_ID.length > 0;
+const METHODS = ["kadena_quicksign_v1", "kadena_sign_v1", "kadena_getAccounts_v1"];
 
 type Session = {
   topic: string;
+  expiry: number;
   namespaces: Record<string, { accounts: string[]; methods: string[]; events: string[] }>;
   peer: { metadata: { name: string; icons?: string[]; redirect?: { native?: string; universal?: string } } };
 };
-type Connector = {
-  provider: {
-    session?: Session;
-    request: (args: { method: string; params: unknown }, chain?: string) => Promise<unknown>;
-    on: (event: string, fn: (...a: unknown[]) => void) => void;
-  };
-  connect: () => Promise<{ session: Session }>;
-  disconnect: () => Promise<void>;
-  /** The Reown modal (a private field of the connector, used to notice when it is closed) */
-  appKit?: { subscribeState?: (fn: (s: { open: boolean }) => void) => () => void };
+type Client = {
+  connect: (p: { requiredNamespaces?: unknown; optionalNamespaces?: unknown }) => Promise<{ uri?: string; approval: () => Promise<Session> }>;
+  request: (p: { topic: string; chainId: string; request: { method: string; params: unknown } }) => Promise<unknown>;
+  disconnect: (p: { topic: string; reason: { code: number; message: string } }) => Promise<void>;
+  session: { getAll: () => Session[] };
+  on: (event: string, fn: (...a: unknown[]) => void) => void;
 };
 
-let connectorPromise: Promise<Connector> | null = null;
+let clientPromise: Promise<Client> | null = null;
 
-export function getConnector(): Promise<Connector> {
+export function getClient(): Promise<Client> {
   if (!walletConnectReady()) return Promise.reject(new Error("Phone wallets are not set up on this site yet."));
-  if (!connectorPromise) {
-    connectorPromise = (async () => {
-      const { UniversalConnector } = await import("@reown/appkit-universal-connector");
-      const dark = document.documentElement.classList.contains("dark");
-      const kadena = {
-        id: NETWORK_ID,
-        chainNamespace: "kadena",
-        caipNetworkId: WC_CHAIN,
-        name: "Kadena",
-        nativeCurrency: { name: "Kadena", symbol: "KDA", decimals: 12 },
-        rpcUrls: { default: { http: [API_HOST] } },
-      };
+  if (!clientPromise) {
+    clientPromise = (async () => {
+      const { SignClient } = await import("@walletconnect/sign-client");
       const origin = window.location.origin;
-      const c = await UniversalConnector.init({
+      const c = await SignClient.init({
         projectId: WC_PROJECT_ID,
         metadata: {
           name: "Kadena P2P Marketplace",
@@ -58,28 +51,19 @@ export function getConnector(): Promise<Connector> {
           url: origin,
           icons: [`${origin}/icon-192.png`],
         },
-        networks: [
-          {
-            namespace: "kadena",
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            chains: [kadena as any],
-            methods: ["kadena_quicksign_v1", "kadena_sign_v1", "kadena_getAccounts_v1"],
-            events: [],
-          },
-        ],
-        modalConfig: {
-          themeMode: dark ? "dark" : "light",
-          themeVariables: { "--w3m-accent": "#1C637B", "--w3m-border-radius-master": "2px", "--w3m-z-index": 1000 },
-          features: { analytics: false, email: false, socials: false, swaps: false, onramp: false, history: false, send: false },
-          allWallets: "SHOW",
-        },
       });
-      return c as unknown as Connector;
+      return c as unknown as Client;
     })();
-    connectorPromise.catch(() => { connectorPromise = null; });
+    clientPromise.catch(() => { clientPromise = null; });
   }
-  return connectorPromise;
+  return clientPromise;
 }
+
+const currentSession = (c: Client): Session | undefined => {
+  const now = Date.now() / 1000;
+  const all = c.session.getAll().filter((s) => s.namespaces?.kadena && s.expiry > now);
+  return all[all.length - 1];
+};
 
 /** "kadena:mainnet01:<pubkey>" (or a bare key / k:key from some wallets) -> account */
 export function accountFromSession(session: Session | undefined): WalletAccount | null {
@@ -97,44 +81,44 @@ export const walletName = (session?: Session) => session?.peer?.metadata?.name |
 
 /** Restore a phone-wallet connection saved by an earlier visit. */
 export async function restoreWalletConnect(): Promise<{ account: WalletAccount; name: string } | null> {
-  const c = await getConnector();
-  const account = accountFromSession(c.provider.session);
-  return account ? { account, name: walletName(c.provider.session) } : null;
+  const c = await getClient();
+  const s = currentSession(c);
+  const account = accountFromSession(s);
+  return account ? { account, name: walletName(s) } : null;
 }
 
-export async function connectWalletConnect(): Promise<{ account: WalletAccount; name: string }> {
-  const c = await getConnector();
-  // The connector waits for a wallet even after the person closes the list; stop waiting when it closes.
-  const { session } = await new Promise<{ session: Session }>((resolve, reject) => {
-    let opened = false;
-    let settled = false;
-    const unsubscribe = c.appKit?.subscribeState?.((st) => {
-      if (st.open) opened = true;
-      else if (opened && !settled) { settled = true; reject(new Error("closed")); }
-    });
-    c.connect().then(
-      (r) => { if (!settled) { settled = true; resolve(r); } },
-      (e) => { if (!settled) { settled = true; reject(e); } },
-    ).finally(() => unsubscribe?.());
+/**
+ * Start a connection. `onUri` receives the wc: link to show as a QR code / copy / open.
+ * Resolves when the wallet approves; `cancel` stops waiting.
+ */
+export async function connectWalletConnect(onUri: (uri: string) => void, cancelled: Promise<never>): Promise<{ account: WalletAccount; name: string }> {
+  const c = await getClient();
+  const { uri, approval } = await c.connect({
+    requiredNamespaces: { kadena: { methods: METHODS, chains: [WC_CHAIN], events: [] } },
   });
+  if (uri) onUri(uri);
+  const session = await Promise.race([approval(), cancelled]);
   const account = accountFromSession(session);
   if (!account) {
-    await c.disconnect().catch(() => {});
+    await c.disconnect({ topic: session.topic, reason: { code: 6000, message: "No k: account" } }).catch(() => {});
     throw new Error("This wallet did not share a Kadena k: account. Choose a Kadena account in the wallet and try again.");
   }
   return { account, name: walletName(session) };
 }
 
 export async function disconnectWalletConnect() {
-  if (!connectorPromise) return;
-  const c = await connectorPromise.catch(() => null);
-  await c?.disconnect().catch(() => {});
+  if (!clientPromise) return;
+  const c = await clientPromise.catch(() => null);
+  if (!c) return;
+  for (const s of c.session.getAll()) {
+    await c.disconnect({ topic: s.topic, reason: { code: 6000, message: "User disconnected" } }).catch(() => {});
+  }
 }
 
 export async function onWalletConnectEnded(fn: () => void) {
-  const c = await getConnector();
-  c.provider.on("session_delete", fn);
-  c.provider.on("session_expire", fn);
+  const c = await getClient();
+  c.on("session_delete", fn);
+  c.on("session_expire", fn);
 }
 
 /* ---------- signing ---------- */
@@ -150,7 +134,7 @@ export function onPendingApproval(fn: (p: Pending | null) => void) {
   return () => { listeners.delete(fn); };
 }
 
-const isPhone = () => /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+export const isPhone = () => /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
 /** Link that brings the wallet app forward (its own redirect link from the session). */
 function walletLink(session: Session): string | null {
@@ -160,16 +144,12 @@ function walletLink(session: Session): string | null {
 
 /** Sign with the connected phone wallet; on a phone, the wallet app is opened for the approval. */
 export async function signWithWalletConnect(command: IUnsignedCommand): Promise<unknown> {
-  const c = await getConnector();
-  const session = c.provider.session;
+  const c = await getClient();
+  const session = currentSession(c);
   if (!session) throw new Error("The phone wallet is no longer connected. Connect it again.");
-  const client = {
-    request: ({ request, chainId }: { request: { method: string; params: unknown }; chainId: string }) =>
-      c.provider.request({ method: request.method, params: request.params }, chainId),
-  };
   const methods = session.namespaces.kadena?.methods ?? [];
   // @kadena/client types these with its own (older) WalletConnect client; ours has the same request() shape
-  const args = [client, session, WC_CHAIN] as unknown as Parameters<typeof createQuicksignWithWalletConnect>;
+  const args = [c, session, WC_CHAIN] as unknown as Parameters<typeof createQuicksignWithWalletConnect>;
   const sign = methods.includes("kadena_quicksign_v1") || !methods.includes("kadena_sign_v1")
     ? createQuicksignWithWalletConnect(...args)
     : createSignWithWalletConnect(...args);
