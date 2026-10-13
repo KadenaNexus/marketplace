@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
+import { TradeCode } from "./TradeCode";
 import { createPortal } from "react-dom";
 import { useQuery, useQueries, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
@@ -1325,7 +1326,10 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
             <Button variant="ghost" size="icon" className="h-11 w-11 shrink-0" onClick={closeTrade} aria-label="Back to the list">
               <ArrowLeft className="h-5 w-5" />
             </Button>
-            <h2 className="min-w-0 flex-1 truncate font-display text-lg font-semibold">{tradeTitle(selectedEscrow, account?.account)}</h2>
+            <div className="min-w-0 flex-1">
+              <h2 className="truncate font-display text-lg font-semibold leading-tight">{tradeTitle(selectedEscrow, account?.account)}</h2>
+              <TradeCode offerId={selectedEscrow.offerId} copy className="mt-0.5" />
+            </div>
             <span className="shrink-0 pr-2"><EscrowStatus state={shownState(selectedEscrow)} /></span>
           </header>
           <div className="flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-4">
@@ -1352,7 +1356,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
         <Card className="escrow-card">
           <CardHeader>
             <div className="flex items-center justify-between">
-              <CardTitle className="font-mono text-lg">{selectedEscrow.offerId}</CardTitle>
+              <CardTitle className="flex items-center gap-3 text-lg"><TradeCode offerId={selectedEscrow.offerId} copy size="md" /><span className="font-mono text-sm font-normal text-muted-foreground">{selectedEscrow.offerId}</span></CardTitle>
               <EscrowStatus
                 state={
                   existingDispute && (existingDispute.status === "OPEN" || existingDispute.status === "UNDER_REVIEW")

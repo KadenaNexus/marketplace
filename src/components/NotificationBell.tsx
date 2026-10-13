@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { TradeCode } from "./TradeCode";
 import { AlertTriangle, Bell, BellOff, Check, CheckCheck, Clock, Loader2, Lock, MessageSquare, Plus, Share, Star, Undo2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -53,6 +54,7 @@ function Item({ i, unread, onOpen }: { i: FeedItem; unread: boolean; onOpen: (i:
           <span className="shrink-0 text-xs text-muted-foreground">{ago(i.createdAt)}</span>
         </span>
         <span className="mt-0.5 block text-sm leading-snug text-muted-foreground">{i.body}</span>
+        {i.offerId && <TradeCode offerId={i.offerId} className="mt-1.5" />}
         {closedOffer && <span className="mt-1 block text-xs text-muted-foreground">No longer open</span>}
       </span>
     </button>

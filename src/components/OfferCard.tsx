@@ -1,4 +1,5 @@
 import { Card, CardContent } from "@/components/ui/card";
+import { TradeCode } from "./TradeCode";
 import { currencyPrefix } from "@/lib/markets";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -69,7 +70,7 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, onSelect, onDe
           </div>
         )}
         <div className="flex items-baseline justify-between gap-3">
-          <p className="font-display text-2xl font-bold">{kdaAmount(escrow.amount)} KDA</p>
+          <p className="flex items-center gap-2 font-display text-2xl font-bold">{kdaAmount(escrow.amount)} KDA <TradeCode offerId={escrow.offerId} className="self-center" /></p>
           <p className="shrink-0 text-sm text-muted-foreground">{currencySymbol}{formatFiat(escrow.price)} / KDA</p>
         </div>
         {showStatus && (
@@ -145,6 +146,7 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, onSelect, onDe
                 )}
                 {escrow.side === "SELL" ? "Selling" : "Buying"} KDA
               </Badge>
+              <TradeCode offerId={escrow.offerId} />
               {canDelete && !isDeleting && (
                 <Button
                   size="icon"
