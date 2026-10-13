@@ -158,8 +158,9 @@ export const releaseRefundTxBodySchema = z.object({
 
 export const completedOffersBodySchema = z.object({
   offerId: z.string().min(1).max(256),
-  buyerWallet: walletSchema,
-  sellerWallet: walletSchema,
+  // ignored: the server reads both wallets from the chain
+  buyerWallet: walletSchema.optional(),
+  sellerWallet: walletSchema.optional(),
   wallet: walletSchema,
   publicKey: publicKeySchema,
   signedCmd: signedCmdSchema,

@@ -13,7 +13,7 @@ import { registerAlertRoutes, startAlertWatcher } from "./alerts.js";
 import { registerMarketRoutes } from "./market.js";
 import { registerNotificationRoutes, startNotificationWatcher, notifyMessage, notifyTradeChangeSoon, notify } from "./notifications.js";
 import { registerTradeTxRoutes, startTradeTxWatcher } from "./tradeTxs.js";
-import { registerPayoutRoutes } from "./payout.js";
+import { registerPayoutRoutes, readEscrowFromChain, sidesOf } from "./payout.js";
 import { registerProofRoutes } from "./proofs.js";
 import { initSessionSecret, isSessionToken, issueSessionToken, verifySessionToken } from "./session.js";
 import express from "express";
@@ -698,6 +698,36 @@ function sendAuthError(res, auth) {
   return res.status(auth.status).json({ error: auth.error, ...(auth.reason && { reason: auth.reason }) });
 }
 
+/**
+ * Disputes are private to the two sides of the trade and the arbiter. Who they are is read from the chain.
+ * After a refund the chain forgets the buyer, so someone who already took part in this dispute (opened it,
+ * sent evidence or a message, all checked at the time) keeps access.
+ * Returns { ok, wallet } or sends the error and returns { ok: false }.
+ */
+async function requireDisputeParty(req, res, offerId, from = "body") {
+  const auth = requireAuth(req, from);
+  if (!auth.ok) { sendAuthError(res, auth); return { ok: false }; }
+  const data = from === "query" ? req.query : req.body;
+  if (data?.wallet !== auth.wallet) { res.status(400).json({ error: "Wallet must match authenticated wallet" }); return { ok: false }; }
+  const me = auth.wallet;
+  let e;
+  try { e = await readEscrowFromChain(offerId); }
+  catch { res.status(502).json({ error: "Could not check the trade on the chain. Try again." }); return { ok: false }; }
+  if (e) {
+    const { holder, payer } = sidesOf(e);
+    if ((holder && me === holder) || (payer && me === payer) || me === e.arbiter) return { ok: true, wallet: me, escrow: e };
+  }
+  const before = await pool.query(
+    `SELECT 1 FROM disputes WHERE offer_id = $1 AND opened_by_wallet = $2
+     UNION SELECT 1 FROM evidence WHERE offer_id = $1 AND submitted_by = $2
+     UNION SELECT 1 FROM dispute_messages WHERE offer_id = $1 AND from_wallet = $2 LIMIT 1`,
+    [offerId, me]
+  ).catch(() => ({ rows: [] }));
+  if (before.rows.length) return { ok: true, wallet: me, escrow: e };
+  res.status(403).json({ error: "Only the two sides of this trade and the arbiter can see or add to its dispute" });
+  return { ok: false };
+}
+
 // POST /api/profiles/upload-avatar – multipart: image (file), wallet, publicKey, signedCmd (JSON string). Returns { url }.
 app.post("/api/profiles/upload-avatar", (req, res, next) => {
   upload.single("image")(req, res, (err) => {
@@ -1337,6 +1367,8 @@ app.post("/api/disputes", validateBody(disputesPostBodySchema), async (req, res)
   const wallet = auth.wallet;
   const { offerId, openedBy, reason } = req.body;
   try {
+    const party = await requireDisputeParty(req, res, offerId, "body");
+    if (!party.ok) return;
     const existingResult = await pool.query(
       "SELECT id FROM disputes WHERE offer_id = $1 AND status = $2",
       [offerId, "OPEN"]
@@ -1522,10 +1554,15 @@ app.post("/api/disputes/:offerId/evidence", validateParams(offerIdParamSchema), 
     // Check if dispute exists
     const disputeResult = await pool.query("SELECT id FROM disputes WHERE offer_id = $1", [offerId]);
     if (disputeResult.rows.length === 0) {
+      for (const f of files) { try { fs.unlinkSync(f.path); } catch (e) { /* ignore */ } }
       return res.status(404).json({ error: "Dispute not found" });
     }
-    // Verify user is buyer or seller
-    // Note: We'd need to fetch escrow from chain to verify, but for now we'll trust the dispute record
+    // Only the two sides and the arbiter (read from the chain)
+    const party = await requireDisputeParty(req, res, offerId, "body");
+    if (!party.ok) {
+      for (const f of files) { try { fs.unlinkSync(f.path); } catch (e) { /* ignore */ } }
+      return;
+    }
     const evidenceFiles = files.map((f) => ({
       filename: f.filename,
       originalName: f.originalname,
@@ -1569,15 +1606,13 @@ app.post("/api/disputes/:offerId/evidence", validateParams(offerIdParamSchema), 
 // GET /api/disputes/:offerId/evidence – get all evidence for a dispute. Query: ?wallet=<wallet> (for authorization check)
 app.get("/api/disputes/:offerId/evidence", validateParams(offerIdParamSchema), async (req, res) => {
   const offerId = req.params.offerId;
-  const wallet = req.query.wallet?.toString();
   try {
+    const party = await requireDisputeParty(req, res, offerId, "query");
+    if (!party.ok) return;
     const disputeResult = await pool.query("SELECT id FROM disputes WHERE offer_id = $1", [offerId]);
     if (disputeResult.rows.length === 0) {
       return res.status(404).json({ error: "Dispute not found" });
     }
-    // Authorization: only buyer, seller, or arbiter can view evidence
-    // For now, we'll return evidence if wallet matches openedByWallet or if it's provided
-    // In production, you'd verify against the escrow contract to check buyer/seller/arbiter
     const result = await pool.query(
       "SELECT id, offer_id, submitted_by, explanation, files, submitted_at FROM evidence WHERE offer_id = $1 ORDER BY submitted_at DESC",
       [offerId]
@@ -1611,6 +1646,8 @@ app.post("/api/disputes/:offerId/messages", validateParams(offerIdParamSchema), 
     if (disputeResult.rows.length === 0) {
       return res.status(404).json({ error: "Dispute not found" });
     }
+    const party = await requireDisputeParty(req, res, offerId, "body");
+    if (!party.ok) return;
     
     const result = await pool.query(
       `INSERT INTO dispute_messages (offer_id, from_wallet, message, created_at)
@@ -1640,8 +1677,9 @@ app.post("/api/disputes/:offerId/messages", validateParams(offerIdParamSchema), 
 // GET /api/disputes/:offerId/messages – get all messages in dispute
 app.get("/api/disputes/:offerId/messages", validateParams(offerIdParamSchema), async (req, res) => {
   const offerId = req.params.offerId;
-  console.log(`[GET /api/disputes/:offerId/messages] Matched! offerId: ${offerId}, path: ${req.path}`);
   try {
+    const party = await requireDisputeParty(req, res, offerId, "query");
+    if (!party.ok) return;
     const disputeResult = await pool.query("SELECT id FROM disputes WHERE offer_id = $1", [offerId]);
     if (disputeResult.rows.length === 0) {
       console.log(`[GET /api/disputes/:offerId/messages] Dispute not found for offerId: ${offerId}`);
@@ -1831,18 +1869,27 @@ app.post("/api/completed-offers", validateBody(completedOffersBodySchema), async
     return res.status(400).json({ error: "Wallet must match authenticated wallet" });
   }
   const wallet = auth.wallet;
-  const { offerId, buyerWallet, sellerWallet } = req.body;
-  if (wallet !== buyerWallet && wallet !== sellerWallet) {
-    return res.status(403).json({ error: "Wallet must be buyer or seller for this offer" });
-  }
+  const offerId = req.body.offerId.trim();
   try {
+    // Ratings are only for real trades: the trade must be COMPLETED on the chain, and the two wallets
+    // are taken from the chain (not from the request), so nobody can invent a trade to rate a friend.
+    let e;
+    try { e = await readEscrowFromChain(offerId); }
+    catch { return res.status(502).json({ error: "Could not check the trade on the chain. Try again." }); }
+    if (!e) return res.status(404).json({ error: "Trade not found on the chain" });
+    if (e.state !== "COMPLETED") return res.status(409).json({ error: "Only completed trades can be rated" });
+    const { holder: sellerWallet, payer: buyerWallet } = sidesOf(e);
+    if (!sellerWallet || !buyerWallet) return res.status(409).json({ error: "This trade has no buyer on the chain" });
+    if (wallet !== buyerWallet && wallet !== sellerWallet) {
+      return res.status(403).json({ error: "Wallet must be buyer or seller for this offer" });
+    }
     await pool.query(
       `INSERT INTO completed_offers (offer_id, buyer_wallet, seller_wallet)
        VALUES ($1, $2, $3)
        ON CONFLICT (offer_id) DO NOTHING`,
-      [offerId.trim(), buyerWallet.trim(), sellerWallet.trim()]
+      [offerId, buyerWallet, sellerWallet]
     );
-    return res.json({ ok: true, offerId: offerId.trim() });
+    return res.json({ ok: true, offerId });
   } catch (err) {
     console.error("POST /api/completed-offers", err);
     return res.status(500).json({ error: err.message || "Database error" });
