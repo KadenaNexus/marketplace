@@ -11,7 +11,7 @@ import { ProfileSummaryView } from "./ProfileSummary";
 import { OfferCard } from "./OfferCard";
 import { TradeTxList } from "./TradeTxList";
 import { DisputeView } from "./DisputeView";
-import { ChatBox } from "./ChatBox";
+import { OfferChat } from "./OfferChat";
 import { getDispute, openDispute, putFundTxRequestKey } from "@/lib/disputeApi";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -408,12 +408,12 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
 
   // On-chain reputation (minimal counters; score calculation off-chain)
   const { data: sellerRep } = useQuery({
-    queryKey: ["reputation", selectedEscrow?.seller ?? ""],
+    queryKey: ["reputation", selectedEscrow?.seller ?? "", selectedEscrow?.state],
     queryFn: () => getReputation(selectedEscrow!.seller),
     enabled: !!selectedEscrow?.seller,
   });
   const { data: buyerRep } = useQuery({
-    queryKey: ["reputation", selectedEscrow?.buyer ?? ""],
+    queryKey: ["reputation", selectedEscrow?.buyer ?? "", selectedEscrow?.state],
     queryFn: () => getReputation(selectedEscrow!.buyer),
     enabled: !!selectedEscrow?.buyer,
   });
@@ -779,8 +779,10 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
     ? (account.account === selectedEscrow.buyer ? selectedEscrow.seller : selectedEscrow.buyer)
     : null;
 
-  const handleRegisterCompletion = async () => {
+  // One button: records the completed trade with our server first if needed (no separate step), then opens the rating.
+  const handleRateTrade = async () => {
     if (!account || !selectedEscrow?.buyer) return;
+    if (canRateTrade) { setShowRatingDialog(true); return; }
     setRegisteringCompletion(true);
     try {
       const signedCmd = await authProof(account.account, account.publicKey);
@@ -792,10 +794,11 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
         publicKey: account.publicKey,
         signedCmd,
       });
-      toast.success("Trade registered");
-      refetchRatingCheck();
+      const check = await refetchRatingCheck();
+      if (check.data?.alreadyRated) toast.info("You already rated this trade.");
+      else setShowRatingDialog(true);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to register");
+      toast.error(err instanceof Error ? err.message : "Could not open the rating");
     } finally {
       setRegisteringCompletion(false);
     }
@@ -1087,32 +1090,16 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                 {isPartyToTrade && (
                   <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2">
                     <p className="text-sm font-medium text-center">Leave a rating for this trade</p>
-                    {needsRegisterCompletion && (
-                      <div className="flex flex-col items-center gap-2">
-                        <p className="text-xs text-muted-foreground text-center">
-                          First register this completed trade (one-time, sign with your wallet). Then you can rate the other party.
-                        </p>
-                        <Button
-                          variant="default"
-                          size="sm"
-                          onClick={handleRegisterCompletion}
-                          disabled={registeringCompletion}
-                          className="gap-2"
-                        >
-                          {registeringCompletion ? <Loader2 className="h-4 w-4 animate-spin" /> : <Star className="h-4 w-4" />}
-                          Register completion to rate
-                        </Button>
-                      </div>
-                    )}
-                    {canRateTrade && counterpartyWallet && (
+                    {(needsRegisterCompletion || canRateTrade) && counterpartyWallet && (
                       <div className="flex justify-center">
                         <Button
                           variant="default"
                           size="sm"
-                          onClick={() => setShowRatingDialog(true)}
+                          onClick={handleRateTrade}
+                          disabled={registeringCompletion}
                           className="gap-2"
                         >
-                          <Star className="h-4 w-4" />
+                          {registeringCompletion ? <Loader2 className="h-4 w-4 animate-spin" /> : <Star className="h-4 w-4" />}
                           Rate this trade
                         </Button>
                       </div>
@@ -1150,27 +1137,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
               </TabsContent>
 
               <TabsContent value="chat" className="mt-4">
-                {(() => {
-                  const isBuyer = account?.account === selectedEscrow.buyer;
-                  const isSeller = account?.account === selectedEscrow.seller;
-                  const otherWallet = isBuyer ? selectedEscrow.seller : isSeller ? (selectedEscrow.buyer || selectedEscrow.seller) : selectedEscrow.seller;
-                  
-                  if (!account || !isConnected) {
-                    return (
-                      <div className="text-center py-8 text-muted-foreground">
-                        Please connect your wallet to use chat
-                      </div>
-                    );
-                  }
-
-                  return (
-                    <ChatBox
-                      otherWallet={otherWallet}
-                      otherProfile={profileMap[otherWallet]}
-                      contextOfferId={selectedEscrow.offerId}
-                    />
-                  );
-                })()}
+                <OfferChat escrow={selectedEscrow} profileMap={profileMap} />
               </TabsContent>
 
               <TabsContent value="dispute" className="mt-4">

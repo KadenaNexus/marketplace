@@ -1105,6 +1105,32 @@ app.get("/api/messages/unread-count", validateQuery(messagesReadQuerySchema), as
   }
 });
 
+// GET /api/messages/offer/:offerId/threads – for an offer's creator: the people who wrote about this offer,
+// newest first, with how many of their messages are unread. Lets the creator answer questions before anyone accepts.
+app.get("/api/messages/offer/:offerId/threads", validateParams(offerIdParamSchema), validateQuery(messagesReadQuerySchema), async (req, res) => {
+  const auth = requireAuth(req, "query", { allowChatReuse: true });
+  if (!auth.ok) return sendAuthError(res, auth);
+  if (!pool) return res.status(500).json({ error: "Database not initialized" });
+  const wallet = auth.wallet;
+  try {
+    const { rows } = await pool.query(
+      `SELECT CASE WHEN from_wallet = $1 THEN to_wallet ELSE from_wallet END AS other,
+              MAX(created_at) AS last_at,
+              COUNT(*) FILTER (WHERE to_wallet = $1 AND read_at IS NULL) AS unread
+         FROM user_messages
+        WHERE context_offer_id = $2 AND (from_wallet = $1 OR to_wallet = $1) AND from_wallet <> to_wallet
+        GROUP BY 1
+        ORDER BY last_at DESC
+        LIMIT 50`,
+      [wallet, req.params.offerId]
+    );
+    return res.json(rows.map((r) => ({ wallet: r.other, lastAt: r.last_at, unread: Number(r.unread) || 0 })));
+  } catch (err) {
+    console.error("GET /api/messages/offer/:offerId/threads", err);
+    return res.status(500).json({ error: "Database error" });
+  }
+});
+
 // GET /api/messages/:otherWallet – get all messages between current user and another user
 // Query: wallet, publicKey, signedCmd (required – proof of ownership). Only returns messages where requester is a participant.
 app.get("/api/messages/:otherWallet", validateParams(otherWalletParamSchema), validateQuery(messagesReadQuerySchema), async (req, res) => {
