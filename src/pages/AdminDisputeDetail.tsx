@@ -77,14 +77,14 @@ export default function AdminDisputeDetail() {
 
   const { data: evidence = [], refetch: refetchEvidence } = useQuery({
     queryKey: ["evidence", offerId, account?.account],
-    queryFn: () => getEvidence(offerId!, account?.account),
-    enabled: !!offerId && !!dispute,
+    queryFn: () => getEvidence(offerId!, account!),
+    enabled: !!offerId && !!dispute && !!account,
   });
 
   const { data: messages = [], refetch: refetchMessages } = useQuery({
     queryKey: ["dispute-messages", offerId],
-    queryFn: () => getMessages(offerId!),
-    enabled: !!offerId && !!dispute,
+    queryFn: () => getMessages(offerId!, account!),
+    enabled: !!offerId && !!dispute && !!account,
     refetchInterval: 5000,
   });
 

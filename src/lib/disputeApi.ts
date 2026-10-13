@@ -1,3 +1,4 @@
+import { authProof } from "@/lib/session";
 const API = ""; // relative; /api is proxied in dev or same-origin in prod
 
 export interface Dispute {
@@ -150,9 +151,18 @@ export async function submitEvidence(params: {
   return res.json();
 }
 
-export async function getEvidence(offerId: string, wallet?: string): Promise<Evidence[]> {
+/** Who is asking: disputes are private to the two sides and the arbiter (checked on the server). */
+export type DisputeReader = { account: string; publicKey: string };
+async function readerQuery(url: URL, who: DisputeReader) {
+  const signedCmd = await authProof(who.account, who.publicKey);
+  url.searchParams.set("wallet", who.account);
+  url.searchParams.set("publicKey", who.publicKey);
+  url.searchParams.set("signedCmd", typeof signedCmd === "string" ? signedCmd : JSON.stringify(signedCmd));
+}
+
+export async function getEvidence(offerId: string, who: DisputeReader): Promise<Evidence[]> {
   const url = new URL(`${API}/api/disputes/${encodeURIComponent(offerId)}/evidence`, window.location.origin);
-  if (wallet) url.searchParams.set("wallet", wallet);
+  await readerQuery(url, who);
   const res = await fetch(url.toString());
   if (!res.ok) throw new Error(await res.text().catch(() => res.statusText));
   return res.json();
@@ -185,8 +195,10 @@ export async function sendMessage(params: {
   return res.json();
 }
 
-export async function getMessages(offerId: string): Promise<DisputeMessage[]> {
-  const res = await fetch(`${API}/api/disputes/${encodeURIComponent(offerId)}/messages`);
+export async function getMessages(offerId: string, who: DisputeReader): Promise<DisputeMessage[]> {
+  const url = new URL(`${API}/api/disputes/${encodeURIComponent(offerId)}/messages`, window.location.origin);
+  await readerQuery(url, who);
+  const res = await fetch(url.toString());
   if (!res.ok) throw new Error(await res.text().catch(() => res.statusText));
   return res.json();
 }
