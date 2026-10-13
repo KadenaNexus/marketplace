@@ -11,6 +11,7 @@
 import "dotenv/config";
 import { registerAlertRoutes, startAlertWatcher } from "./alerts.js";
 import { registerNotificationRoutes, startNotificationWatcher, notifyMessage } from "./notifications.js";
+import { initSessionSecret, isSessionToken, issueSessionToken, verifySessionToken } from "./session.js";
 import express from "express";
 import rateLimit from "express-rate-limit";
 import cors from "cors";
@@ -264,6 +265,14 @@ const messagesLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+// Sign-in: 20 per minute per IP
+const sessionLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  message: { error: "Too many sign-in requests, please try again in a minute." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 app.use("/api/messages", messagesLimiter);
 app.use("/api", apiLimiter);
 
@@ -359,8 +368,15 @@ io.on("connection", (socket) => {
       socket.emit("error", { message: "Missing signedCmd (required for proof of ownership)" });
       return;
     }
+    if (isSessionToken(signedCmd)) {
+      const sv = verifySessionToken(signedCmd, wallet);
+      if (!sv.ok) {
+        socket.emit("error", { message: "Proof of ownership failed", reason: sv.reason });
+        return;
+      }
+    }
     let cmd = signedCmd;
-    if (typeof cmd === "string") {
+    if (!isSessionToken(cmd) && typeof cmd === "string") {
       try {
         cmd = JSON.parse(cmd);
       } catch (e) {
@@ -368,7 +384,7 @@ io.on("connection", (socket) => {
         return;
       }
     }
-    const v = verifyProfileAuth(cmd, wallet, publicKey);
+    const v = isSessionToken(cmd) ? { ok: true } : verifyProfileAuth(cmd, wallet, publicKey);
     if (!v.ok) {
       socket.emit("error", { message: "Proof of ownership failed", reason: v.reason });
       return;
@@ -588,6 +604,8 @@ function verifyProfileAuth(signedCmd, expectedWallet, bodyPublicKey, opts = {}) 
 
   const nonceKey = `${expectedWallet}:${nonce}`;
   const existing = usedNonces.get(nonceKey);
+  // peek: check without using up the nonce (sign-in reuses the caller's proof, so it stays valid for one request)
+  if (opts.peek) return existing === undefined ? { ok: true } : { ok: false, reason: "Nonce already used (replay)" };
   if (existing !== undefined) {
     const entry = typeof existing === "object" && existing != null ? existing : { expiry: existing };
     if (allowChatReuse && entry.chat) return { ok: true };
@@ -623,6 +641,18 @@ function requireAuth(req, from = "body", opts = {}) {
   }
   if (signedCmd == null) {
     return { ok: false, status: 400, error: "Missing signedCmd (required for proof of ownership)" };
+  }
+  if (typeof signedCmd === "string" && signedCmd.startsWith('"nxs1.')) {
+    try { signedCmd = JSON.parse(signedCmd); } catch { /* handled below */ }
+  }
+  if (isSessionToken(signedCmd)) {
+    // Signed in earlier on this device (see server/session.js)
+    if (opts.allowSession === false) {
+      return { ok: false, status: 403, error: "Proof of ownership failed", reason: "This action needs a fresh wallet signature" };
+    }
+    const sv = verifySessionToken(signedCmd, wallet);
+    if (!sv.ok) return { ok: false, status: 403, error: "Proof of ownership failed", reason: sv.reason };
+    return { ok: true, wallet };
   }
   if (typeof signedCmd === "string") {
     try {
@@ -910,7 +940,7 @@ app.post("/api/messages", (req, res, next) => {
   }
 }, async (req, res) => {
   const isMultipart = isMultipartRequest(req);
-  if (isMultipart && req.body && typeof req.body.signedCmd === "string") {
+  if (isMultipart && req.body && typeof req.body.signedCmd === "string" && !isSessionToken(req.body.signedCmd)) {
     try {
       req.body.signedCmd = JSON.parse(req.body.signedCmd);
     } catch (_) {}
@@ -1613,7 +1643,7 @@ app.get("/api/disputes/:offerId/actions", validateParams(offerIdParamSchema), as
 
 // PUT /api/disputes/:offerId/review – arbiter marks dispute under review. Body: { wallet, publicKey, signedCmd }
 app.put("/api/disputes/:offerId/review", validateParams(offerIdParamSchema), validateBody(disputeActionBodySchema), async (req, res) => {
-  const auth = requireAuth(req);
+  const auth = requireAuth(req, "body", { allowSession: false });
   if (!auth.ok) return sendAuthError(res, auth);
   if (req.body.wallet !== auth.wallet) {
     return res.status(400).json({ error: "Wallet must match authenticated wallet" });
@@ -1644,7 +1674,7 @@ app.put("/api/disputes/:offerId/review", validateParams(offerIdParamSchema), val
 
 // POST /api/disputes/:offerId/request-info – arbiter requests more info. Body: { message?, wallet, publicKey, signedCmd }
 app.post("/api/disputes/:offerId/request-info", validateParams(offerIdParamSchema), validateBody(disputeActionBodySchema), async (req, res) => {
-  const auth = requireAuth(req);
+  const auth = requireAuth(req, "body", { allowSession: false });
   if (!auth.ok) return sendAuthError(res, auth);
   if (req.body.wallet !== auth.wallet) {
     return res.status(400).json({ error: "Wallet must match authenticated wallet" });
@@ -1676,7 +1706,7 @@ app.post("/api/disputes/:offerId/request-info", validateParams(offerIdParamSchem
 
 // PUT /api/disputes/:offerId/close – arbiter closes dispute. Body: { wallet, publicKey, signedCmd }
 app.put("/api/disputes/:offerId/close", validateParams(offerIdParamSchema), validateBody(disputeActionBodySchema), async (req, res) => {
-  const auth = requireAuth(req);
+  const auth = requireAuth(req, "body", { allowSession: false });
   if (!auth.ok) return sendAuthError(res, auth);
   if (req.body.wallet !== auth.wallet) {
     return res.status(400).json({ error: "Wallet must match authenticated wallet" });
@@ -1709,7 +1739,7 @@ app.put("/api/disputes/:offerId/close", validateParams(offerIdParamSchema), vali
 
 // PUT /api/disputes/:offerId/release-refund-tx – save release or refund transaction request key (called by arbiter after release/refund)
 app.put("/api/disputes/:offerId/release-refund-tx", validateParams(offerIdParamSchema), validateBody(releaseRefundTxBodySchema), async (req, res) => {
-  const auth = requireAuth(req);
+  const auth = requireAuth(req, "body", { allowSession: false });
   if (!auth.ok) return sendAuthError(res, auth);
   if (req.body.wallet !== auth.wallet) {
     return res.status(400).json({ error: "Wallet must match authenticated wallet" });
@@ -1952,6 +1982,26 @@ app.get("/api/ratings/check", validateQuery(ratingsCheckQuerySchema), async (req
     console.error("GET /api/ratings/check", err);
     return res.status(500).json({ error: err.message || "Database error" });
   }
+});
+
+// POST /api/session – sign in once per device. Body: { wallet, publicKey, signedCmd } (a fresh signature).
+// Returns { token, expiresAt }; the browser then sends the token as signedCmd instead of signing again.
+app.post("/api/session", sessionLimiter, (req, res) => {
+  const auth = requireAuth(req, "body", { allowSession: false, peek: true });
+  if (!auth.ok) return sendAuthError(res, auth);
+  try {
+    return res.json(issueSessionToken(auth.wallet));
+  } catch (err) {
+    return res.status(503).json({ error: err.message });
+  }
+});
+
+// GET /api/session/check?wallet=&token= – is this device still signed in?
+app.get("/api/session/check", sessionLimiter, (req, res) => {
+  const { wallet, token } = req.query;
+  if (typeof wallet !== "string" || typeof token !== "string") return res.status(400).json({ ok: false });
+  const v = verifySessionToken(token, wallet);
+  return res.json({ ok: v.ok, ...(v.ok ? {} : { reason: v.reason }) });
 });
 
 const PORT = Number(process.env.PORT) || 3001;
@@ -2274,6 +2324,7 @@ async function start() {
     // Initialize schema
     console.log("Initializing database schema...");
     await initializeSchema();
+    await initSessionSecret(pool);
     
     // Mask password in log output for security
     const safeUrl = DATABASE_URL.replace(/:[^:@]+@/, ":****@");

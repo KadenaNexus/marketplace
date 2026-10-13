@@ -11,11 +11,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useWallet } from "@/hooks/useWallet";
-import { buildProfileAuthTx, signTransaction } from "@/lib/kadena";
 import { submitRating } from "@/lib/ratingApi";
 import { cn } from "@/lib/utils";
 import { Loader2, Star } from "lucide-react";
 import { toast } from "sonner";
+import { authProof } from "@/lib/session";
 
 interface RatingSubmitDialogProps {
   open: boolean;
@@ -48,12 +48,7 @@ export function RatingSubmitDialog({
     }
     setLoading(true);
     try {
-      const tx = buildProfileAuthTx(account.account, account.publicKey);
-      let signedCmd = await signTransaction(tx);
-      if (signedCmd?.signedCmd && !signedCmd.cmd) signedCmd = signedCmd.signedCmd;
-      const sigs = Array.isArray(signedCmd?.sigs) ? signedCmd.sigs : [];
-      if (sigs[0] && !sigs[0].pubKey) sigs[0] = { ...sigs[0], pubKey: account.publicKey };
-      if (sigs[0]?.signature && !sigs[0].sig) sigs[0] = { ...sigs[0], sig: sigs[0].signature };
+      const signedCmd = await authProof(account.account, account.publicKey);
 
       await submitRating({
         offerId,

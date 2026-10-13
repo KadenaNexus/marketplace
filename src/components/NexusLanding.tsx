@@ -192,7 +192,7 @@ const COPY: Record<Lang, Copy> = {
       "items": [
         [
           "A Kadena wallet",
-          "Ecko Wallet, Chainweaver, or any wallet that supports WalletConnect. Your wallet is your account; there is no separate sign-up."
+          "Ecko Wallet (browser extension or phone app), Linx, Koala, Chainweaver, or another Kadena wallet that supports WalletConnect. Your wallet is your account; there is no separate sign-up."
         ],
         [
           "A little KDA on Chain 1 for gas",
@@ -432,7 +432,7 @@ const COPY: Record<Lang, Copy> = {
       "items": [
         [
           "محفظة Kadena",
-          "Ecko Wallet أو Chainweaver أو أي محفظة تدعم WalletConnect. المحفظة هي حسابك؛ لا يوجد تسجيل منفصل."
+          "Ecko Wallet (إضافة المتصفح أو تطبيق الجوال) أو Linx أو Koala أو Chainweaver أو أي محفظة Kadena تدعم WalletConnect. المحفظة هي حسابك؛ لا يوجد تسجيل منفصل."
         ],
         [
           "قليل من KDA على السلسلة 1 لرسوم الشبكة",

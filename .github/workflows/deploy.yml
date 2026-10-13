@@ -45,6 +45,8 @@ jobs:
         run: npm run test:alerts
       - name: Run notification tests
         run: npm run test:notifications
+      - name: Run session tests
+        run: npm run test:session
   deploy:
     name: deploy
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

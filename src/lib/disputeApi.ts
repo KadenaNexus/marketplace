@@ -137,7 +137,7 @@ export async function submitEvidence(params: {
   form.append("explanation", explanation);
   form.append("wallet", wallet);
   form.append("publicKey", publicKey);
-  form.append("signedCmd", JSON.stringify(signedCmd));
+  form.append("signedCmd", typeof signedCmd === "string" ? signedCmd : JSON.stringify(signedCmd));
   
   const res = await fetch(`${API}/api/disputes/${encodeURIComponent(offerId)}/evidence`, {
     method: "POST",

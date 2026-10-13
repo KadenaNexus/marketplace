@@ -76,7 +76,7 @@ export async function uploadAvatar(params: {
   form.append("image", image);
   form.append("wallet", wallet);
   form.append("publicKey", publicKey);
-  form.append("signedCmd", JSON.stringify(signedCmd));
+  form.append("signedCmd", typeof signedCmd === "string" ? signedCmd : JSON.stringify(signedCmd));
   let res: Response;
   try {
     res = await fetch(buildProfileUrl("/api/profiles/upload-avatar"), {

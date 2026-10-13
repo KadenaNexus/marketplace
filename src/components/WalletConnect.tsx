@@ -7,7 +7,8 @@ import { sendTestTransfer } from "@/lib/kadena";
 import { Wallet, LogOut, AlertCircle, Loader2, Send } from "lucide-react";
 import { toast } from "sonner";
 
-export function WalletConnect() {
+/** `inHeader`: on phones the button says just "Connect" so the header fits on one line. */
+export function WalletConnect({ inHeader = false }: { inHeader?: boolean } = {}) {
   const { account, isConnecting, isConnected, isWalletAvailable, error, connect, disconnect } = useWallet();
   const { data: chainBalance } = useAppChainBalance(isConnected ? account?.account : undefined);
   const [isSending, setIsSending] = useState(false);
@@ -98,7 +99,7 @@ export function WalletConnect() {
         className="gap-2"
       >
         <Wallet className="h-4 w-4" />
-        {isConnecting ? "Connecting..." : "Connect Wallet"}
+        {isConnecting ? "Connecting..." : inHeader ? <><span className="sm:hidden">Connect</span><span className="hidden sm:inline">Connect Wallet</span></> : "Connect Wallet"}
       </Button>
       {error && (
         <span className="text-xs text-destructive">{error}</span>
