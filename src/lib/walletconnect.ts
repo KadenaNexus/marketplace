@@ -13,8 +13,9 @@
  * "kadena:mainnet01:<public key>", methods kadena_quicksign_v1 / kadena_sign_v1 / kadena_getAccounts_v1.
  */
 import type { IUnsignedCommand } from "@kadena/client";
-import { createQuicksignWithWalletConnect, createSignWithWalletConnect } from "@kadena/client";
+import { addSignatures, createSignWithWalletConnect } from "@kadena/client";
 import { CHAIN_ID, NETWORK_ID, type WalletAccount } from "@/lib/kadena";
+import { signaturesFromQuicksign } from "@/lib/quicksignAnswer";
 
 // The Reown project ID is public (it identifies the site to the WalletConnect relay).
 // Shared with the Adoption Index; marketplace.kadena.ws is on its domain allowlist.
@@ -158,17 +159,32 @@ function walletLink(session: Session): string | null {
   return v;
 }
 
+async function quicksign(c: Client, session: Session, command: IUnsignedCommand): Promise<IUnsignedCommand> {
+  const parsed = JSON.parse(command.cmd) as { signers?: { pubKey: string }[] };
+  const keys = (parsed.signers ?? []).map((s) => s.pubKey);
+  const answer = await c.request({
+    topic: session.topic,
+    chainId: WC_CHAIN,
+    request: {
+      method: "kadena_quicksign_v1",
+      params: { commandSigDatas: [{ cmd: command.cmd, sigs: keys.map((pubKey, i) => ({ pubKey, sig: command.sigs?.[i]?.sig ?? null })) }] },
+    },
+  });
+  const sigs = signaturesFromQuicksign(answer, command.hash, keys);
+  return addSignatures(command, ...sigs) as IUnsignedCommand;
+}
+
 /** Sign with the connected phone wallet. The approval banner offers a button to open the wallet app. */
 export async function signWithWalletConnect(command: IUnsignedCommand): Promise<unknown> {
   const c = await getClient();
   const session = currentSession(c);
   if (!session) throw new Error("The phone wallet is no longer connected. Connect it again.");
   const methods = session.namespaces.kadena?.methods ?? [];
-  // @kadena/client types these with its own (older) WalletConnect client; ours has the same request() shape
-  const args = [c, session, WC_CHAIN] as unknown as Parameters<typeof createQuicksignWithWalletConnect>;
-  const sign = methods.includes("kadena_quicksign_v1") || !methods.includes("kadena_sign_v1")
-    ? createQuicksignWithWalletConnect(...args)
-    : createSignWithWalletConnect(...args);
+  const useQuicksign = methods.includes("kadena_quicksign_v1") || !methods.includes("kadena_sign_v1");
+  const sign = useQuicksign
+    ? (cmd: IUnsignedCommand) => quicksign(c, session, cmd)
+    // @kadena/client types this with its own (older) WalletConnect client; ours has the same request() shape
+    : createSignWithWalletConnect(...([c, session, WC_CHAIN] as unknown as Parameters<typeof createSignWithWalletConnect>));
 
   const link = walletLink(session);
   const open = link ? () => { window.open(link, "_self", "noreferrer noopener"); } : null;
