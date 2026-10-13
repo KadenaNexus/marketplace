@@ -370,7 +370,42 @@ export async function submitTransaction(signedCmd: any): Promise<string> {
   const data = JSON.parse(text) as { requestKeys?: string[] };
   const keys = data?.requestKeys;
   if (!keys?.length) throw new Error("No requestKeys in send response");
+  if (!Array.isArray(cmd)) recordTradeTx(cmd, keys[0]);
   return keys[0];
+}
+
+/**
+ * Tell our server about an escrow transaction just sent, so the trade's full transaction list shows for
+ * both sides on any device. The server checks the command against the request key and the chain result.
+ * Best effort: a failure here never affects the transaction.
+ */
+function recordTradeTx(cmd: unknown, requestKey: string) {
+  const c = (cmd as { cmd?: unknown } | null)?.cmd;
+  if (typeof c !== "string" || !c.includes(`${CONTRACT_FQN}.`)) return;
+  try {
+    fetch("/api/trade-txs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cmd: c, requestKey }),
+      keepalive: true,
+    }).catch(() => {});
+  } catch { /* ignore */ }
+}
+
+export interface TradeTx {
+  requestKey: string;
+  fn: string;
+  action: string;
+  sender: string;
+  status: "confirmed" | "pending";
+  at: string;
+}
+
+/** Every recorded on-chain step of a trade, oldest first. */
+export async function fetchTradeTxs(offerId: string): Promise<TradeTx[]> {
+  const r = await fetch(`/api/trades/${encodeURIComponent(offerId)}/txs`);
+  if (!r.ok) throw new Error("Could not load the trade's transactions");
+  return r.json();
 }
 
 export async function pollTransaction(requestKey: string) {

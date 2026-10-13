@@ -11,6 +11,7 @@
 import "dotenv/config";
 import { registerAlertRoutes, startAlertWatcher } from "./alerts.js";
 import { registerNotificationRoutes, startNotificationWatcher, notifyMessage } from "./notifications.js";
+import { registerTradeTxRoutes, startTradeTxWatcher } from "./tradeTxs.js";
 import { initSessionSecret, isSessionToken, issueSessionToken, verifySessionToken } from "./session.js";
 import express from "express";
 import rateLimit from "express-rate-limit";
@@ -305,6 +306,7 @@ let pool;
 registerAlertRoutes(app, () => pool);
 // Trade notifications: in-page feed and Web Push
 registerNotificationRoutes(app, () => pool);
+registerTradeTxRoutes(app, () => pool);
 
 // WebSocket server for online status tracking
 const httpServer = createServer(app);
@@ -2459,6 +2461,7 @@ async function start() {
     console.log(`Profile API listening on http://localhost:${PORT}`);
     startAlertWatcher(() => pool);
     startNotificationWatcher(() => pool);
+    startTradeTxWatcher(() => pool);
     console.log(`WebSocket server ready for online status tracking`);
   });
 }

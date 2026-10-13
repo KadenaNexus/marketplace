@@ -13,7 +13,8 @@
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test:session": "node --test server/session.test.js"
+    "test:session": "node --test server/session.test.js",
+    "test:trade-txs": "node --test server/tradeTxs.test.js"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

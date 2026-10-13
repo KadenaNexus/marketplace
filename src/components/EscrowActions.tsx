@@ -9,6 +9,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { EscrowStatus } from "./EscrowStatus";
 import { ProfileSummaryView } from "./ProfileSummary";
 import { OfferCard } from "./OfferCard";
+import { TradeTxList } from "./TradeTxList";
 import { DisputeView } from "./DisputeView";
 import { OfferChat } from "./OfferChat";
 import { getDispute, openDispute, putFundTxRequestKey } from "@/lib/disputeApi";
@@ -81,6 +82,8 @@ interface TransactionResult {
   action: string;
   requestKey: string;
   timestamp: Date;
+  /** Trade the transaction belongs to (the list below shows only the open trade's) */
+  offerId?: string;
 }
 
 interface EscrowActionsProps {
@@ -459,10 +462,12 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
   }, [refreshTrigger]);
 
   const addTransaction = (action: string, requestKey: string) => {
+    const offerId = selectedEscrow?.offerId;
     setTransactions(prev => [
-      { action, requestKey, timestamp: new Date() },
+      { action, requestKey, timestamp: new Date(), offerId },
       ...prev,
     ]);
+    if (offerId) setTimeout(() => queryClient.invalidateQueries({ queryKey: ["trade-txs", offerId] }), 1500);
   };
 
   const executeAction = async (
@@ -1128,6 +1133,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                 Connect your wallet to interact with this escrow
               </div>
             )}
+            <TradeTxList escrow={selectedEscrow} local={transactions.filter((t) => t.offerId === selectedEscrow.offerId)} />
               </TabsContent>
 
               <TabsContent value="chat" className="mt-4">
@@ -1328,38 +1334,6 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
         />
       )}
 
-      {/* Transaction History */}
-      {transactions.length > 0 && (
-        <Card className="escrow-card">
-          <CardHeader>
-            <CardTitle className="text-base">On-chain references (recent transactions)</CardTitle>
-            <p className="text-sm text-muted-foreground">View transaction status and details on the block explorer.</p>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {transactions.map((tx, i) => (
-                <div
-                  key={tx.requestKey + i}
-                  className="flex items-center justify-between p-3 bg-muted rounded-md"
-                >
-                  <div>
-                    <p className="font-medium">{tx.action}</p>
-                    <p className="tx-hash">{tx.requestKey}</p>
-                  </div>
-                  <a
-                    href={getTxExplorerUrl(tx.requestKey)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-primary hover:underline"
-                  >
-                    <ExternalLink className="h-4 w-4" />
-                  </a>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
     </div>
   );
 }

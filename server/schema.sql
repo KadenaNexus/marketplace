@@ -326,3 +326,18 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_push_subscriptions_wallet ON push_subscriptions(wallet);
+
+-- Every on-chain step of a trade (create, accept, deposit, mark paid, release, refund, …), so both sides see
+-- the full list on any device. Recorded from the signed command (its hash must equal the request key) and kept
+-- only once the chain reports success.
+CREATE TABLE IF NOT EXISTS trade_txs (
+    request_key VARCHAR(64) PRIMARY KEY,
+    offer_id VARCHAR(255) NOT NULL,
+    fn VARCHAR(64) NOT NULL,
+    sender VARCHAR(255) NOT NULL DEFAULT '',
+    status VARCHAR(16) NOT NULL DEFAULT 'pending',
+    block_time TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_trade_txs_offer ON trade_txs(offer_id);
+CREATE INDEX IF NOT EXISTS idx_trade_txs_pending ON trade_txs(status, created_at);
