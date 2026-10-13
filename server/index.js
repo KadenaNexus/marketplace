@@ -2006,6 +2006,121 @@ app.get("/api/session/check", sessionLimiter, (req, res) => {
 
 const PORT = Number(process.env.PORT) || 3001;
 
+function splitSqlStatements(sql) {
+  const statements = [];
+  let statementStart = 0;
+  let inSingleQuotedString = false;
+  let singleQuotedStringUsesBackslashEscapes = false;
+  let inDoubleQuotedIdentifier = false;
+  let inLineComment = false;
+  let blockCommentDepth = 0;
+  let dollarQuoteDelimiter = null;
+
+  for (let i = 0; i < sql.length;) {
+    const current = sql[i];
+    const next = sql[i + 1];
+
+    if (inLineComment) {
+      if (current === "\n") inLineComment = false;
+      i++;
+      continue;
+    }
+
+    if (blockCommentDepth > 0) {
+      if (current === "/" && next === "*") {
+        blockCommentDepth++;
+        i += 2;
+      } else if (current === "*" && next === "/") {
+        blockCommentDepth--;
+        i += 2;
+      } else {
+        i++;
+      }
+      continue;
+    }
+
+    if (dollarQuoteDelimiter) {
+      if (sql.startsWith(dollarQuoteDelimiter, i)) {
+        i += dollarQuoteDelimiter.length;
+        dollarQuoteDelimiter = null;
+      } else {
+        i++;
+      }
+      continue;
+    }
+
+    if (inSingleQuotedString) {
+      if (singleQuotedStringUsesBackslashEscapes && current === "\\") {
+        i = Math.min(i + 2, sql.length);
+      } else if (current === "'" && next === "'") {
+        i += 2;
+      } else {
+        if (current === "'") inSingleQuotedString = false;
+        i++;
+      }
+      continue;
+    }
+
+    if (inDoubleQuotedIdentifier) {
+      if (current === '"' && next === '"') {
+        i += 2;
+      } else {
+        if (current === '"') inDoubleQuotedIdentifier = false;
+        i++;
+      }
+      continue;
+    }
+
+    if (current === "-" && next === "-") {
+      inLineComment = true;
+      i += 2;
+      continue;
+    }
+    if (current === "/" && next === "*") {
+      blockCommentDepth = 1;
+      i += 2;
+      continue;
+    }
+    if (current === "'") {
+      const previous = sql[i - 1];
+      const beforePrevious = sql[i - 2];
+      singleQuotedStringUsesBackslashEscapes =
+        /[eE]/.test(previous || "") &&
+        (!beforePrevious || !/[A-Za-z0-9_$]/.test(beforePrevious));
+      inSingleQuotedString = true;
+      i++;
+      continue;
+    }
+    if (current === '"') {
+      inDoubleQuotedIdentifier = true;
+      i++;
+      continue;
+    }
+    if (current === "$") {
+      const delimiter = sql.slice(i).match(/^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/)?.[0];
+      if (delimiter) {
+        dollarQuoteDelimiter = delimiter;
+        i += delimiter.length;
+        continue;
+      }
+    }
+    if (current === ";") {
+      const statement = sql.slice(statementStart, i + 1).trim();
+      if (statement) statements.push(statement);
+      statementStart = i + 1;
+    }
+    i++;
+  }
+
+  if (inSingleQuotedString || inDoubleQuotedIdentifier || blockCommentDepth > 0 || dollarQuoteDelimiter) {
+    throw new Error("Unterminated quote or comment in server/schema.sql");
+  }
+
+  const remainder = sql.slice(statementStart).trim();
+  if (remainder) statements.push(remainder);
+  return statements;
+}
+
 async function initializeSchema() {
   const schemaPath = path.join(__dirname, "schema.sql");
   if (!fs.existsSync(schemaPath)) {
@@ -2015,35 +2130,7 @@ async function initializeSchema() {
   
   const schemaSQL = fs.readFileSync(schemaPath, "utf-8");
   
-  // Better SQL parsing: handle multi-line statements and comments
-  let currentStatement = "";
-  const statements = [];
-  
-  const lines = schemaSQL.split("\n");
-  for (let line of lines) {
-    // Remove inline comments (-- comments)
-    const commentIndex = line.indexOf("--");
-    if (commentIndex >= 0) {
-      line = line.substring(0, commentIndex);
-    }
-    
-    line = line.trim();
-    
-    // Skip empty lines
-    if (line.length === 0) continue;
-    
-    // Add line to current statement
-    currentStatement += (currentStatement ? " " : "") + line;
-    
-    // If line ends with semicolon, it's the end of a statement
-    if (line.endsWith(";")) {
-      const statement = currentStatement.trim();
-      if (statement.length > 1) { // More than just ";"
-        statements.push(statement);
-      }
-      currentStatement = "";
-    }
-  }
+  const statements = splitSqlStatements(schemaSQL);
   
   // Execute each statement
   console.log(`Executing ${statements.length} schema statements...`);
@@ -2053,14 +2140,12 @@ async function initializeSchema() {
     
     try {
       await pool.query(statement);
-      const statementType = statement.split(" ")[0].toUpperCase();
-      console.log(`  ✓ Executed: ${statementType}...`);
+      console.log(`  ✓ Executed schema statement ${i + 1}`);
     } catch (err) {
       // Ignore "already exists" errors for tables/indexes
       const isAlreadyExists = err.message.includes("already exists") || err.code === "42P07";
       if (isAlreadyExists) {
-        const statementType = statement.split(" ")[0].toUpperCase();
-        console.log(`  ⊙ Already exists: ${statementType}...`);
+        console.log(`  ⊙ Schema statement ${i + 1} already exists`);
       } else {
         console.error(`  ✗ Schema initialization error on statement ${i + 1}:`, err.message);
         console.error("  Failed statement:", statement.substring(0, 150));
