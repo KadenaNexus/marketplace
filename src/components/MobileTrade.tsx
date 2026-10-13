@@ -30,6 +30,49 @@ function deadline(e: Escrow): { iso?: string; limit: number } {
   return { limit: 0 };
 }
 
+/** "42 min left", "3 h 12 min left" */
+export function leftText(seconds: number): string {
+  const m = Math.max(1, Math.ceil(seconds / 60));
+  return m < 60 ? `${m} min left` : `${Math.floor(m / 60)} h ${m % 60} min left`;
+}
+
+/** For lists: is this trade waiting for me, what is the step, and how much time is left. */
+export function turnInfo(e: Escrow, me?: string): { mine: boolean; label: string; remaining: number | null } | null {
+  if (!me) return null;
+  const seller = me === e.seller, buyer = me === e.buyer;
+  if (!seller && !buyer) return null;
+  if (e.state === "DISPUTED") return { mine: false, label: "In dispute: the arbiter is reviewing", remaining: null };
+  const { iso, limit } = deadline(e);
+  const remaining = iso && limit ? getRemainingSeconds(iso, limit) : null;
+  if (remaining === 0) return { mine: true, label: "Time is up: open the trade to see what you can do", remaining };
+  if (e.state === "ACCEPTED") return seller ? { mine: true, label: "Your turn: deposit the KDA", remaining } : { mine: false, label: "Waiting for the seller to deposit", remaining };
+  if (e.state === "FUNDED") return buyer ? { mine: true, label: "Your turn: pay and mark as paid", remaining } : { mine: false, label: "Waiting for the buyer's payment", remaining };
+  if (e.state === "PAID") return seller ? { mine: true, label: "Your turn: check the payment and release", remaining } : { mine: false, label: "Waiting for the seller to release", remaining };
+  return null;
+}
+
+/** One line on a trade card: whose turn and the time left (updates every 20 s). */
+export function TurnLine({ escrow, me }: { escrow: Escrow; me?: string }) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick((x) => x + 1), 20000);
+    return () => clearInterval(t);
+  }, []);
+  const t = turnInfo(escrow, me);
+  if (!t) return null;
+  const urgent = t.remaining !== null && t.remaining <= 15 * 60;
+  return (
+    <p className={cn(
+      "mt-2 flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm",
+      t.mine ? "bg-orange-100 font-semibold text-orange-900 dark:bg-orange-950 dark:text-orange-100" : "bg-muted text-muted-foreground",
+    )}>
+      <Clock className={cn("h-3.5 w-3.5 shrink-0", urgent && "text-red-600")} />
+      <span className="min-w-0 flex-1">{t.label}</span>
+      {t.remaining !== null && t.remaining > 0 && <span className={cn("shrink-0 tabular-nums", urgent && "text-red-700 dark:text-red-300")}>{leftText(t.remaining)}</span>}
+    </p>
+  );
+}
+
 /**
  * The first thing on a trade screen: whose turn it is, what to do, and the contract's countdown.
  */

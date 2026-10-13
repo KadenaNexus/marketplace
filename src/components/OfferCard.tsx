@@ -1,5 +1,6 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { TradeCode } from "./TradeCode";
+import { TurnLine } from "./MobileTrade";
 import { currencyPrefix } from "@/lib/markets";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -79,6 +80,7 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, onSelect, onDe
             <EscrowStatus state={hasOpenDispute ? "DISPUTED" : escrow.state} />
           </div>
         )}
+        <TurnLine escrow={hasOpenDispute ? { ...escrow, state: "DISPUTED" } : escrow} me={account?.account} />
         <div className="mt-3 flex flex-wrap gap-1.5 text-xs">
           {paymentMethods.slice(0, 2).map((m) => (
             <span key={m} className="rounded-full bg-muted px-2.5 py-1">{m}</span>

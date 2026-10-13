@@ -351,3 +351,16 @@ CREATE TABLE IF NOT EXISTS trade_payouts (
     details JSONB NOT NULL DEFAULT '[]',
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Proof of payment the buyer adds when pressing Mark as Paid: a screenshot and/or the transfer reference
+-- (USDT transaction ID, Wise/Revolut reference). Seen by the two sides and the arbiter.
+CREATE TABLE IF NOT EXISTS payment_proofs (
+    id SERIAL PRIMARY KEY,
+    offer_id VARCHAR(255) NOT NULL,
+    wallet VARCHAR(255) NOT NULL,
+    reference VARCHAR(300),
+    file_url VARCHAR(512),
+    file_name VARCHAR(200),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_payment_proofs_offer ON payment_proofs(offer_id);

@@ -281,7 +281,7 @@ export function registerNotificationRoutes(app, getPool) {
       const items = r.rows.map((n) => {
         const offer = n.wallet === "*";
         const t = offer ? newOfferText(n) : { title: n.title, body: n.body };
-        return { id: n.id, kind: n.kind.startsWith("message:") ? "message" : n.kind, scope: offer ? "offer" : "trade", offerId: n.offer_id || null,
+        return { id: n.id, kind: n.kind.startsWith("message:") ? "message" : n.kind.startsWith("proof:") ? "proof" : n.kind, scope: offer ? "offer" : "trade", offerId: n.offer_id || null,
           title: t.title, body: t.body, urgent: n.urgent, createdAt: n.created_at, open: offer ? n.state === "CREATED" : undefined };
       });
       return res.json({ enabled: true, items });

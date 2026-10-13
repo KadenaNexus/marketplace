@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { TradeCode } from "./TradeCode";
-import { AlertTriangle, Bell, BellOff, Check, CheckCheck, Clock, Loader2, Lock, MessageSquare, Plus, Share, Star, Undo2, XCircle } from "lucide-react";
+import { Receipt, AlertTriangle, Bell, BellOff, Check, CheckCheck, Clock, Loader2, Lock, MessageSquare, Plus, Share, Star, Undo2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
@@ -23,6 +23,7 @@ const isToday = (iso: string) => new Date(iso).toDateString() === new Date().toD
 function KindIcon({ kind }: { kind: string }) {
   const cls = "h-4 w-4";
   if (kind === "accepted" || kind === "paid") return <Check className={cls} />;
+  if (kind === "proof") return <Receipt className={cls} />;
   if (kind === "funded") return <Lock className={cls} />;
   if (kind === "completed") return <Star className={cls} />;
   if (kind === "disputed" || kind.startsWith("expired")) return <AlertTriangle className={cls} />;

@@ -10,9 +10,10 @@
 
 import "dotenv/config";
 import { registerAlertRoutes, startAlertWatcher } from "./alerts.js";
-import { registerNotificationRoutes, startNotificationWatcher, notifyMessage, notifyTradeChangeSoon } from "./notifications.js";
+import { registerNotificationRoutes, startNotificationWatcher, notifyMessage, notifyTradeChangeSoon, notify } from "./notifications.js";
 import { registerTradeTxRoutes, startTradeTxWatcher } from "./tradeTxs.js";
 import { registerPayoutRoutes } from "./payout.js";
+import { registerProofRoutes } from "./proofs.js";
 import { initSessionSecret, isSessionToken, issueSessionToken, verifySessionToken } from "./session.js";
 import express from "express";
 import rateLimit from "express-rate-limit";
@@ -316,6 +317,18 @@ const onTradeStepSettled = ({ offerId, ok }) => {
 };
 registerTradeTxRoutes(app, () => pool, { onSettled: (x) => onTradeStepSettled(x) });
 registerPayoutRoutes(app, { getPool: () => pool, requireAuth: (...a) => requireAuth(...a), sendAuthError: (...a) => sendAuthError(...a) });
+registerProofRoutes(app, {
+  getPool: () => pool,
+  requireAuth: (...a) => requireAuth(...a),
+  sendAuthError: (...a) => sendAuthError(...a),
+  upload: uploadChatFile,
+  isAllowedFile: (p, m) => isAllowedEvidenceMagic(p, m),
+  // tell the seller right away (bell + phone notification)
+  onAdded: ({ offerId, id, to }) => {
+    if (!to) return;
+    notify(pool, { wallet: to, offer_id: offerId, kind: `proof:${id}`, title: "Proof of payment added", body: "The buyer added proof of payment. Check the money arrived in your account before you release." }).catch(() => {});
+  },
+});
 
 // WebSocket server for online status tracking
 const httpServer = createServer(app);

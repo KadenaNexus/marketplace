@@ -26,6 +26,7 @@ import {
 } from "@/lib/kadena";
 import { isStepExpired } from "@/components/TradeTimer";
 import { PayoutCard } from "@/components/PayoutCard";
+import { ProofCard } from "@/components/TradeSafety";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -382,7 +383,7 @@ export default function AdminDisputeDetail() {
             <p><Label className="text-muted-foreground">Arbiter</Label> {escrow.arbiter}</p>
             <p><Label className="text-muted-foreground">Amount</Label> {escrow.amount} KDA • Price {escrow.fiatCurrency} {escrow.price}</p>
             <p><Label className="text-muted-foreground">State</Label> {escrow.state}</p>
-            <div className="pt-2"><PayoutCard escrow={escrow} total="" /></div>
+            <div className="space-y-3 pt-2"><PayoutCard escrow={escrow} total="" /><ProofCard escrow={escrow} /></div>
             <div className="flex flex-wrap gap-4 pt-1">
               {dispute.fundTxRequestKey ? (
                 <a
