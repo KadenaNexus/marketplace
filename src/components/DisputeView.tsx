@@ -45,14 +45,14 @@ export function DisputeView({ escrow, onClose }: DisputeViewProps) {
 
   const { data: evidenceList = [], refetch: refetchEvidence } = useQuery({
     queryKey: ["evidence", escrow.offerId, account?.account],
-    queryFn: () => getEvidence(escrow.offerId, account?.account || undefined),
+    queryFn: () => getEvidence(escrow.offerId, account!),
     enabled: !!dispute && !!account,
   });
 
   const { data: messages = [], refetch: refetchMessages } = useQuery({
     queryKey: ["dispute-messages", escrow.offerId],
-    queryFn: () => getMessages(escrow.offerId),
-    enabled: !!dispute,
+    queryFn: () => getMessages(escrow.offerId, account!),
+    enabled: !!dispute && !!account,
     refetchInterval: 5000, // Poll every 5 seconds
   });
 
