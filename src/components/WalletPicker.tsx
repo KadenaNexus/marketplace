@@ -57,8 +57,9 @@ export function WalletApprovalBanner() {
           </div>
           <button type="button" onClick={p.cancel} aria-label="Stop waiting" className="-m-1 rounded p-1 text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>
         </div>
-        {p.open && (
-          <Button className="mt-3 h-11 w-full" onClick={p.open}>Open {p.wallet}</Button>
+        {p.href && (
+          // a real link: iPhone opens an app from a tapped link more reliably than from script
+          <a href={p.href} className="mt-3 flex h-11 w-full items-center justify-center rounded-md bg-primary text-sm font-medium text-primary-foreground hover:bg-primary/90">Open {p.wallet}</a>
         )}
       </div>
     </div>

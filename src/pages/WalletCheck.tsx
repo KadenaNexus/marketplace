@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { NETWORK_ID } from "@/lib/kadena";
+import { connectedWalletInfo } from "@/lib/walletconnect";
 
 /**
  * /wallet-check: what a wallet app's built-in browser gives this site (for adding phone wallets).
@@ -43,8 +44,20 @@ function scan() {
   return { found, extraGlobals: extra.slice(0, 80) };
 }
 
+// Links that might open the Linx app (tap each; one that opens Linx is the one to use)
+const CANDIDATES = ["linxwallet://", "linx://", "linx-wallet://", "linxwallet://wc", "linxlabs://", "thinedgelabs://"];
+
 export default function WalletCheck() {
   const [report, setReport] = useState<{ when: string; data: unknown }[]>([]);
+  const [wc, setWc] = useState<Awaited<ReturnType<typeof connectedWalletInfo>> | "none" | null>(null);
+  useEffect(() => {
+    connectedWalletInfo().then((i) => { setWc(i ?? "none"); add("phone wallet (WalletConnect)", i ?? "not connected"); }).catch(() => setWc("none"));
+  }, []);
+  const links = [
+    ...(wc && wc !== "none" && wc.redirect?.native ? [wc.redirect.native] : []),
+    ...(wc && wc !== "none" && wc.redirect?.universal ? [wc.redirect.universal] : []),
+    ...CANDIDATES,
+  ].filter((v, i, a) => a.indexOf(v) === i);
   const add = (when: string, data: unknown) => setReport((r) => [...r, { when, data }]);
 
   useEffect(() => {
@@ -84,6 +97,15 @@ export default function WalletCheck() {
         <Button variant="outline" onClick={() => add("scan", scan())}>Scan again</Button>
         <Button variant="secondary" onClick={copy}>Copy report</Button>
       </div>
+      <section className="space-y-2 rounded-xl border border-border p-3">
+        <h2 className="font-semibold">Open the wallet app</h2>
+        <p className="text-sm text-muted-foreground">Tap each link. Note which one opens Linx (an error or the Linx website means no).</p>
+        <div className="space-y-2">
+          {links.map((l) => (
+            <a key={l} href={l} className="block rounded-md border border-border px-3 py-2 font-mono text-sm text-primary break-all">{l}</a>
+          ))}
+        </div>
+      </section>
       <pre className="whitespace-pre-wrap break-all rounded-xl border border-border bg-muted/40 p-3 text-xs">{text}</pre>
     </main>
   );
