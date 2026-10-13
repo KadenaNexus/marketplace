@@ -41,7 +41,17 @@ export function WalletPicker({ open, onOpenChange, onEcko, onPhone }: {
 /** While a phone wallet is asked to sign: where to approve, a way back to the wallet app, and Cancel. */
 export function WalletApprovalBanner() {
   const [p, setP] = useState<Parameters<Parameters<typeof onPendingApproval>[0]>[0]>(null);
+  const [slow, setSlow] = useState(false);
+  const [resent, setResent] = useState(false);
   useEffect(() => onPendingApproval(setP), []);
+  // After a while without an answer: help for a wallet app that did not pick the request up
+  const since = p?.since;
+  useEffect(() => {
+    setSlow(false); setResent(false);
+    if (!since) return;
+    const t = setTimeout(() => setSlow(true), Math.max(0, since + 15000 - Date.now()));
+    return () => clearTimeout(t);
+  }, [since]);
   if (!p) return null;
   return (
     <div role="status" aria-live="assertive" className="fixed inset-x-0 bottom-0 z-[80] p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
@@ -62,6 +72,24 @@ export function WalletApprovalBanner() {
             </div>
             <button type="button" onClick={p.cancel} aria-label="Stop waiting" className="-m-1 rounded p-1 opacity-70 hover:opacity-100"><X className="h-4 w-4" /></button>
           </div>
+          {slow && (
+            <div className="mt-3 space-y-2 rounded-xl bg-white/70 p-3 text-sm dark:bg-black/20">
+              <p className="font-semibold">{p.wallet} not showing it?</p>
+              <ol className="list-decimal space-y-1 pl-5 opacity-90">
+                <li>Close {p.wallet} completely (swipe it away) and open it again. The request is still waiting, so don't cancel here.</li>
+                {p.resend && <li>Or send it again. If {p.wallet} then shows it twice, approve one and decline the other.</li>}
+              </ol>
+              {p.resend && (
+                <button
+                  type="button"
+                  onClick={() => { p.resend?.(); setResent(true); }}
+                  className="flex h-10 w-full items-center justify-center rounded-md border-2 border-amber-500 font-semibold hover:bg-amber-100 dark:hover:bg-amber-900"
+                >
+                  {resent ? `Sent again. Check ${p.wallet}` : `Send to ${p.wallet} again`}
+                </button>
+              )}
+            </div>
+          )}
           {p.href && (
             // a real link: iPhone opens an app from a tapped link more reliably than from script
             <a href={p.href} className="mt-3 flex h-11 w-full items-center justify-center rounded-md bg-amber-500 text-sm font-semibold text-amber-950 hover:bg-amber-400">Open {p.wallet}</a>

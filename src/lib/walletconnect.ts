@@ -35,7 +35,7 @@ type Session = {
 };
 type Client = {
   connect: (p: { requiredNamespaces?: unknown; optionalNamespaces?: unknown }) => Promise<{ uri?: string; approval: () => Promise<Session> }>;
-  request: (p: { topic: string; chainId: string; request: { method: string; params: unknown } }) => Promise<unknown>;
+  request: (p: { topic: string; chainId: string; request: { method: string; params: unknown }; expiry?: number }) => Promise<unknown>;
   disconnect: (p: { topic: string; reason: { code: number; message: string } }) => Promise<void>;
   session: { getAll: () => Session[] };
   on: (event: string, fn: (...a: unknown[]) => void) => void;
@@ -58,11 +58,33 @@ export function getClient(): Promise<Client> {
           icons: [`${origin}/icon-192.png`],
         },
       });
+      watchRelay(c as unknown as Client);
       return c as unknown as Client;
     })();
     clientPromise.catch(() => { clientPromise = null; });
   }
   return clientPromise;
+}
+
+/**
+ * iPhone pauses this page while you are in the wallet app, and the connection to the WalletConnect relay
+ * can be dead when you come back. Reconnect right away, so the wallet's answer is not lost or late.
+ */
+function watchRelay(c: Client) {
+  const relayer = (c as unknown as { core?: { relayer?: { connected?: boolean; restartTransport?: () => Promise<void>; transportOpen?: () => Promise<void> } } }).core?.relayer;
+  if (!relayer || typeof document === "undefined") return;
+  let busy = false;
+  const check = async () => {
+    if (document.visibilityState !== "visible" || busy || relayer.connected !== false) return;
+    busy = true;
+    walletLog("relay reconnect", "page came back with the connection down");
+    try { await (relayer.restartTransport ?? relayer.transportOpen)?.call(relayer); walletLog("relay reconnect ok"); }
+    catch (e) { walletLog("relay reconnect failed", e instanceof Error ? e.message : String(e)); }
+    finally { busy = false; }
+  };
+  document.addEventListener("visibilitychange", () => { void check(); });
+  window.addEventListener("online", () => { void check(); });
+  window.addEventListener("pageshow", () => { void check(); });
 }
 
 const currentSession = (c: Client): Session | undefined => {
@@ -139,7 +161,14 @@ export async function onWalletConnectEnded(fn: () => void) {
 
 /* ---------- signing ---------- */
 
-type Pending = { wallet: string; open: (() => void) | null; href: string | null; cancel: () => void; /** what is being approved, e.g. "Deposit KDA" */ what: string; signIn: boolean };
+type Pending = {
+  wallet: string; open: (() => void) | null; href: string | null; cancel: () => void;
+  /** what is being approved, e.g. "Deposit KDA" */ what: string; signIn: boolean;
+  /** send the same request to the wallet again (a wallet that missed it, e.g. after being reopened) */ resend: (() => void) | null;
+  /** when the request was sent (ms) */ since: number;
+};
+/** How long a request waits for the wallet: long enough to close and reopen a stuck wallet app. */
+const REQUEST_EXPIRY_S = 10 * 60;
 let pending: Pending | null = null;
 const listeners = new Set<(p: Pending | null) => void>();
 const emit = () => listeners.forEach((l) => l(pending));
@@ -195,17 +224,32 @@ function describeCmd(cmd: string): string {
   } catch { return "transaction"; }
 }
 
-async function quicksign(c: Client, session: Session, command: IUnsignedCommand): Promise<IUnsignedCommand> {
+async function quicksign(c: Client, session: Session, command: IUnsignedCommand, onResend: (fn: () => void) => void): Promise<IUnsignedCommand> {
   const parsed = JSON.parse(command.cmd) as { signers?: { pubKey: string }[] };
   const keys = (parsed.signers ?? []).map((s) => s.pubKey);
-  walletLog("quicksign sent", { what: describeCmd(command.cmd) });
-  const answer = await c.request({
+  const send = () => c.request({
     topic: session.topic,
     chainId: WC_CHAIN,
+    expiry: REQUEST_EXPIRY_S,
     request: {
       method: "kadena_quicksign_v1",
       params: { commandSigDatas: [{ cmd: command.cmd, sigs: keys.map((pubKey, i) => ({ pubKey, sig: command.sigs?.[i]?.sig ?? null })) }] },
     },
+  });
+  // The same request can be sent again (a stuck wallet that missed it). The first answer wins; it only
+  // fails when every copy failed (so declining a duplicate in the wallet does not cancel the step).
+  const answer = await new Promise<unknown>((resolve, reject) => {
+    let sent = 0, failed = 0, done = false;
+    const attempt = () => {
+      sent++;
+      send().then(
+        (a) => { if (!done) { done = true; resolve(a); } },
+        (e) => { failed++; if (!done && failed === sent) { done = true; reject(e); } },
+      );
+    };
+    walletLog("quicksign sent", { what: describeCmd(command.cmd) });
+    attempt();
+    onResend(() => { if (done) return; walletLog("quicksign sent again", { what: describeCmd(command.cmd) }); attempt(); });
   });
   const shape = answerLayout(answer); // field names only, no signatures
   try {
@@ -233,8 +277,9 @@ export async function signWithWalletConnect(command: IUnsignedCommand): Promise<
   if (!session) throw new Error("The phone wallet is no longer connected. Connect it again.");
   const methods = session.namespaces.kadena?.methods ?? [];
   const useQuicksign = methods.includes("kadena_quicksign_v1") || !methods.includes("kadena_sign_v1");
+  let resend: (() => void) | null = null;
   const sign = useQuicksign
-    ? (cmd: IUnsignedCommand) => quicksign(c, session, cmd)
+    ? (cmd: IUnsignedCommand) => quicksign(c, session, cmd, (fn) => { resend = fn; if (pending) { pending = { ...pending, resend: fn }; emit(); } })
     // @kadena/client types this with its own (older) WalletConnect client; ours has the same request() shape
     : createSignWithWalletConnect(...([c, session, WC_CHAIN] as unknown as Parameters<typeof createSignWithWalletConnect>));
 
@@ -242,7 +287,7 @@ export async function signWithWalletConnect(command: IUnsignedCommand): Promise<
   const open = link ? () => { window.open(link, "_self", "noreferrer noopener"); } : null;
   let cancel: () => void = () => {};
   const cancelled = new Promise<never>((_, reject) => { cancel = () => reject(new Error("Cancelled. Nothing was signed.")); });
-  pending = { wallet: walletName(session), open, href: link, cancel, what: stepName(command.cmd), signIn: describeCmd(command.cmd) === "sign-in" };
+  pending = { wallet: walletName(session), open, href: link, cancel, what: stepName(command.cmd), signIn: describeCmd(command.cmd) === "sign-in", resend, since: Date.now() };
   emit();
   try {
     const result = (sign as (c: IUnsignedCommand) => Promise<unknown>)(command);
