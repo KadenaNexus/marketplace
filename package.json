@@ -16,6 +16,7 @@
     "test:session": "node --test server/session.test.js",
     "test:trade-txs": "node --test server/tradeTxs.test.js",
     "test:payout": "node --test server/payout.test.js",
+    "test:market": "node --test server/market.test.js",
     "test:proofs": "node --test server/proofs.test.js"
   },
   "dependencies": {

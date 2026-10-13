@@ -10,6 +10,7 @@
 
 import "dotenv/config";
 import { registerAlertRoutes, startAlertWatcher } from "./alerts.js";
+import { registerMarketRoutes } from "./market.js";
 import { registerNotificationRoutes, startNotificationWatcher, notifyMessage, notifyTradeChangeSoon, notify } from "./notifications.js";
 import { registerTradeTxRoutes, startTradeTxWatcher } from "./tradeTxs.js";
 import { registerPayoutRoutes, readEscrowFromChain, sidesOf } from "./payout.js";
@@ -316,6 +317,7 @@ const onTradeStepSettled = ({ offerId, ok }) => {
   notifyTradeChangeSoon();
 };
 registerTradeTxRoutes(app, () => pool, { onSettled: (x) => onTradeStepSettled(x) });
+registerMarketRoutes(app);
 registerPayoutRoutes(app, { getPool: () => pool, requireAuth: (...a) => requireAuth(...a), sendAuthError: (...a) => sendAuthError(...a) });
 registerProofRoutes(app, {
   getPool: () => pool,
