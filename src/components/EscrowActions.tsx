@@ -10,6 +10,7 @@ import { EscrowStatus } from "./EscrowStatus";
 import { ProfileSummaryView } from "./ProfileSummary";
 import { OfferCard } from "./OfferCard";
 import { PayoutCard } from "./PayoutCard";
+import { getSocket } from "@/hooks/useOnlineStatus";
 import { currencyPrefix } from "@/lib/markets";
 import { getPayout } from "@/lib/payoutApi";
 import { TradeTxList } from "./TradeTxList";
@@ -464,6 +465,47 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
     loadAll();
   }, [refreshTrigger]);
 
+  /** Re-read one trade from the chain and update it in place (much faster than reloading every offer). */
+  const refreshOne = async (offerId: string | undefined) => {
+    if (!offerId) return null;
+    const fresh = await readEscrow(offerId).catch(() => null);
+    if (fresh) {
+      setAllEscrows((list) => list.map((e) => (e.offerId === offerId
+        ? { ...e, state: fresh.state, buyer: fresh.buyer, seller: fresh.seller, acceptedAt: fresh.acceptedAt, fundedAt: fresh.fundedAt, paidAt: fresh.paidAt }
+        : e)));
+    }
+    return fresh;
+  };
+
+  // Live updates: the server announces each confirmed trade step ("trade-changed"), so the other side's
+  // screen updates within seconds instead of waiting for a reload. A slow check of the open trade is the
+  // fallback when the live connection is down.
+  const liveRef = useRef({ selectedOfferId, allEscrows, loadAll, refreshOne });
+  liveRef.current = { selectedOfferId, allEscrows, loadAll, refreshOne };
+  useEffect(() => {
+    const socket = getSocket();
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const onChange = (msg: { offerId?: string } | undefined) => {
+      const { selectedOfferId: open, refreshOne: one, loadAll: all } = liveRef.current;
+      if (msg?.offerId && msg.offerId === open) void one(open);
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { void all(); }, 800);
+    };
+    socket?.on("trade-changed", onChange);
+    return () => { socket?.off("trade-changed", onChange); if (timer) clearTimeout(timer); };
+  }, []);
+  useEffect(() => {
+    if (!selectedOfferId) return;
+    const t = setInterval(async () => {
+      if (document.hidden) return;
+      const { allEscrows: list, refreshOne: one } = liveRef.current;
+      const before = list.find((e) => e.offerId === selectedOfferId)?.state;
+      const fresh = await one(selectedOfferId);
+      if (fresh && before && fresh.state !== before) void liveRef.current.loadAll();
+    }, 15000);
+    return () => clearInterval(t);
+  }, [selectedOfferId]);
+
   const addTransaction = (action: string, requestKey: string) => {
     const offerId = selectedEscrow?.offerId;
     setTransactions(prev => [
@@ -534,6 +576,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
           });
         }
       }
+      void refreshOne(selectedEscrow?.offerId);
       loadAll();
     } catch (error) {
       console.error(`${actionName} error:`, error);
@@ -573,44 +616,33 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
 
   const handleDeposit = async () => {
     if (!account || !selectedEscrow) return;
-    const fresh = await readEscrow(selectedEscrow.offerId);
-    if (!fresh) {
-      toast.error("Deposit failed", { description: "Could not read this escrow from chain. Check contract name/network." });
-      return;
-    }
-    if (fresh.state !== "ACCEPTED") {
-      toast.error("Deposit failed", { description: `Escrow must be ACCEPTED (now: ${fresh.state}).` });
-      return;
-    }
+    // Show progress at once: the checks below take a moment before the wallet is asked.
+    setActionLoading("Deposit");
+    const stop = (title: string, description: string, duration?: number) => { setActionLoading(null); toast.error(title, { description, duration }); };
+    // All checks in parallel (each is a network call; one after the other they added seconds)
+    const payoutCheck = (async () => {
+      try {
+        const signedCmd = await authProof(account.account, account.publicKey);
+        return await getPayout(selectedEscrow.offerId, { wallet: account.account, publicKey: account.publicKey, signedCmd });
+      } catch { return undefined; /* server unreachable: do not block the deposit */ }
+    })();
+    const [fresh, payout, shortfall, vaultAccount] = await Promise.all([
+      readEscrow(selectedEscrow.offerId),
+      payoutCheck,
+      // Wallets show the total across all chains; the deposit can only use chain 1. Stop with a
+      // clear explanation instead of letting the chain answer "Insufficient funds".
+      appChainShortfall(account.account, selectedEscrow.amount).catch(() => null),
+      getEscrowVaultAccount(selectedEscrow.offerId),
+    ]);
+    if (!fresh) return stop("Deposit failed", "Could not read this escrow from chain. Check contract name/network.");
+    if (fresh.state !== "ACCEPTED") return stop("Deposit failed", `Escrow must be ACCEPTED (now: ${fresh.state}).`);
     // readEscrow maps the on-chain KDA depositor to `seller` for both SELL and BUY offers.
     const kdaHolder = fresh.seller;
-    if (!kdaHolder) {
-      toast.error("Deposit failed", { description: "On-chain data has no KDA holder yet; accept the offer first." });
-      return;
-    }
-    if (account.account !== kdaHolder) {
-      toast.error("Deposit failed", {
-        description: `Deposit must be signed by the KDA holder. On-chain: ${kdaHolder}. Your wallet: ${account.account}.`,
-      });
-      return;
-    }
+    if (!kdaHolder) return stop("Deposit failed", "On-chain data has no KDA holder yet; accept the offer first.");
+    if (account.account !== kdaHolder) return stop("Deposit failed", `Deposit must be signed by the KDA holder. On-chain: ${kdaHolder}. Your wallet: ${account.account}.`);
     // The buyer must know where to pay before the KDA is locked (details lock at deposit).
-    try {
-      const signedCmd = await authProof(account.account, account.publicKey);
-      const payout = await getPayout(fresh.offerId, { wallet: account.account, publicKey: account.publicKey, signedCmd });
-      if (payout && payout.details.length === 0) {
-        toast.error("Add where you get paid first", { description: "Fill in \"Where you get paid\" in the trade details, so the buyer knows where to send the money. Then deposit." });
-        return;
-      }
-    } catch { /* server unreachable: do not block the deposit */ }
-    // Wallets show the total across all chains; the deposit can only use chain 1. Stop with a
-    // clear explanation instead of letting the chain answer "Insufficient funds".
-    const shortfall = await appChainShortfall(account.account, fresh.amount).catch(() => null);
-    if (shortfall) {
-      toast.error(shortfall.title, { description: shortfall.description, duration: 20000 });
-      return;
-    }
-    const vaultAccount = await getEscrowVaultAccount(selectedEscrow.offerId);
+    if (payout && payout.details.length === 0) return stop("Add where you get paid first", "Fill in \"Where you get paid\" in the trade details, so the buyer knows where to send the money. Then deposit.");
+    if (shortfall) return stop(shortfall.title, shortfall.description, 20000);
     executeAction("Deposit", () =>
       buildDepositTx(selectedEscrow.offerId, fresh.amount, account.account, account.publicKey, vaultAccount)
     );

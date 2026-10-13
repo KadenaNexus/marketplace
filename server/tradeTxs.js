@@ -88,17 +88,39 @@ export async function pollChain(keys) {
 }
 
 /** One pass: settle pending transactions from the last 30 minutes; give up on older ones. */
-export async function settlePending(pool, poll = pollChain) {
+export async function settlePending(pool, poll = pollChain, onSettled = () => {}, keys = null) {
   await pool.query(`UPDATE trade_txs SET status = 'unknown' WHERE status = 'pending' AND created_at < NOW() - INTERVAL '30 minutes'`);
-  const { rows } = await pool.query(`SELECT request_key FROM trade_txs WHERE status = 'pending' ORDER BY created_at LIMIT 50`);
+  const { rows } = keys
+    ? await pool.query(`SELECT request_key, offer_id, fn FROM trade_txs WHERE status = 'pending' AND request_key = ANY($1)`, [keys])
+    : await pool.query(`SELECT request_key, offer_id, fn FROM trade_txs WHERE status = 'pending' ORDER BY created_at LIMIT 50`);
   if (!rows.length) return 0;
   const res = await poll(rows.map((r) => r.request_key));
   let n = 0;
   for (const [key, v] of Object.entries(res)) {
-    await pool.query(`UPDATE trade_txs SET status = $2, block_time = $3 WHERE request_key = $1`, [key, v.status === "success" ? "ok" : "failed", v.blockTime]);
-    n++;
+    const upd = await pool.query(`UPDATE trade_txs SET status = $2, block_time = $3 WHERE request_key = $1 AND status = 'pending' RETURNING offer_id, fn, status`, [key, v.status === "success" ? "ok" : "failed", v.blockTime]);
+    if (upd.rows[0]) { n++; try { onSettled({ requestKey: key, offerId: upd.rows[0].offer_id, fn: upd.rows[0].fn, ok: upd.rows[0].status === "ok" }); } catch { /* ignore */ } }
   }
   return n;
+}
+
+/**
+ * Watch one just-sent transaction closely (every 3 s, up to 4 minutes), so the other side hears about the
+ * step within seconds of the block, not at the next 15 s round.
+ */
+const following = new Set();
+export function followTx(getPool, requestKey, onSettled, { everyMs = 3000, forMs = 4 * 60 * 1000, poll = pollChain } = {}) {
+  if (following.has(requestKey)) return;
+  following.add(requestKey);
+  const until = Date.now() + forMs;
+  const step = async () => {
+    const pool = getPool();
+    let n = 0;
+    try { if (pool) n = await settlePending(pool, poll, onSettled, [requestKey]); } catch { /* try again */ }
+    const still = pool ? (await pool.query(`SELECT 1 FROM trade_txs WHERE request_key = $1 AND status = 'pending'`, [requestKey]).catch(() => ({ rows: [] }))).rows.length : 0;
+    if (n || !still || Date.now() > until) { following.delete(requestKey); return; }
+    setTimeout(step, everyMs).unref?.();
+  };
+  setTimeout(step, everyMs).unref?.();
 }
 
 export async function listTradeTxs(pool, offerId) {
@@ -111,13 +133,14 @@ export async function listTradeTxs(pool, offerId) {
   return rows.map((r) => ({ requestKey: r.request_key, fn: r.fn, action: ACTIONS[r.fn] || r.fn, sender: r.sender, status: r.status === "ok" ? "confirmed" : "pending", at: r.at }));
 }
 
-export function registerTradeTxRoutes(app, getPool) {
+export function registerTradeTxRoutes(app, getPool, { onSettled = () => {} } = {}) {
   app.post("/api/trade-txs", async (req, res) => {
     const pool = getPool();
     if (!pool) return res.status(503).json({ error: "Database not ready" });
     try {
       const r = await recordTradeTx(pool, req.body || {});
       if (r.error) return res.status(400).json(r);
+      followTx(getPool, req.body.requestKey, onSettled);
       return res.json(r);
     } catch (e) {
       console.error("POST /api/trade-txs", e);
@@ -132,7 +155,7 @@ export function registerTradeTxRoutes(app, getPool) {
     try {
       // settle anything still pending for this trade first, so a fresh step shows as confirmed quickly
       const pending = await pool.query(`SELECT 1 FROM trade_txs WHERE offer_id = $1 AND status = 'pending' LIMIT 1`, [offerId]);
-      if (pending.rows.length) await settlePending(pool).catch(() => {});
+      if (pending.rows.length) await settlePending(pool, pollChain, onSettled).catch(() => {});
       return res.json(await listTradeTxs(pool, offerId));
     } catch (e) {
       console.error("GET /api/trades/:offerId/txs", e);
@@ -141,10 +164,10 @@ export function registerTradeTxRoutes(app, getPool) {
   });
 }
 
-export function startTradeTxWatcher(getPool, everyMs = 15000) {
+export function startTradeTxWatcher(getPool, everyMs = 15000, onSettled = () => {}) {
   const tick = async () => {
     const pool = getPool();
-    if (pool) await settlePending(pool).catch((e) => console.warn("[trade-txs]", e.message));
+    if (pool) await settlePending(pool, pollChain, onSettled).catch((e) => console.warn("[trade-txs]", e.message));
   };
   const t = setInterval(tick, everyMs);
   t.unref?.();

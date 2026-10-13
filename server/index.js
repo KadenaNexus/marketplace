@@ -10,7 +10,7 @@
 
 import "dotenv/config";
 import { registerAlertRoutes, startAlertWatcher } from "./alerts.js";
-import { registerNotificationRoutes, startNotificationWatcher, notifyMessage } from "./notifications.js";
+import { registerNotificationRoutes, startNotificationWatcher, notifyMessage, notifyTradeChangeSoon } from "./notifications.js";
 import { registerTradeTxRoutes, startTradeTxWatcher } from "./tradeTxs.js";
 import { registerPayoutRoutes } from "./payout.js";
 import { initSessionSecret, isSessionToken, issueSessionToken, verifySessionToken } from "./session.js";
@@ -307,7 +307,14 @@ let pool;
 registerAlertRoutes(app, () => pool);
 // Trade notifications: in-page feed and Web Push
 registerNotificationRoutes(app, () => pool);
-registerTradeTxRoutes(app, () => pool);
+// A trade step confirmed on the chain: tell open pages at once (they re-read that trade) and send the
+// bell / push notifications now instead of at the next round.
+const onTradeStepSettled = ({ offerId, ok }) => {
+  if (!ok) return;
+  io.emit("trade-changed", { offerId });
+  notifyTradeChangeSoon();
+};
+registerTradeTxRoutes(app, () => pool, { onSettled: (x) => onTradeStepSettled(x) });
 registerPayoutRoutes(app, { getPool: () => pool, requireAuth: (...a) => requireAuth(...a), sendAuthError: (...a) => sendAuthError(...a) });
 
 // WebSocket server for online status tracking
@@ -2463,7 +2470,7 @@ async function start() {
     console.log(`Profile API listening on http://localhost:${PORT}`);
     startAlertWatcher(() => pool);
     startNotificationWatcher(() => pool);
-    startTradeTxWatcher(() => pool);
+    startTradeTxWatcher(() => pool, 15000, (x) => onTradeStepSettled(x));
     console.log(`WebSocket server ready for online status tracking`);
   });
 }

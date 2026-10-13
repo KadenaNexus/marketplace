@@ -226,9 +226,17 @@ export function startNotificationWatcher(getPool, everyMs = 30 * 1000) {
     finally { busy = false; }
   };
   setTimeout(tick, 8000);
+  runSoon = () => {
+    // a trade step was just confirmed: one round now (soon after the block), instead of up to 30 s later
+    if (soonTimer) return;
+    soonTimer = setTimeout(() => { soonTimer = null; void tick(); }, 1500);
+  };
   console.log("[notifications] on");
   return setInterval(tick, everyMs);
 }
+let runSoon = null, soonTimer = null;
+/** Ask for a notifications round right away (after a confirmed trade step). */
+export function notifyTradeChangeSoon() { runSoon?.(); }
 
 /* ---------------- HTTP API ---------------- */
 const walletSchema = z.string().regex(/^k:[0-9a-f]{64}$/);
