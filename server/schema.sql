@@ -341,3 +341,13 @@ CREATE TABLE IF NOT EXISTS trade_txs (
 );
 CREATE INDEX IF NOT EXISTS idx_trade_txs_offer ON trade_txs(offer_id);
 CREATE INDEX IF NOT EXISTS idx_trade_txs_pending ON trade_txs(status, created_at);
+
+-- Where the KDA holder (seller) receives the fiat or stablecoin payment: one entry per payment method,
+-- e.g. [{"method":"USDT","value":"TRC20 T…"}, {"method":"Bank Transfer","value":"Al Rajhi, IBAN SA…"}].
+-- Private: shown only to the two sides once the offer is accepted, and to the arbiter. Locked from FUNDED on.
+CREATE TABLE IF NOT EXISTS trade_payouts (
+    offer_id VARCHAR(255) PRIMARY KEY,
+    wallet VARCHAR(255) NOT NULL,
+    details JSONB NOT NULL DEFAULT '[]',
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

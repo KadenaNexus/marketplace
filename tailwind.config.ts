@@ -77,6 +77,11 @@ export default {
         sm: "calc(var(--radius) - 4px)",
       },
       keyframes: {
+        // wallet approval banner: a yellow glow that pulses outwards
+        "alert-glow": {
+          "0%, 100%": { boxShadow: "0 0 0 0 rgba(245, 158, 11, 0.65)" },
+          "50%": { boxShadow: "0 0 0 12px rgba(245, 158, 11, 0)" },
+        },
         "accordion-down": {
           from: { height: "0" },
           to: { height: "var(--radix-accordion-content-height)" },
@@ -91,6 +96,7 @@ export default {
         },
       },
       animation: {
+        "alert-glow": "alert-glow 1.4s ease-in-out infinite",
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
         "pulse-glow": "pulse-glow 2s ease-in-out infinite",

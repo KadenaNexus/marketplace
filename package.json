@@ -14,7 +14,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test:session": "node --test server/session.test.js",
-    "test:trade-txs": "node --test server/tradeTxs.test.js"
+    "test:trade-txs": "node --test server/tradeTxs.test.js",
+    "test:payout": "node --test server/payout.test.js"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

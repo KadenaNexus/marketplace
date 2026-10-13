@@ -9,6 +9,8 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { EscrowStatus } from "./EscrowStatus";
 import { ProfileSummaryView } from "./ProfileSummary";
 import { OfferCard } from "./OfferCard";
+import { PayoutCard } from "./PayoutCard";
+import { getPayout } from "@/lib/payoutApi";
 import { TradeTxList } from "./TradeTxList";
 import { DisputeView } from "./DisputeView";
 import { OfferChat } from "./OfferChat";
@@ -591,6 +593,15 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
       });
       return;
     }
+    // The buyer must know where to pay before the KDA is locked (details lock at deposit).
+    try {
+      const signedCmd = await authProof(account.account, account.publicKey);
+      const payout = await getPayout(fresh.offerId, { wallet: account.account, publicKey: account.publicKey, signedCmd });
+      if (payout && payout.details.length === 0) {
+        toast.error("Add where you get paid first", { description: "Fill in \"Where you get paid\" in the trade details, so the buyer knows where to send the money. Then deposit." });
+        return;
+      }
+    } catch { /* server unreachable: do not block the deposit */ }
     // Wallets show the total across all chains; the deposit can only use chain 1. Stop with a
     // clear explanation instead of letting the chain answer "Insufficient funds".
     const shortfall = await appChainShortfall(account.account, fresh.amount).catch(() => null);
@@ -867,6 +878,12 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                     Kadena buyer must send this exact amount to the seller using the selected payment method. After sending the payment, the buyer must upload a screenshot of the transaction confirmation in the chat.
                   </p>
                 </div>
+              </div>
+              <div className="sm:col-span-2">
+                <PayoutCard
+                  escrow={selectedEscrow}
+                  total={`${selectedEscrow.fiatCurrency === "USD" ? "$" : selectedEscrow.fiatCurrency === "EUR" ? "€" : selectedEscrow.fiatCurrency}${formatFiat(selectedEscrow.amount * selectedEscrow.price)}`}
+                />
               </div>
               <div className={isMobile ? "hidden" : undefined}>
                 <Label className="text-muted-foreground">Amount</Label>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, ChevronRight, Copy, Loader2, Monitor, QrCode, Smartphone, X } from "lucide-react";
+import { BellRing, Check, ChevronRight, Copy, Loader2, Monitor, QrCode, Smartphone, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { isPhone, onPendingApproval } from "@/lib/walletconnect";
@@ -44,27 +44,29 @@ export function WalletApprovalBanner() {
   useEffect(() => onPendingApproval(setP), []);
   if (!p) return null;
   return (
-    <div role="status" aria-live="polite" className="fixed inset-x-0 bottom-0 z-[80] p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-      <div className="mx-auto max-w-md rounded-2xl border border-border bg-card p-4 shadow-xl">
-        <div className="flex items-start gap-3">
-          <span className="relative mt-1 flex h-3 w-3 shrink-0">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/50" />
-            <span className="relative inline-flex h-3 w-3 rounded-full bg-primary" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="font-semibold">Approve in {p.wallet}: {p.what}</p>
-            <p className="text-sm text-muted-foreground">
-              {p.signIn
-                ? <>Second approval: sign in. You do this once on this phone. Switch to {p.wallet}, approve, then come back here.</>
-                : <>Switch to {p.wallet}, check the request and approve it, then come back here. This page updates by itself.</>}
-            </p>
+    <div role="status" aria-live="assertive" className="fixed inset-x-0 bottom-0 z-[80] p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+      {/* Yellow and pulsing: the trade waits for you in the wallet app */}
+      <div className="relative mx-auto max-w-md">
+        <div className="relative rounded-2xl border-2 border-amber-400 bg-amber-50 p-4 text-amber-950 shadow-xl motion-safe:animate-alert-glow dark:bg-amber-950 dark:text-amber-50">
+          <div className="flex items-start gap-3">
+            <span className="mt-0.5 flex h-9 w-9 shrink-0 motion-safe:animate-pulse items-center justify-center rounded-full bg-amber-400 text-amber-950">
+              <BellRing className="h-5 w-5" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="font-bold">Approve in {p.wallet}: {p.what}</p>
+              <p className="text-sm opacity-80">
+                {p.signIn
+                  ? <>Second approval: sign in. You do this once on this phone. Switch to {p.wallet}, approve, then come back here.</>
+                  : <>Switch to {p.wallet}, check the request and approve it, then come back here. This page updates by itself.</>}
+              </p>
+            </div>
+            <button type="button" onClick={p.cancel} aria-label="Stop waiting" className="-m-1 rounded p-1 opacity-70 hover:opacity-100"><X className="h-4 w-4" /></button>
           </div>
-          <button type="button" onClick={p.cancel} aria-label="Stop waiting" className="-m-1 rounded p-1 text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>
+          {p.href && (
+            // a real link: iPhone opens an app from a tapped link more reliably than from script
+            <a href={p.href} className="mt-3 flex h-11 w-full items-center justify-center rounded-md bg-amber-500 text-sm font-semibold text-amber-950 hover:bg-amber-400">Open {p.wallet}</a>
+          )}
         </div>
-        {p.href && (
-          // a real link: iPhone opens an app from a tapped link more reliably than from script
-          <a href={p.href} className="mt-3 flex h-11 w-full items-center justify-center rounded-md bg-primary text-sm font-medium text-primary-foreground hover:bg-primary/90">Open {p.wallet}</a>
-        )}
       </div>
     </div>
   );
