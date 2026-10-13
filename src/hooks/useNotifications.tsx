@@ -1,4 +1,5 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { getSocket } from "@/hooks/useOnlineStatus";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { useWallet } from "@/hooks/useWallet";
@@ -92,7 +93,13 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     const t = setInterval(() => { if (!document.hidden) load(); }, POLL_MS);
     const vis = () => { if (!document.hidden) load(); };
     document.addEventListener("visibilitychange", vis);
-    return () => { stop = true; clearInterval(t); document.removeEventListener("visibilitychange", vis); };
+    // A trade step was just confirmed somewhere: the server writes the notifications right after, so
+    // look again shortly instead of waiting for the next round.
+    const socket = getSocket();
+    const soon: ReturnType<typeof setTimeout>[] = [];
+    const onTrade = () => { soon.push(setTimeout(load, 3000), setTimeout(load, 9000)); };
+    socket?.on("trade-changed", onTrade);
+    return () => { stop = true; clearInterval(t); document.removeEventListener("visibilitychange", vis); socket?.off("trade-changed", onTrade); soon.forEach(clearTimeout); };
   }, [wallet, tick, openOffer]);
 
   // what this device can do about phone notifications

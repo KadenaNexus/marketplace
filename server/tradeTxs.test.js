@@ -6,7 +6,7 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import pg from "pg";
 import { hash } from "@kadena/cryptography-utils";
-import { parseEscrowCall, recordTradeTx, settlePending, listTradeTxs } from "./tradeTxs.js";
+import { parseEscrowCall, recordTradeTx, settlePending, listTradeTxs, followTx } from "./tradeTxs.js";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL || "postgresql://postgres:postgres@localhost:5432/kadena_nexus" });
 const OFFER = "offer-test-tradetxs";
@@ -69,4 +69,18 @@ test("a step the chain never confirms stops being checked after 30 minutes", asy
   await settlePending(pool, async (keys) => { asked = keys; return {}; });
   assert.ok(!asked.includes(d.requestKey));
   assert.deepEqual(await listTradeTxs(pool, "offer-test-old"), []);
+});
+
+test("a just-sent step is followed closely and announced once it is confirmed", async () => {
+  const e = await send(`(free.p2p-escrow-v10.release "offer-test-follow")`, SELLER);
+  let polls = 0;
+  const poll = async (keys) => (++polls < 3 ? {} : Object.fromEntries(keys.map((k) => [k, { status: "success", blockTime: new Date() }])));
+  const seen = [];
+  await new Promise((resolve) => {
+    followTx(() => pool, e.requestKey, (x) => { seen.push(x); resolve(); }, { everyMs: 30, poll });
+    setTimeout(resolve, 3000);
+  });
+  assert.deepEqual(seen.map((x) => [x.offerId, x.fn, x.ok]), [["offer-test-follow", "release", true]]);
+  assert.ok(polls >= 3);
+  assert.deepEqual((await listTradeTxs(pool, "offer-test-follow")).map((t) => t.status), ["confirmed"]);
 });

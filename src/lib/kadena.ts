@@ -408,12 +408,15 @@ export async function fetchTradeTxs(offerId: string): Promise<TradeTx[]> {
   return r.json();
 }
 
+/**
+ * Wait for a sent transaction. Kadena makes a block about every 30 s; asking every 1.5 s (the client's
+ * default is 5 s) shows the result a few seconds sooner on average.
+ */
 export async function pollTransaction(requestKey: string) {
-  return kadenaClient.pollOne({
-    requestKey,
-    chainId: CHAIN_ID,
-    networkId: NETWORK_ID,
-  });
+  return kadenaClient.pollOne(
+    { requestKey, chainId: CHAIN_ID, networkId: NETWORK_ID },
+    { interval: 1500, timeout: 4 * 60 * 1000 },
+  );
 }
 
 /** Recipient for the "Test transfer 10 KDA" flow. */

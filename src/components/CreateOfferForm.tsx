@@ -108,13 +108,15 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
     try {
       // Check chain 1 before anything is signed. A seller must later deposit the full amount,
       // so they find out now (not after someone accepts); a buyer only needs gas.
-      const shortfall = await appChainShortfall(account.account, side === "SELL" ? amountNum : 0);
+      const [shortfall, coinDetails] = await Promise.all([
+        appChainShortfall(account.account, side === "SELL" ? amountNum : 0),
+        readCoinDetailsLocal(account.account),
+      ]);
       if (shortfall) {
         toast.error(shortfall.title, { description: shortfall.description, duration: 20000 });
         return;
       }
 
-      const coinDetails = await readCoinDetailsLocal(account.account);
       if (!coinDetails) {
         throw new Error(
           `No coin account on chain ${CHAIN_ID} for ${account.account}. Fund this account on this chain first.`
