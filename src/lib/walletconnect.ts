@@ -142,10 +142,20 @@ export const isPhone = () => /Android|iPhone|iPad|iPod/i.test(navigator.userAgen
 /** Link that brings the wallet app forward (its own redirect link from the session). */
 function walletLink(session: Session): string | null {
   const r = session.peer.metadata.redirect;
-  return r?.native || r?.universal || null;
+  // Only a full app link ("linx://…" or an https link to another site). A bare word or a path would be
+  // read as a page on this site (Linx's value opened marketplace.kadena.ws/<something> = 404).
+  const ok = (v?: string) => {
+    if (!v || !/^[a-z][a-z0-9+.-]*:/i.test(v)) return false;
+    if (/^(javascript|data|vbscript):/i.test(v)) return false;
+    try { if (/^https?:/i.test(v) && new URL(v).origin === window.location.origin) return false; } catch { return false; }
+    return true;
+  };
+  if (ok(r?.native)) return r!.native!;
+  if (ok(r?.universal)) return r!.universal!;
+  return null;
 }
 
-/** Sign with the connected phone wallet; on a phone, the wallet app is opened for the approval. */
+/** Sign with the connected phone wallet. The approval banner offers a button to open the wallet app. */
 export async function signWithWalletConnect(command: IUnsignedCommand): Promise<unknown> {
   const c = await getClient();
   const session = currentSession(c);
@@ -165,7 +175,8 @@ export async function signWithWalletConnect(command: IUnsignedCommand): Promise<
   emit();
   try {
     const result = (sign as (c: IUnsignedCommand) => Promise<unknown>)(command);
-    if (isPhone() && open) setTimeout(open, 300); // let the request reach the relay first
+    // No automatic jump to the wallet app: the person taps "Open <wallet>" (or switches apps). Opening it
+    // by itself left the page, and a reload asked the wallet again.
     return await Promise.race([result, cancelled]);
   } finally {
     pending = null;

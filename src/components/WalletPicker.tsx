@@ -53,7 +53,7 @@ export function WalletApprovalBanner() {
           </span>
           <div className="min-w-0 flex-1">
             <p className="font-semibold">Approve in {p.wallet}</p>
-            <p className="text-sm text-muted-foreground">Check the request in {p.wallet} and approve it, then come back here. This page updates by itself.</p>
+            <p className="text-sm text-muted-foreground">Switch to {p.wallet}, check the request and approve it, then come back here. This page updates by itself.</p>
           </div>
           <button type="button" onClick={p.cancel} aria-label="Stop waiting" className="-m-1 rounded p-1 text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>
         </div>
@@ -129,11 +129,11 @@ export function PhoneWalletSheet({ state }: { state: { uri: string | null; cance
               </li>
               <li className="flex gap-3">
                 <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">2</span>
-                <p className="flex-1">Open your wallet app, go to <b>WalletConnect</b> (often a scan icon) and choose <b>Paste</b>.</p>
+                <p className="flex-1">Open your wallet app and paste the link in its scan or WalletConnect screen. In <b>Linx</b>: tap <b>Scan</b>, then <b>Paste</b>.</p>
               </li>
               <li className="flex gap-3">
                 <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">3</span>
-                <p className="flex-1">Check the site name says <b>Kadena P2P Marketplace</b>, approve, then come back here. This page connects by itself.</p>
+                <p className="flex-1">Check the site name says <b>Kadena P2P Marketplace</b> and approve. Then switch back to this browser: the page connects by itself and asks your wallet once more to sign in.</p>
               </li>
             </ol>
             <div className="space-y-2 border-t border-border pt-4">
