@@ -75,7 +75,7 @@ const COPY: Record<Lang, Copy> = {
       "perKda": "per KDA",
       "buyerPays": "Buyer pays",
       "payWith": "Pay with",
-      "payWithValue": "Wise, bank transfer",
+      "payWithValue": "USDT, Wise",
       "left": "left",
       "done": "done",
       "steps": [
@@ -137,7 +137,7 @@ const COPY: Record<Lang, Copy> = {
         ],
         [
           "The buyer pays and marks it paid",
-          "Off-chain, by Wise, bank transfer or another method the seller listed."
+          "Off-chain, by USDT, USDC, Wise or Revolut, whichever the seller listed."
         ],
         [
           "The seller releases the KDA",
@@ -185,7 +185,7 @@ const COPY: Record<Lang, Copy> = {
           "Kept by the platform"
         ]
       ],
-      "note": "Payments by bank, Wise and similar methods happen between you and the other trader, outside the contract. Check the money has arrived before you release, and follow the rules that apply where you live."
+      "note": "Payments by USDT, USDC, Wise or Revolut happen between you and the other trader, outside the contract. Check the money has arrived before you release, and follow the rules that apply where you live."
     },
     "need": {
       "h2": "What you need before you start",
@@ -201,7 +201,7 @@ const COPY: Record<Lang, Copy> = {
         ],
         [
           "A payment method the other side accepts",
-          "Wise, bank transfer, or whatever the offer lists. The payment happens between the two of you, outside the contract."
+          "USDT, USDC, Wise or Revolut, whichever the offer lists. The payment happens between the two of you, outside the contract."
         ]
       ]
     },
@@ -315,7 +315,7 @@ const COPY: Record<Lang, Copy> = {
       "perKda": "لكل KDA",
       "buyerPays": "يدفع المشتري",
       "payWith": "طريقة الدفع",
-      "payWithValue": "Wise أو تحويل بنكي",
+      "payWithValue": "USDT أو Wise",
       "left": "متبقٍ",
       "done": "تم",
       "steps": [
@@ -377,7 +377,7 @@ const COPY: Record<Lang, Copy> = {
         ],
         [
           "يدفع المشتري ويؤشّر على الدفع",
-          "خارج السلسلة، عبر Wise أو تحويل بنكي أو أي طريقة أدرجها البائع."
+          "خارج السلسلة، عبر USDT أو USDC أو Wise أو Revolut، حسب ما أدرجه البائع."
         ],
         [
           "يحرّر البائع عملات KDA",
@@ -425,7 +425,7 @@ const COPY: Record<Lang, Copy> = {
           "تحتفظ به المنصة"
         ]
       ],
-      "note": "تتم المدفوعات عبر البنك أو Wise أو الطرق المشابهة بينك وبين المتداول الآخر، خارج العقد. تأكد من وصول المبلغ قبل التحرير، والتزم بالأنظمة المعمول بها في بلدك."
+      "note": "تتم المدفوعات عبر USDT أو USDC أو Wise أو Revolut بينك وبين المتداول الآخر، خارج العقد. تأكد من وصول المبلغ قبل التحرير، والتزم بالأنظمة المعمول بها في بلدك."
     },
     "need": {
       "h2": "ما تحتاجه قبل البدء",
@@ -441,7 +441,7 @@ const COPY: Record<Lang, Copy> = {
         ],
         [
           "طريقة دفع يقبلها الطرف الآخر",
-          "Wise، أو تحويل بنكي، أو أي طريقة مدرجة في العرض. يتم الدفع بينكما خارج العقد."
+          "USDT أو USDC أو Wise أو Revolut، حسب ما يدرجه العرض. يتم الدفع بينكما خارج العقد."
         ]
       ]
     },

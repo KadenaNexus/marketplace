@@ -12,7 +12,7 @@ import { ALERTS_COPY } from "@/lib/alertsCopy";
 import { AlertsError, AlertSettings, getAlertsStatus, subscribeAlerts } from "@/lib/alertsApi";
 import { cn } from "@/lib/utils";
 
-const FALLBACK_CURRENCIES = ["USD", "EUR", "GBP", "CAD", "AUD"];
+const FALLBACK_CURRENCIES = ["USD", "EUR", "SAR", "AED"];
 
 /** Whether alerts are switched on server-side (hidden until the Resend key is set). */
 export function useAlertsStatus() {

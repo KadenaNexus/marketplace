@@ -190,6 +190,11 @@ export function PayoutCard({ escrow, total }: { escrow: Escrow; total: string })
           ))}
         </ul>
       )}
+      <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">
+        <li>Pay from an account in <b className="text-foreground">your own name</b>.</li>
+        <li>Don't write crypto words (KDA, crypto, Kadena) in the transfer note or reference.</li>
+        <li>Send the exact amount, then upload a screenshot of the payment in the chat.</li>
+      </ul>
     </section>
   );
 }
