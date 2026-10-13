@@ -171,7 +171,7 @@ test("watcher: first run is silent, then instant alerts and a daily summary", as
 
 test("daily sending limit", async () => {
   clearMail();
-  process.env.ALERTS_DAILY_LIMIT = "12"; // 10 reserved for confirmations, so 2 alerts today
+  process.env.ALERTS_DAILY_LIMIT = "27"; // 25 reserved for confirmations and trade emails, so 2 alerts today
   await pool.query("TRUNCATE alert_subscriptions, alert_mail_log RESTART IDENTITY");
   await pool.query("TRUNCATE alert_state");
   await pool.query("INSERT INTO alert_state (key, value) VALUES ('initialized', 'x'), ('digest_date', $1)", [new Date().toISOString().slice(0, 10)]);

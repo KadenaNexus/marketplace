@@ -147,6 +147,10 @@ async function pushTo(pool, subs, n, send) {
 }
 
 /** Store a notification once (wallet + offer + kind is unique) and push it to that wallet's devices. */
+let createdHook = null;
+/** Run `fn(row)` for every new notification for a wallet (used to email trade notifications). */
+export function onNotificationCreated(fn) { createdHook = fn; }
+
 export async function notify(pool, n, { send = webPushSend, now = Date.now() } = {}) {
   const r = await pool.query(
     `INSERT INTO notifications (wallet, offer_id, kind, title, body, urgent, data, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, to_timestamp($8 / 1000.0))
@@ -154,6 +158,8 @@ export async function notify(pool, n, { send = webPushSend, now = Date.now() } =
     [n.wallet, n.offer_id || "", n.kind, n.title, n.body, !!n.urgent, n.data ? JSON.stringify(n.data) : null, now]);
   if (!r.rows[0]) return { created: false, pushed: 0 };
   if (n.wallet === "*") return { created: true, pushed: 0 };
+  // also by email, when the wallet turned trade emails on (server/tradeEmails.js)
+  if (createdHook) Promise.resolve().then(() => createdHook(r.rows[0])).catch((e) => console.warn("[notifications] email:", e.message));
   if (send === webPushSend) await vapidKeys(pool);
   const subs = (await pool.query("SELECT * FROM push_subscriptions WHERE wallet = $1 AND trades", [n.wallet])).rows;
   return { created: true, pushed: subs.length ? await pushTo(pool, subs, r.rows[0], send) : 0 };

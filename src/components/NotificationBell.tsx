@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { TradeEmailForm } from "./TradeEmail";
 import { TradeCode } from "./TradeCode";
 import { Receipt, AlertTriangle, Bell, BellOff, Check, CheckCheck, Clock, Loader2, Lock, MessageSquare, Plus, Share, Star, Undo2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -159,7 +160,8 @@ export function NotificationBell() {
           {earlier.length > 0 && <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Earlier</p>}
           {earlier.map((i) => <Item key={i.id} i={i} unread={isUnread(i)} onOpen={onOpen} />)}
         </div>
-        <div className="border-t border-border px-4 py-4"><PushPanel /></div>
+        <div className="border-t border-border px-4 py-4"><PushPanel />
+            <div className="mt-3 rounded-xl border border-border bg-muted/40 p-4"><TradeEmailForm /></div></div>
       </SheetContent>
     </Sheet>
   );
