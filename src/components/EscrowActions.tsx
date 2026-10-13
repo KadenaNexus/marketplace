@@ -16,6 +16,7 @@ import { MarkPaidDialog, ProofCard, ReleaseDialog } from "./TradeSafety";
 import { TradeEmailGate, useNeedsTradeEmail } from "./TradeEmail";
 import { useCompletedCounts, useTermsGate } from "./Trust";
 import { NEW_TRADER_MAX_KDA, newTraderProblem } from "@/lib/trust";
+import { repeatOffer } from "@/lib/repeatOffer";
 import { getSocket } from "@/hooks/useOnlineStatus";
 import { currencyPrefix } from "@/lib/markets";
 import { getPayout } from "@/lib/payoutApi";
@@ -121,6 +122,8 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
 const ACTIVE_STATES = ["ACCEPTED", "FUNDED", "PAID", "DISPUTED"] as const;
 const tradeTotal = (e: Escrow) => `${currencyPrefix(e.fiatCurrency)}${formatFiat(e.amount * e.price)}`;
 const PAST_TERMINAL_STATES = ["COMPLETED", "REFUNDED", "CLOSED"] as const;
+/** Open offers whose creator has not been active for this many days are faded and listed last. */
+const INACTIVE_DAYS = 3;
 const CRITICAL_ACTION_LOADING = ["Accept Offer", "Deposit", "Mark Paid", "Release", "Delete Offer"] as const;
 const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena network. This may take up to 60 seconds.";
 
@@ -1229,6 +1232,18 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
             </Tabs>
   ) : null;
 
+  // Open offers from creators who have not been around for a while: faded, at the end of the list
+  const inactiveDaysOf = (e: Escrow): number | null => {
+    if (e.state !== "CREATED" || e.creator === account?.account) return null;
+    const la = profileMap[e.creator]?.lastActive;
+    if (!la || profileMap[e.creator]?.isOnline) return null;
+    const days = Math.floor((Date.now() - Date.parse(la)) / 86400000);
+    return days >= INACTIVE_DAYS ? days : null;
+  };
+  const marketEscrows = viewMode === "mine" ? displayedEscrows : [
+    ...displayedEscrows.filter((e) => inactiveDaysOf(e) === null),
+    ...displayedEscrows.filter((e) => inactiveDaysOf(e) !== null),
+  ];
   const offerCard = (e: Escrow) => (
     <OfferCard
       key={e.offerId}
@@ -1242,6 +1257,8 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
       role={viewMode === "active" || viewMode === "mine" ? (e.seller === account?.account ? "seller" : "buyer") : role}
       isSelected={selectedOfferId === e.offerId}
       hasOpenDispute={openDisputeOfferIds.has(e.offerId)}
+      inactiveDays={inactiveDaysOf(e)}
+      onRepeat={repeatOffer}
     />
   );
   const mineGroups: [string, Escrow[]][] = viewMode === "mine"
@@ -1346,7 +1363,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
               </div>
             ) : (
             <div className={isMobile ? "grid grid-cols-1 gap-3" : "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"}>
-              {displayedEscrows.map(offerCard)}
+              {marketEscrows.map(offerCard)}
             </div>
             )
           )}

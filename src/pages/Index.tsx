@@ -21,6 +21,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { NotificationBell } from "@/components/NotificationBell";
 import { toast } from "sonner";
 import { MobileMarket, type MobileTab } from "@/components/MobileMarket";
+import { REPEAT_OFFER_EVENT, type OfferDraft } from "@/lib/repeatOffer";
 import { useIsMobile } from "@/hooks/use-mobile";
 
 type UserRole = "buyer" | "seller" | null;
@@ -63,6 +64,18 @@ const Index = () => {
       })
       .catch(() => {});
   }, [linkedOffer, isConnected, account, lang, location.key]);
+
+  // "Post again" on a finished offer: open New offer on the same side (the form fills itself in)
+  useEffect(() => {
+    const go = (ev: Event) => {
+      const d = (ev as CustomEvent<OfferDraft>).detail;
+      setRole(d.side === "SELL" ? "seller" : "buyer");
+      setMobileTab("new");
+      window.scrollTo({ top: 0 });
+    };
+    window.addEventListener(REPEAT_OFFER_EVENT, go);
+    return () => window.removeEventListener(REPEAT_OFFER_EVENT, go);
+  }, []);
 
   // Back from a trade email link: confirmed, turned off, or an old link
   const navigate = useNavigate();

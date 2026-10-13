@@ -48,6 +48,8 @@ export interface ProfileSummary {
   avatar: string | null;
   wallet: string;
   isOnline?: boolean;
+  /** Last time the wallet was connected or created an offer (ISO), when known */
+  lastActive?: string | null;
 }
 
 export async function fetchProfile(wallet: string): Promise<Profile | null> {
