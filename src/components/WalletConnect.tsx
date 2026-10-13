@@ -49,13 +49,13 @@ export function WalletConnect() {
     return (
       <div className="flex min-w-0 items-center gap-2 sm:gap-3">
         <div className="flex min-w-0 flex-col items-end">
-          <span className="text-xs text-muted-foreground">Connected</span>
+          <span className="hidden text-xs text-muted-foreground sm:inline">Connected</span>
           <span className="font-mono text-sm text-primary whitespace-nowrap" title={account.account}>
             <span className="hidden sm:inline">{shortenAddress(account.account)}</span>
             <span className="sm:hidden">{`${account.account.slice(0, 6)}…${account.account.slice(-4)}`}</span>
           </span>
           {chainBalance !== undefined && (
-            <span className="whitespace-nowrap text-[11px] text-muted-foreground tabular-nums" title={`Only KDA on chain ${CHAIN_ID} can be used here; your wallet may show a total across all chains.`}>
+            <span className="hidden whitespace-nowrap text-[11px] text-muted-foreground tabular-nums sm:inline" title={`Only KDA on chain ${CHAIN_ID} can be used here; your wallet may show a total across all chains.`}>
               Chain {CHAIN_ID}: {chainBalance.toLocaleString("en-US", { maximumFractionDigits: 4 })} KDA
             </span>
           )}
