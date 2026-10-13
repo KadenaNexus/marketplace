@@ -15,8 +15,9 @@
 import type { IUnsignedCommand } from "@kadena/client";
 import { addSignatures, createSignWithWalletConnect } from "@kadena/client";
 import { CHAIN_ID, NETWORK_ID, type WalletAccount } from "@/lib/kadena";
-import { signaturesFromQuicksign } from "@/lib/quicksignAnswer";
+import { answerLayout, signaturesFromQuicksign } from "@/lib/quicksignAnswer";
 import { walletLog } from "@/lib/walletLog";
+import { base64UrlDecodeArr, hexToBin, verifySig } from "@kadena/cryptography-utils";
 
 // The Reown project ID is public (it identifies the site to the WalletConnect relay).
 // Shared with the Adoption Index; marketplace.kadena.ws is on its domain allowlist.
@@ -184,9 +185,17 @@ async function quicksign(c: Client, session: Session, command: IUnsignedCommand)
       params: { commandSigDatas: [{ cmd: command.cmd, sigs: keys.map((pubKey, i) => ({ pubKey, sig: command.sigs?.[i]?.sig ?? null })) }] },
     },
   });
-  const shape = answer && typeof answer === "object" ? Object.keys(answer as object).slice(0, 6).join(",") : typeof answer;
+  const shape = answerLayout(answer); // field names only, no signatures
   try {
     const sigs = signaturesFromQuicksign(answer, command.hash, keys);
+    // Check each signature against this transaction before using it, so a mismatch is caught here
+    // (with a clear message and a log line) instead of as a chain error after sending.
+    const msg = base64UrlDecodeArr(command.hash);
+    const bad = sigs.filter((x) => { try { return !verifySig(msg, hexToBin(x.sig), hexToBin(x.pubKey)); } catch { return true; } });
+    if (bad.length) {
+      walletLog("quicksign signature does not match", { shape });
+      throw new Error("The wallet's signature does not match this transaction. Nothing was sent.");
+    }
     walletLog("quicksign answer ok", { shape, sigs: sigs.length });
     return addSignatures(command, ...sigs) as IUnsignedCommand;
   } catch (e) {
