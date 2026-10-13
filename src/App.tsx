@@ -9,6 +9,7 @@ import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { useNewMessageNotification } from "@/hooks/useNewMessageNotification";
 import { useTradeDeadlineReminders } from "@/hooks/useTradeDeadlineReminders";
 import { NotificationsProvider, useNotifications } from "@/hooks/useNotifications";
+import { PhoneFirst } from "@/components/PhoneFirst";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import Profile from "./pages/Profile";
@@ -45,7 +46,7 @@ const App = () => (
               <NotificationsProvider>
               <DeadlineFallback />
               <Routes>
-                <Route path="/" element={<Index />} />
+                <Route path="/" element={<PhoneFirst><Index /></PhoneFirst>} />
                 <Route path="/u/:wallet" element={<Profile />} />
                 <Route path="/admin" element={<Admin />} />
                 <Route path="/alerts" element={<Alerts />} />
