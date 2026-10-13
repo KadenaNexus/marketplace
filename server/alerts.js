@@ -27,7 +27,7 @@ import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { z } from "zod";
 import { hash as blakeHash } from "@kadena/cryptography-utils";
 
-export const ALERT_CURRENCIES = ["USD", "EUR", "GBP", "CAD", "AUD"];
+export const ALERT_CURRENCIES = ["USD", "EUR", "SAR", "AED"];
 
 const env = (k, d) => (process.env[k] && process.env[k].trim() !== "" ? process.env[k].trim() : d);
 const cfg = () => ({

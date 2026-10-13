@@ -37,7 +37,7 @@ export default function Alerts() {
 
   const take = (s: AlertSettingsView) => {
     setView(s);
-    setDraft({ wantSell: s.wantSell, wantBuy: s.wantBuy, currencies: s.currencies, minKda: s.minKda, maxKda: s.maxKda, frequency: s.frequency, lang: s.lang });
+    setDraft({ wantSell: s.wantSell, wantBuy: s.wantBuy, currencies: s.currencies.filter((c) => (status.data?.currencies ?? ["USD", "EUR", "SAR", "AED"]).includes(c)), minKda: s.minKda, maxKda: s.maxKda, frequency: s.frequency, lang: s.lang });
     if (s.lang !== lang) setLang(s.lang);
   };
 

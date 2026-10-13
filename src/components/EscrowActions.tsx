@@ -10,6 +10,7 @@ import { EscrowStatus } from "./EscrowStatus";
 import { ProfileSummaryView } from "./ProfileSummary";
 import { OfferCard } from "./OfferCard";
 import { PayoutCard } from "./PayoutCard";
+import { currencyPrefix } from "@/lib/markets";
 import { getPayout } from "@/lib/payoutApi";
 import { TradeTxList } from "./TradeTxList";
 import { DisputeView } from "./DisputeView";
@@ -857,7 +858,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
               <div>
                 <Label className="text-muted-foreground">Price</Label>
                 <p className="font-mono text-2xl font-bold text-primary">
-                  {selectedEscrow.fiatCurrency === "USD" ? "$" : selectedEscrow.fiatCurrency === "EUR" ? "€" : selectedEscrow.fiatCurrency}
+                  {currencyPrefix(selectedEscrow.fiatCurrency)}
                   {formatFiat(selectedEscrow.price)} <span className="text-base">per KDA</span>
                 </p>
               </div>
@@ -871,7 +872,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                 <Label className="text-muted-foreground">Total Value</Label>
                 <div className="mt-1 rounded-lg border-2 border-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 dark:border-emerald-700 px-4 py-3">
                   <p className="font-mono text-2xl font-bold text-emerald-800 dark:text-emerald-200">
-                    {selectedEscrow.fiatCurrency === "USD" ? "$" : selectedEscrow.fiatCurrency === "EUR" ? "€" : selectedEscrow.fiatCurrency}
+                    {currencyPrefix(selectedEscrow.fiatCurrency)}
                     {formatFiat(selectedEscrow.amount * selectedEscrow.price)}
                   </p>
                   <p className="mt-3 text-sm text-muted-foreground leading-snug">
@@ -882,7 +883,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
               <div className="sm:col-span-2">
                 <PayoutCard
                   escrow={selectedEscrow}
-                  total={`${selectedEscrow.fiatCurrency === "USD" ? "$" : selectedEscrow.fiatCurrency === "EUR" ? "€" : selectedEscrow.fiatCurrency}${formatFiat(selectedEscrow.amount * selectedEscrow.price)}`}
+                  total={`${currencyPrefix(selectedEscrow.fiatCurrency)}${formatFiat(selectedEscrow.amount * selectedEscrow.price)}`}
                 />
               </div>
               <div className={isMobile ? "hidden" : undefined}>

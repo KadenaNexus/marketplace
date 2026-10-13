@@ -1,4 +1,5 @@
 import { Input } from "@/components/ui/input";
+import { PAYMENT_METHODS } from "@/lib/markets";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -172,14 +173,7 @@ export function OfferFiltersComponent({ filters, onFiltersChange, role }: OfferF
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="ALL">All Payment</SelectItem>
-              <SelectItem value="USDT">USDT</SelectItem>
-              <SelectItem value="USDC">USDC</SelectItem>
-              <SelectItem value="BUSD">BUSD</SelectItem>
-              <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
-              <SelectItem value="PayPal">PayPal</SelectItem>
-              <SelectItem value="Wise">Wise</SelectItem>
-              <SelectItem value="Revolut">Revolut</SelectItem>
-              <SelectItem value="Cash App">Cash App</SelectItem>
+              {PAYMENT_METHODS.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
             </SelectContent>
           </Select>
         </div>

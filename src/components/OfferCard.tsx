@@ -1,4 +1,5 @@
 import { Card, CardContent } from "@/components/ui/card";
+import { currencyPrefix } from "@/lib/markets";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { EscrowStatus } from "./EscrowStatus";
@@ -47,7 +48,7 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, onSelect, onDe
   }
 
   const totalPrice = escrow.amount * escrow.price;
-  const currencySymbol = escrow.fiatCurrency === "USD" ? "$" : escrow.fiatCurrency === "EUR" ? "€" : escrow.fiatCurrency;
+  const currencySymbol = currencyPrefix(escrow.fiatCurrency);
 
   if (isMobile) {
     // Phone: the amount and price first, then how you pay, then one large button.

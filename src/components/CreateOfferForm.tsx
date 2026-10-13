@@ -26,8 +26,7 @@ import { authProof } from "@/lib/session";
 import { Plus, Loader2, ShoppingCart, Store, Info } from "lucide-react";
 import { toast } from "sonner";
 
-const PAYMENT_METHODS = ["USDT", "USDC", "BUSD", "Bank Transfer", "PayPal", "Wise", "Revolut", "Cash App"];
-const FIAT_CURRENCIES = ["USD", "EUR", "GBP", "CAD", "AUD"];
+import { FIAT_CURRENCIES, PAYMENT_METHODS } from "@/lib/markets";
 const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena network. This may take up to 60 seconds.";
 
 interface CreateOfferFormProps {
