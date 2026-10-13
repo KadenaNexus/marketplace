@@ -1,8 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { io, Socket } from "socket.io-client";
-import type { IUnsignedCommand } from "@kadena/client";
-import { buildProfileAuthTx, signTransaction } from "@/lib/kadena";
 import { useWallet } from "./useWallet";
+import { authProof } from "@/lib/session";
 
 /** Normalize signed command (unwrap signedCmd, ensure sigs[0].sig) for server. */
 function normalizeSignedCmd(r: unknown): { cmd?: unknown; hash?: string; sigs?: Array<{ pubKey?: string; sig?: string; signature?: string }> } | null {
@@ -123,8 +122,7 @@ async function identifyWithProof(
   publicKey: string
 ): Promise<void> {
   try {
-    const tx = buildProfileAuthTx(wallet, publicKey) as IUnsignedCommand;
-    const raw = await signTransaction(tx) as unknown;
+    const raw = await authProof(wallet, publicKey) as unknown;
     const signedCmd = normalizeSignedCmd(raw);
     if (!signedCmd) {
       console.error("Identify: failed to normalize signed command");

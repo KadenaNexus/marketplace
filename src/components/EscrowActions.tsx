@@ -37,7 +37,6 @@ import {
   buildTimeoutAcceptedCloseTx,
   buildTimeoutFundedRefundTx,
   buildTimeoutPaidDisputeTx,
-  buildProfileAuthTx,
   getEscrowVaultAccount,
   getTxExplorerUrl,
   getAccountExplorerUrl,
@@ -75,6 +74,7 @@ import {
   XCircle,
   ArrowLeft,
 } from "lucide-react";
+import { authProof } from "@/lib/session";
 import { toast } from "sonner";
 
 interface TransactionResult {
@@ -512,31 +512,13 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
       addTransaction(actionName, requestKey);
       if (actionName === "Deposit" && selectedEscrow && account) {
         try {
-          const tx = buildProfileAuthTx(account.account, account.publicKey);
-          const rawSigned = await signTransaction(tx);
-          const unwrapWalletCmd = (input: unknown): Record<string, unknown> => {
-            if (input && typeof input === "object" && "signedCmd" in input) {
-              const w = input as { signedCmd?: unknown; cmd?: unknown };
-              if (w.signedCmd != null && !w.cmd) return unwrapWalletCmd(w.signedCmd);
-            }
-            return input && typeof input === "object" ? (input as Record<string, unknown>) : {};
-          };
-          const signedCmd = unwrapWalletCmd(rawSigned as unknown);
-          const sigsRaw = signedCmd.sigs;
-          const sigs = Array.isArray(sigsRaw) ? [...sigsRaw] : [];
-          if (sigs[0] && typeof sigs[0] === "object") {
-            const s0 = sigs[0] as Record<string, unknown>;
-            if (!s0.pubKey) s0.pubKey = account.publicKey;
-            const sigAlt = s0.signature;
-            if (typeof sigAlt === "string" && sigAlt && !s0.sig) s0.sig = sigAlt;
-            sigs[0] = s0;
-          }
+          const signedCmd = await authProof(account.account, account.publicKey);
           await putFundTxRequestKey({
             offerId: selectedEscrow.offerId,
             requestKey,
             wallet: account.account,
             publicKey: account.publicKey,
-            signedCmd: { ...signedCmd, sigs },
+            signedCmd,
           });
         } catch (e) {
           toast.error("Deposit saved; fund tx link could not be saved", {
@@ -708,12 +690,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
 
       // Atomically create off-chain dispute record so arbiter panel is functional
       try {
-        const authTx = buildProfileAuthTx(account.account, account.publicKey);
-        let signedCmd = await signTransaction(authTx) as any;
-        if (signedCmd?.signedCmd && !signedCmd.cmd) signedCmd = signedCmd.signedCmd;
-        const sigs = Array.isArray(signedCmd?.sigs) ? [...signedCmd.sigs] : [];
-        if (sigs[0] && !sigs[0].pubKey) sigs[0] = { ...sigs[0], pubKey: account.publicKey };
-        if (sigs[0]?.signature && !sigs[0].sig) sigs[0] = { ...sigs[0], sig: sigs[0].signature };
+        const signedCmd = await authProof(account.account, account.publicKey);
 
         await openDispute({
           offerId: selectedEscrow.offerId,
@@ -721,7 +698,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
           reason: "Seller did not release within T3 timeout",
           wallet: account.account,
           publicKey: account.publicKey,
-          signedCmd: { ...signedCmd, sigs },
+          signedCmd,
         });
 
         toast.success("Dispute opened — arbiter has been notified", {
@@ -801,22 +778,14 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
     if (!account || !selectedEscrow?.buyer) return;
     setRegisteringCompletion(true);
     try {
-      const tx = buildProfileAuthTx(account.account, account.publicKey);
-      let rawSigned = await signTransaction(tx) as unknown;
-      const signedCmd = rawSigned && typeof rawSigned === "object" && "signedCmd" in rawSigned
-        ? (rawSigned as { signedCmd: unknown }).signedCmd
-        : rawSigned;
-      const cmd = signedCmd as { sigs?: Array<{ pubKey?: string; sig?: string; signature?: string }> };
-      const sigs = Array.isArray(cmd?.sigs) ? [...cmd.sigs] : [];
-      if (sigs[0] && !sigs[0].pubKey) sigs[0] = { ...sigs[0], pubKey: account.publicKey };
-      if (sigs[0] && "signature" in sigs[0] && sigs[0].signature && !sigs[0].sig) sigs[0] = { ...sigs[0], sig: sigs[0].signature };
+      const signedCmd = await authProof(account.account, account.publicKey);
       await registerCompletion({
         offerId: selectedEscrow.offerId,
         buyerWallet: selectedEscrow.buyer,
         sellerWallet: selectedEscrow.seller,
         wallet: account.account,
         publicKey: account.publicKey,
-        signedCmd: { ...cmd, sigs },
+        signedCmd,
       });
       toast.success("Trade registered");
       refetchRatingCheck();

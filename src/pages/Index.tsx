@@ -110,7 +110,7 @@ const Index = () => {
                 </Avatar>
               </Link>
             )}
-            <WalletConnect />
+            <WalletConnect inHeader />
           </div>
         </div>
       </header>

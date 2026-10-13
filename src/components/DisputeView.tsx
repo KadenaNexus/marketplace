@@ -6,7 +6,6 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { useWallet } from "@/hooks/useWallet";
-import { buildProfileAuthTx, signTransaction } from "@/lib/kadena";
 import { 
   getDispute, 
   getEvidence, 
@@ -21,6 +20,7 @@ import {
 import { AlertCircle, FileText, Image, Upload, Loader2, Send, MessageSquare, X, Shield } from "lucide-react";
 import { toast } from "sonner";
 import type { Escrow } from "@/lib/kadena";
+import { authProof } from "@/lib/session";
 
 interface DisputeViewProps {
   escrow: Escrow;
@@ -91,12 +91,7 @@ export function DisputeView({ escrow, onClose }: DisputeViewProps) {
 
     setIsSubmitting(true);
     try {
-      const tx = buildProfileAuthTx(account.account, account.publicKey);
-      let signedCmd = await signTransaction(tx);
-      if (signedCmd?.signedCmd && !signedCmd.cmd) signedCmd = signedCmd.signedCmd;
-      const sigs = Array.isArray(signedCmd?.sigs) ? signedCmd.sigs : [];
-      if (sigs[0] && !sigs[0].pubKey) sigs[0] = { ...sigs[0], pubKey: account.publicKey };
-      if (sigs[0]?.signature && !sigs[0].sig) sigs[0] = { ...sigs[0], sig: sigs[0].signature };
+      const signedCmd = await authProof(account.account, account.publicKey);
 
       await submitEvidence({
         offerId: escrow.offerId,
@@ -125,12 +120,7 @@ export function DisputeView({ escrow, onClose }: DisputeViewProps) {
 
     setIsSendingMessage(true);
     try {
-      const tx = buildProfileAuthTx(account.account, account.publicKey);
-      let signedCmd = await signTransaction(tx);
-      if (signedCmd?.signedCmd && !signedCmd.cmd) signedCmd = signedCmd.signedCmd;
-      const sigs = Array.isArray(signedCmd?.sigs) ? signedCmd.sigs : [];
-      if (sigs[0] && !sigs[0].pubKey) sigs[0] = { ...sigs[0], pubKey: account.publicKey };
-      if (sigs[0]?.signature && !sigs[0].sig) sigs[0] = { ...sigs[0], sig: sigs[0].signature };
+      const signedCmd = await authProof(account.account, account.publicKey);
 
       await sendMessage({
         offerId: escrow.offerId,
@@ -160,12 +150,7 @@ export function DisputeView({ escrow, onClose }: DisputeViewProps) {
 
     setIsClosing(true);
     try {
-      const tx = buildProfileAuthTx(account.account, account.publicKey);
-      let signedCmd = await signTransaction(tx);
-      if (signedCmd?.signedCmd && !signedCmd.cmd) signedCmd = signedCmd.signedCmd;
-      const sigs = Array.isArray(signedCmd?.sigs) ? signedCmd.sigs : [];
-      if (sigs[0] && !sigs[0].pubKey) sigs[0] = { ...sigs[0], pubKey: account.publicKey };
-      if (sigs[0]?.signature && !sigs[0].sig) sigs[0] = { ...sigs[0], sig: sigs[0].signature };
+      const signedCmd = await authProof(account.account, account.publicKey, { fresh: true }); // arbiter action: always a new signature
 
       await closeDispute({
         offerId: escrow.offerId,

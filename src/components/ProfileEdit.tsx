@@ -13,10 +13,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useWallet } from "@/hooks/useWallet";
-import { buildProfileAuthTx, signTransaction } from "@/lib/kadena";
 import { uploadAvatar, putProfile } from "@/lib/profileApi";
 import { Loader2, ImagePlus, X } from "lucide-react";
 import { toast } from "sonner";
+import { authProof } from "@/lib/session";
 
 const DEFAULT_AVATAR = "/default-avatar.svg";
 
@@ -66,12 +66,7 @@ export function ProfileEdit({ open, onOpenChange, onSuccess, initial }: ProfileE
     }
     setLoading(true);
     try {
-      const tx = buildProfileAuthTx(account.account, account.publicKey);
-      let signedCmd = await signTransaction(tx);
-      if (signedCmd?.signedCmd && !signedCmd.cmd) signedCmd = signedCmd.signedCmd;
-      const sigs = Array.isArray(signedCmd?.sigs) ? signedCmd.sigs : [];
-      if (sigs[0] && !sigs[0].pubKey) sigs[0] = { ...sigs[0], pubKey: account.publicKey };
-      if (sigs[0]?.signature && !sigs[0].sig) sigs[0] = { ...sigs[0], sig: sigs[0].signature };
+      const signedCmd = await authProof(account.account, account.publicKey);
 
       let avatarToSend: string | null;
       if (selectedFile === "CLEAR") {

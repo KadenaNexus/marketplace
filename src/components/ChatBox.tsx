@@ -8,8 +8,6 @@ import { ProfileSummaryView } from "./ProfileSummary";
 import { useWallet } from "@/hooks/useWallet";
 import { useIsOnline } from "@/hooks/useOnlineStatus";
 import { sendMessage, getMessages, markMessageAsRead, type UserMessage } from "@/lib/messageApi";
-import { buildProfileAuthTx, signTransaction } from "@/lib/kadena";
-import type { IUnsignedCommand } from "@kadena/client";
 import { MessageCircle, Send, X, Clock, Paperclip } from "lucide-react";
 
 /** Wallet may return wrapped { signedCmd } or raw ICommand; normalize for API. */
@@ -31,6 +29,7 @@ function normalizeSignedCmd(raw: unknown): SignedResult {
 import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
+import { authProof } from "@/lib/session";
 
 interface ChatBoxProps {
   otherWallet: string;
@@ -59,8 +58,7 @@ export function ChatBox({ otherWallet, otherProfile, onClose, className, context
     if (!account?.account || !account?.publicKey) throw new Error("No account");
     const cached = signedProofCacheRef.current;
     if (cached && Date.now() - cached.ts < PROOF_CACHE_MS) return cached.signedCmd;
-    const tx = buildProfileAuthTx(account.account, account.publicKey) as IUnsignedCommand;
-    const raw = await signTransaction(tx) as unknown;
+    const raw = await authProof(account.account, account.publicKey) as unknown;
     const signedCmd = normalizeSignedCmd(raw);
     const sigs = Array.isArray(signedCmd?.sigs) ? signedCmd.sigs : [];
     if (sigs[0] && !sigs[0].pubKey) sigs[0] = { ...sigs[0], pubKey: account.publicKey };
@@ -90,8 +88,7 @@ export function ChatBox({ otherWallet, otherProfile, onClose, className, context
     }
     if (!proof) {
       try {
-        const tx = buildProfileAuthTx(account.account, account.publicKey) as IUnsignedCommand;
-        const raw = await signTransaction(tx) as unknown;
+        const raw = await authProof(account.account, account.publicKey) as unknown;
         const normalized = normalizeSignedCmd(raw);
         const sigs = Array.isArray(normalized?.sigs) ? normalized.sigs : [];
         if (sigs[0] && !sigs[0].pubKey) sigs[0] = { ...sigs[0], pubKey: account.publicKey };

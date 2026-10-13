@@ -162,16 +162,23 @@ export async function connectEckoWallet(): Promise<WalletAccount> {
    SIGN + SUBMIT  (ECKO SAFE)
 ============================================================ */
 
-export async function signTransaction(command: IUnsignedCommand) {
-  // quickSign supports multi-capability txs (e.g. ACCOUNT_AUTH + coin.TRANSFER) whereas
-  // legacy single-sign path rejects txs with >1 scoped capability on some Ecko builds.
-  const wallet = createQuicksignWithEckoWallet();
+/** Signer of the connected wallet when it is not the Ecko extension (a phone wallet through WalletConnect). */
+type Signer = (command: IUnsignedCommand) => Promise<unknown>;
+let activeSigner: Signer | null = null;
+export function setActiveSigner(signer: Signer | null) {
+  activeSigner = signer;
+}
 
+export async function signTransaction(command: IUnsignedCommand) {
   if (!command?.cmd || !command?.hash) {
     console.error("Invalid command:", command);
     throw new Error("Invalid command passed to wallet");
   }
+  if (activeSigner) return (await activeSigner(command)) as Awaited<ReturnType<ReturnType<typeof createQuicksignWithEckoWallet>>>;
 
+  // quickSign supports multi-capability txs (e.g. ACCOUNT_AUTH + coin.TRANSFER) whereas
+  // legacy single-sign path rejects txs with >1 scoped capability on some Ecko builds.
+  const wallet = createQuicksignWithEckoWallet();
   return wallet(command);
 }
 
