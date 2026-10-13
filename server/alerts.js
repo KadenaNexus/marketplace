@@ -42,6 +42,7 @@ const cfg = () => ({
   apis: env("ALERTS_CHAIN_API", "https://api.chainweb-community.org,https://chainweb.chaddex.com,https://api.chainweb.com")
     .split(",").map((s) => s.trim().replace(/\/$/, "")).filter(Boolean),
 });
+export const mailConfig = () => cfg();
 export const alertsEnabled = () => { const c = cfg(); return !c.off && !!(c.key || c.mailLog); };
 
 /* ---------------- helpers ---------------- */
@@ -148,7 +149,7 @@ const T = {
 };
 
 const TEAL = "#1C637B", ORANGE = "#E2710A", INK = "#123A48", MIST = "#4F6B76", LINE = "#D6E0E4";
-function shell({ lang, title, body, footer }) {
+export function shell({ lang, title, body, footer }) {
   const t = T[lang] || T.en;
   const html = `<!doctype html><html lang="${lang}" dir="${t.dir}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${esc(title)}</title></head>
 <body style="margin:0;background:#F4F7F8;font-family:Segoe UI,Helvetica,Arial,sans-serif;color:${INK}">
@@ -159,7 +160,7 @@ function shell({ lang, title, body, footer }) {
 </div></body></html>`;
   return html;
 }
-const button = (href, label, color = TEAL) => `<a href="${esc(href)}" style="display:inline-block;background:${color};color:#fff;text-decoration:none;font-weight:600;padding:10px 18px;border-radius:8px">${esc(label)}</a>`;
+export const button = (href, label, color = TEAL) => `<a href="${esc(href)}" style="display:inline-block;background:${color};color:#fff;text-decoration:none;font-weight:600;padding:10px 18px;border-radius:8px">${esc(label)}</a>`;
 const links = (sub) => ({
   manage: `${cfg().url}/alerts?token=${encodeURIComponent(sub.token)}`,
   unsub: `${cfg().url}/alerts?token=${encodeURIComponent(sub.token)}&unsubscribe=1`,
@@ -224,8 +225,11 @@ async function sentToday(pool) {
   const r = await pool.query("SELECT count(*)::int AS n FROM alert_mail_log WHERE ok AND sent_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'");
   return r.rows[0].n;
 }
-/** Send one email unless the day's cap is reached. `reserve` keeps the last few slots for confirmations. */
-async function sendMail(pool, sub, kind, msg, reserve = 0) {
+/**
+ * Send one email unless the day's cap is reached. `reserve` keeps the last slots for more important mail:
+ * offer alerts leave 25 a day for confirmations and trade emails (server/tradeEmails.js).
+ */
+export async function sendMail(pool, sub, kind, msg, reserve = 0) {
   const c = cfg();
   if ((await sentToday(pool)) >= c.dailyLimit - reserve) { console.warn(`[alerts] daily limit reached, ${kind} to #${sub.id} not sent`); return false; }
   let ok = false;
@@ -296,7 +300,7 @@ export async function runAlertsOnce(pool, { now = Date.now(), chain } = {}) {
     const subs = (await pool.query("SELECT * FROM alert_subscriptions WHERE confirmed_at IS NOT NULL AND unsubscribed_at IS NULL AND frequency = 'instant' ORDER BY id")).rows;
     for (const sub of subs) {
       const mine = toAnnounce.filter((o) => matches(sub, o));
-      if (mine.length && await sendMail(pool, sub, "instant", offersEmail(sub, mine), 10)) instantSent++;
+      if (mine.length && await sendMail(pool, sub, "instant", offersEmail(sub, mine), 25)) instantSent++;
     }
   }
 
@@ -313,7 +317,7 @@ export async function runAlertsOnce(pool, { now = Date.now(), chain } = {}) {
     for (const sub of subs) {
       const mine = all.filter((o) => matches(sub, o)).sort((a, b) => Number(newIds.has(b.id)) - Number(newIds.has(a.id)));
       if (!mine.some((o) => newIds.has(o.id))) continue; // nothing new for them today
-      if (await sendMail(pool, sub, "daily", offersEmail(sub, mine, { digest: true, newIds }), 10)) digestSent++;
+      if (await sendMail(pool, sub, "daily", offersEmail(sub, mine, { digest: true, newIds }), 25)) digestSent++;
     }
     // Housekeeping: drop sign-ups never confirmed within 7 days, and old log rows.
     await pool.query("DELETE FROM alert_subscriptions WHERE confirmed_at IS NULL AND created_at < now() - interval '7 days'");

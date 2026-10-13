@@ -13,6 +13,7 @@ import { ProfileSummaryView } from "./ProfileSummary";
 import { OfferCard } from "./OfferCard";
 import { PayoutCard } from "./PayoutCard";
 import { MarkPaidDialog, ProofCard, ReleaseDialog } from "./TradeSafety";
+import { TradeEmailGate, useNeedsTradeEmail } from "./TradeEmail";
 import { getSocket } from "@/hooks/useOnlineStatus";
 import { currencyPrefix } from "@/lib/markets";
 import { getPayout } from "@/lib/payoutApi";
@@ -611,8 +612,12 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
     if (!actionLoading) setDeletingOfferId(null);
   }, [actionLoading]);
 
+  // A confirmed email is required to trade (trade notices go there)
+  const needsEmail = useNeedsTradeEmail();
+  const [emailGateOpen, setEmailGateOpen] = useState(false);
   const handleAccept = () => {
     if (!account || !selectedEscrow) return;
+    if (needsEmail) { setEmailGateOpen(true); return; }
     executeAction("Accept Offer", () => 
       buildAcceptOfferTx(selectedEscrow.offerId, account.account, account.publicKey)
     );
@@ -1393,6 +1398,8 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
           <ReleaseDialog escrow={selectedEscrow} total={tradeTotal(selectedEscrow)} open={releaseOpen} onOpenChange={setReleaseOpen} onConfirm={() => { void doRelease(); }} />
         </>
       )}
+
+      <TradeEmailGate open={emailGateOpen} onOpenChange={setEmailGateOpen} />
 
       {/* Rate trade dialog (only for completed trades) */}
       {counterpartyWallet && selectedEscrow && (

@@ -1,4 +1,4 @@
-import { Link, useLocation, useSearchParams } from "react-router-dom";
+import { useNavigate, Link, useLocation, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { WalletConnect } from "@/components/WalletConnect";
 import { AppLogo } from "@/components/AppLogo";
@@ -63,6 +63,16 @@ const Index = () => {
       })
       .catch(() => {});
   }, [linkedOffer, isConnected, account, lang, location.key]);
+
+  // Back from a trade email link: confirmed, turned off, or an old link
+  const navigate = useNavigate();
+  const tradeEmail = params.get("trade-email");
+  useEffect(() => {
+    if (!tradeEmail) return;
+    if (tradeEmail === "on") toast.success("Email confirmed", { description: "You can trade now. Every step of your trades comes by email too." });
+    else toast.error("This email link has expired or was already used", { description: "Ask for a new one from the bell." });
+    navigate("/", { replace: true });
+  }, [tradeEmail, navigate]);
 
   const handleRoleSelect = (selectedRole: UserRole) => {
     setRole(selectedRole);

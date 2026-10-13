@@ -30,22 +30,28 @@ after(async () => { server?.close(); await clean(); await pool.end(); });
 test("who is told what, per state change", () => {
   const d = { price: 0.0095, fiat_currency: "USD" };
   let ev = eventsForChange("CREATED", esc({ state: "ACCEPTED", buyer: B }), d);
-  assert.deepEqual(ev.map((e) => [e.wallet, e.kind]), [[S, "accepted"]]);
-  assert.match(ev[0].body, /Deposit the KDA within 1 hour/);
+  assert.deepEqual(ev.map((e) => [e.wallet, e.kind]), [[S, "accepted"], [B, "started"]], "both sides; the seller must act");
+  assert.match(ev[0].title, /^Action needed: deposit/);
+  assert.match(ev[0].body, /within 1 hour/);
+  assert.match(ev[1].body, /Pay only after the trade shows Funded/);
   ev = eventsForChange("ACCEPTED", esc({ state: "FUNDED", buyer: B }), d);
-  assert.deepEqual(ev.map((e) => [e.wallet, e.kind]), [[B, "funded"]]);
+  assert.deepEqual(ev.map((e) => [e.wallet, e.kind]), [[B, "funded"], [S, "locked"]]);
+  assert.match(ev[0].title, /^Action needed: send the payment/);
   assert.match(ev[0].body, /9\.5 USD/);
   ev = eventsForChange("FUNDED", esc({ state: "PAID", buyer: B }), d);
-  assert.deepEqual(ev.map((e) => [e.wallet, e.kind]), [[S, "paid"]]);
+  assert.deepEqual(ev.map((e) => [e.wallet, e.kind]), [[S, "paid"], [B, "marked"]]);
+  assert.match(ev[0].title, /^Action needed: check the payment and release/);
   ev = eventsForChange("PAID", esc({ state: "COMPLETED", buyer: B }), d);
-  assert.deepEqual(ev.map((e) => [e.wallet, e.kind]), [[B, "completed"]]);
+  assert.deepEqual(ev.map((e) => [e.wallet, e.kind]), [[B, "completed"], [S, "completed"]]);
   ev = eventsForChange("PAID", esc({ state: "DISPUTED", buyer: B }), d);
   assert.equal(ev.length, 2);
   ev = eventsForChange("CREATED", esc({ state: "CLOSED" }), d);
   assert.equal(ev.length, 0, "creator closing their own offer is not news");
   // BUY offer: the creator is the buyer, the accepter is the seller
   ev = eventsForChange("ACCEPTED", esc({ side: "BUY", state: "FUNDED", buyer: X }), d);
-  assert.deepEqual(ev.map((e) => e.wallet), [S]);
+  assert.deepEqual(ev.map((e) => e.wallet), [S, X], "creator pays, accepter locked the KDA");
+  ev = eventsForChange("CREATED", esc({ side: "BUY", state: "ACCEPTED", buyer: X }), d);
+  assert.deepEqual(ev.map((e) => [e.wallet, e.kind]), [[X, "accepted"], [S, "started"]], "BUY offer: the accepter must deposit");
 });
 
 test("deadline reminders and expiry notices", () => {
@@ -80,11 +86,12 @@ test("watcher: silent first run, then feed items and pushes", async () => {
   // accepted -> seller; funded -> buyer (the gone device is removed)
   sent.length = 0;
   await runNotificationsOnce(pool, { chain: [esc({ state: "ACCEPTED", buyer: B, acceptedAt: T0 + 90e3 })], now: T0 + 90e3, send });
-  assert.deepEqual(sent.map((s) => s.to), [S]);
-  assert.equal(sent[0].title, "Your offer was accepted · #NTEST1", "push titles carry the trade code");
+  assert.deepEqual(sent.filter((s) => s.to === S).map((s) => s.title), ["Action needed: deposit 1,000 KDA · #NTEST1"], "push titles carry the trade code");
+  assert.ok(sent.some((s) => s.to === B && /^Trade started/.test(s.title)), "the buyer hears too");
   sent.length = 0;
   await runNotificationsOnce(pool, { chain: [esc({ state: "FUNDED", buyer: B, acceptedAt: T0 + 90e3, fundedAt: T0 + 120e3 })], now: T0 + 120e3, send });
-  assert.deepEqual(sent.map((s) => s.endpoint).sort(), ["https://push.example/buyer", "https://push.example/gone"]);
+  // buyer: "send the payment"; seller: "KDA locked". (The gone device was dropped at the previous push.)
+  assert.deepEqual(sent.map((s) => s.endpoint).sort(), ["https://push.example/buyer", "https://push.example/seller"]);
   assert.equal((await pool.query("SELECT count(*)::int n FROM push_subscriptions WHERE endpoint LIKE '%gone'")).rows[0].n, 0);
 
   // same state again: nothing new; close to the deadline: one reminder, once

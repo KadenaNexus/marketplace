@@ -41,17 +41,28 @@ export function eventsForChange(prevState, e, d) {
   const total = d && d.price ? ` (${money(d.price * e.amount, d.fiat_currency)})` : "";
   switch (e.state) {
     case "ACCEPTED":
-      if (e.side === "SELL") add(e.creator, "accepted", "Your offer was accepted", `${short(e.buyer)} accepted your ${kda(e.amount)} sell offer. Deposit the KDA within 1 hour.`, true);
-      else add(e.creator, "accepted", "Your offer was accepted", `${short(e.buyer)} accepted your offer to buy ${kda(e.amount)}. The seller has 1 hour to deposit the KDA.`);
+      // Both sides hear the trade started; the one who must act gets "Action needed".
+      // SELL offer: creator = KDA holder, accepter = payer. BUY offer: creator = payer, accepter = KDA holder.
+      add(seller, "accepted", `Action needed: deposit ${kda(e.amount)}`,
+        e.side === "SELL"
+          ? `${short(buyer)} accepted your sell offer${total}. Deposit the ${kda(e.amount)} into escrow within 1 hour, or the trade closes.`
+          : `You accepted an offer to sell ${kda(e.amount)}${total}. Deposit the KDA into escrow within 1 hour, or the trade closes.`, true);
+      add(buyer, "started", "Trade started: don't pay yet",
+        e.side === "SELL"
+          ? `You accepted an offer to buy ${kda(e.amount)}${total}. The seller has 1 hour to lock the KDA in escrow. Pay only after the trade shows Funded.`
+          : `${short(seller)} accepted your offer to buy ${kda(e.amount)}${total}. They have 1 hour to lock the KDA in escrow. Pay only after the trade shows Funded.`);
       break;
     case "FUNDED":
-      add(buyer, "funded", "Your trade was funded", `The seller locked ${kda(e.amount)} in escrow. Send the payment${total}, then press Mark as Paid within 4 hours.`, true);
+      add(buyer, "funded", "Action needed: send the payment", `The seller locked ${kda(e.amount)} in escrow. Send the payment${total}, then press Mark as Paid within 4 hours.`, true);
+      add(seller, "locked", "KDA locked in escrow", `Your ${kda(e.amount)} is in escrow. The buyer has 4 hours to pay you${total} and mark it as paid. Don't release anything yet.`);
       break;
     case "PAID":
-      add(seller, "paid", "The buyer marked the payment as sent", `Check that you received the payment${total}, then press Release to Buyer within 1 hour.`, true);
+      add(seller, "paid", "Action needed: check the payment and release", `The buyer says they paid${total}. Check it arrived in your own account (a screenshot is not proof), then press Release to Buyer within 1 hour.`, true);
+      add(buyer, "marked", "Payment marked as sent", `The seller has 1 hour to check your payment and release the ${kda(e.amount)} to you.`);
       break;
     case "COMPLETED":
       add(buyer, "completed", "Trade complete", `${kda(e.amount)} was released to you.`);
+      add(seller, "completed", "Trade complete", `You released ${kda(e.amount)} to the buyer. Thanks for trading.`);
       break;
     case "DISPUTED":
       for (const w of [seller, buyer]) add(w, "disputed", "A dispute was opened", "The arbiter will review this trade. Add your evidence in the Dispute tab.", true);
@@ -147,6 +158,10 @@ async function pushTo(pool, subs, n, send) {
 }
 
 /** Store a notification once (wallet + offer + kind is unique) and push it to that wallet's devices. */
+let createdHook = null;
+/** Run `fn(row)` for every new notification for a wallet (used to email trade notifications). */
+export function onNotificationCreated(fn) { createdHook = fn; }
+
 export async function notify(pool, n, { send = webPushSend, now = Date.now() } = {}) {
   const r = await pool.query(
     `INSERT INTO notifications (wallet, offer_id, kind, title, body, urgent, data, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, to_timestamp($8 / 1000.0))
@@ -154,6 +169,8 @@ export async function notify(pool, n, { send = webPushSend, now = Date.now() } =
     [n.wallet, n.offer_id || "", n.kind, n.title, n.body, !!n.urgent, n.data ? JSON.stringify(n.data) : null, now]);
   if (!r.rows[0]) return { created: false, pushed: 0 };
   if (n.wallet === "*") return { created: true, pushed: 0 };
+  // also by email, when the wallet turned trade emails on (server/tradeEmails.js)
+  if (createdHook) Promise.resolve().then(() => createdHook(r.rows[0])).catch((e) => console.warn("[notifications] email:", e.message));
   if (send === webPushSend) await vapidKeys(pool);
   const subs = (await pool.query("SELECT * FROM push_subscriptions WHERE wallet = $1 AND trades", [n.wallet])).rows;
   return { created: true, pushed: subs.length ? await pushTo(pool, subs, r.rows[0], send) : 0 };
