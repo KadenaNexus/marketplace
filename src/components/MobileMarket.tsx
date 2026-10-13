@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { MarketLine } from "@/components/MarketTag";
 import { PushPrompt } from "@/components/PushPrompt";
 import { Link } from "react-router-dom";
 import { Bell, Clock, List, Megaphone, Plus, SlidersHorizontal, X } from "lucide-react";
@@ -99,6 +100,7 @@ export function MobileMarket({
             )}
           </div>
           <SideSwitch side={side} onSide={onSide} label="What do you want to do" />
+          <MarketLine />
           <div>
             <Button variant="outline" className="h-10 gap-2 rounded-full" aria-expanded={showFilters} onClick={() => setShowFilters((v) => !v)}>
               <SlidersHorizontal className="h-4 w-4" />

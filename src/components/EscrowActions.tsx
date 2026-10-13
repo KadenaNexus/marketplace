@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
+import { MarketTag } from "./MarketTag";
 import { TradeCode } from "./TradeCode";
 import { createPortal } from "react-dom";
 import { useQuery, useQueries, useQueryClient } from "@tanstack/react-query";
@@ -902,6 +903,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                   {currencyPrefix(selectedEscrow.fiatCurrency)}
                   {formatFiat(selectedEscrow.price)} <span className="text-base">per KDA</span>
                 </p>
+                <MarketTag price={selectedEscrow.price} currency={selectedEscrow.fiatCurrency} className="text-sm" />
               </div>
               <div>
                 <Label className="text-muted-foreground">Available Amount</Label>

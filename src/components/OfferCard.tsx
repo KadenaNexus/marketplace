@@ -1,4 +1,5 @@
 import { Card, CardContent } from "@/components/ui/card";
+import { MarketTag } from "./MarketTag";
 import { TradeCode } from "./TradeCode";
 import { TurnLine } from "./MobileTrade";
 import { currencyPrefix } from "@/lib/markets";
@@ -72,7 +73,7 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, onSelect, onDe
         )}
         <div className="flex items-baseline justify-between gap-3">
           <p className="flex items-center gap-2 font-display text-2xl font-bold">{kdaAmount(escrow.amount)} KDA <TradeCode offerId={escrow.offerId} className="self-center" /></p>
-          <p className="shrink-0 text-sm text-muted-foreground">{currencySymbol}{formatFiat(escrow.price)} / KDA</p>
+          <p className="shrink-0 text-right text-sm text-muted-foreground">{currencySymbol}{formatFiat(escrow.price)} / KDA<MarketTag price={escrow.price} currency={escrow.fiatCurrency} className="flex justify-end" /></p>
         </div>
         {showStatus && (
           <div className="mt-1 flex items-center justify-between gap-2">
@@ -177,6 +178,7 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, onSelect, onDe
                 {currencySymbol}{formatFiat(escrow.price)}
               </span>
               <span className="text-sm text-muted-foreground">per KDA</span>
+              <MarketTag price={escrow.price} currency={escrow.fiatCurrency} />
             </div>
             <div className="flex items-center gap-4 text-sm text-muted-foreground">
               <span>Available: <span className="font-medium text-foreground">{escrow.amount.toFixed(4)} KDA</span></span>
