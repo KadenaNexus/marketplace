@@ -82,6 +82,14 @@ export function accountFromSession(session: Session | undefined): WalletAccount 
 
 export const walletName = (session?: Session) => session?.peer?.metadata?.name || "your wallet";
 
+/** The connected phone wallet's own details (name, site, return links), for the wallet check page. */
+export async function connectedWalletInfo() {
+  if (!clientPromise) await getClient().catch(() => null);
+  const c = await clientPromise?.catch(() => null);
+  const s = c ? currentSession(c) : undefined;
+  return s ? { name: s.peer.metadata.name, url: (s.peer.metadata as { url?: string }).url ?? null, redirect: s.peer.metadata.redirect ?? null, methods: s.namespaces.kadena?.methods ?? [] } : null;
+}
+
 /** Restore a phone-wallet connection saved by an earlier visit. */
 export async function restoreWalletConnect(): Promise<{ account: WalletAccount; name: string } | null> {
   const c = await getClient();
@@ -126,7 +134,7 @@ export async function onWalletConnectEnded(fn: () => void) {
 
 /* ---------- signing ---------- */
 
-type Pending = { wallet: string; open: (() => void) | null; cancel: () => void };
+type Pending = { wallet: string; open: (() => void) | null; href: string | null; cancel: () => void };
 let pending: Pending | null = null;
 const listeners = new Set<(p: Pending | null) => void>();
 const emit = () => listeners.forEach((l) => l(pending));
@@ -142,17 +150,12 @@ export const isPhone = () => /Android|iPhone|iPad|iPod/i.test(navigator.userAgen
 /** Link that brings the wallet app forward (its own redirect link from the session). */
 function walletLink(session: Session): string | null {
   const r = session.peer.metadata.redirect;
-  // Only a full app link ("linx://…" or an https link to another site). A bare word or a path would be
-  // read as a page on this site (Linx's value opened marketplace.kadena.ws/<something> = 404).
-  const ok = (v?: string) => {
-    if (!v || !/^[a-z][a-z0-9+.-]*:/i.test(v)) return false;
-    if (/^(javascript|data|vbscript):/i.test(v)) return false;
-    try { if (/^https?:/i.test(v) && new URL(v).origin === window.location.origin) return false; } catch { return false; }
-    return true;
-  };
-  if (ok(r?.native)) return r!.native!;
-  if (ok(r?.universal)) return r!.universal!;
-  return null;
+  // Only an app link ("linx://…"). Not a bare word or a path (read as a page on this site: 404), and not an
+  // https "universal" link: iPhone opens those in Safari when tapped from a web page (Linx's goes to its website).
+  const v = r?.native;
+  if (!v || !/^[a-z][a-z0-9+.-]*:/i.test(v)) return null;
+  if (/^(https?|javascript|data|vbscript|file|about|blob):/i.test(v)) return null;
+  return v;
 }
 
 /** Sign with the connected phone wallet. The approval banner offers a button to open the wallet app. */
@@ -171,7 +174,7 @@ export async function signWithWalletConnect(command: IUnsignedCommand): Promise<
   const open = link ? () => { window.open(link, "_self", "noreferrer noopener"); } : null;
   let cancel: () => void = () => {};
   const cancelled = new Promise<never>((_, reject) => { cancel = () => reject(new Error("Cancelled. Nothing was signed.")); });
-  pending = { wallet: walletName(session), open, cancel };
+  pending = { wallet: walletName(session), open, href: link, cancel };
   emit();
   try {
     const result = (sign as (c: IUnsignedCommand) => Promise<unknown>)(command);
