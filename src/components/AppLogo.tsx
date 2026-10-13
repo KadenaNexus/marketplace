@@ -5,7 +5,8 @@ export function AppLogo({ className = "" }: { className?: string }) {
     <div className={`flex min-w-0 items-center ${className}`}>
       <Link to="/" className="nx-brand" aria-label="Kadena P2P Marketplace — Home">
         <img src="/nexus-mark.png" width="32" height="32" alt="" />
-        <span>Kadena P2P Marketplace</span>
+        <span className="hidden sm:inline">Kadena P2P Marketplace</span>
+        <span className="sm:hidden">P2P Marketplace</span>
       </Link>
       <a className="nx-part-link" href="https://kadena.ws/">
         Part of Kadena Nexus

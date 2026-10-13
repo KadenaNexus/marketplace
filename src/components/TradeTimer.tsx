@@ -19,7 +19,7 @@ export function isStepExpired(deadlineIso: string | undefined, limitSeconds: num
   return remaining !== null && remaining <= 0;
 }
 
-function formatCountdown(seconds: number): string {
+export function formatCountdown(seconds: number): string {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;
@@ -29,32 +29,32 @@ function formatCountdown(seconds: number): string {
 
 /**
  * One plain sentence telling this person what happens next and whose turn it is.
- * Button names match the trade actions: Deposit, Mark Paid, Release,
- * Timeout: Refund (T2), Timeout: Dispute (T3), Close (T1 Expired).
+ * Button names match the trade buttons: Deposit, Mark as Paid, Release to Buyer,
+ * Refund, Move to dispute, Close offer.
  */
 export function nextStep(escrow: Escrow, me: string | undefined, expired: boolean): string {
-  const kda = `${escrow.amount} KDA`;
+  const kda = `${escrow.amount.toLocaleString("en-US", { maximumFractionDigits: 4 })} KDA`;
   const seller = !!me && me === escrow.seller;
   const buyer = !!me && me === escrow.buyer;
   if (escrow.state === "ACCEPTED") {
-    if (expired) return "The seller did not lock the KDA in time. Nothing was paid and nothing is at risk; the trade can be closed with Close (T1 Expired).";
+    if (expired) return "The seller did not lock the KDA in time. Nothing was paid and nothing is at risk; either side can close the trade with Close offer.";
     if (seller) return `Your turn: press Deposit to lock ${kda} in escrow. The buyer will only send payment after that.`;
     if (buyer) return `Waiting for the seller to lock ${kda} in escrow. Do not send any payment until the trade shows Funded.`;
     return `Waiting for the seller to lock ${kda} in escrow.`;
   }
   if (escrow.state === "FUNDED") {
     if (expired) {
-      if (seller) return "The buyer did not mark the payment in time. You can take your KDA back with Timeout: Refund (T2).";
+      if (seller) return "The buyer did not mark the payment in time. You can take your KDA back with Refund.";
       if (buyer) return "The payment deadline passed, so the seller can now take the KDA back. If you already paid, message the seller in the trade chat right away.";
       return "The payment deadline passed; the seller can take the KDA back.";
     }
-    if (buyer) return `Your turn: the ${kda} is locked in escrow. Send the payment to the seller as agreed, then press Mark Paid before the time runs out.`;
-    if (seller) return "Your KDA is locked in escrow. Waiting for the buyer to send the payment and press Mark Paid. Do not release anything yet.";
-    return "KDA is locked in escrow. Waiting for the buyer to pay and press Mark Paid.";
+    if (buyer) return `Your turn: the ${kda} is locked in escrow. Send the payment to the seller as agreed, then press Mark as Paid before the time runs out.`;
+    if (seller) return "Your KDA is locked in escrow. Waiting for the buyer to send the payment and press Mark as Paid. Do not release anything yet.";
+    return "KDA is locked in escrow. Waiting for the buyer to pay and press Mark as Paid.";
   }
   if (escrow.state === "PAID") {
-    if (expired) return "The release deadline passed. Either side can press Timeout: Dispute (T3); the arbiter then reviews the trade and decides.";
-    if (seller) return `Your turn: the buyer says the payment is sent. Check that you received it in full, then press Release to send the ${kda}.`;
+    if (expired) return "The release deadline passed. Either side can press Move to dispute; the arbiter then reviews the trade and decides.";
+    if (seller) return `Your turn: the buyer says the payment is sent. Check that you received it in full, then press Release to Buyer to send the ${kda}.`;
     if (buyer) return `Payment marked as sent. Waiting for the seller to confirm and release the ${kda} to you. If they do not release in time, you can open a dispute.`;
     return "Payment marked as sent. Waiting for the seller to release the KDA.";
   }

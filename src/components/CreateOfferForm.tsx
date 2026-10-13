@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -31,9 +31,11 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
 interface CreateOfferFormProps {
   onSuccess?: (offerId: string, txHash: string) => void;
   role?: "buyer" | "seller";
+  /** Phone layout: the page around it already sets buy or sell, so no card, no title, no side buttons and a ready-made offer ID. */
+  compact?: boolean;
 }
 
-export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormProps) {
+export function CreateOfferForm({ onSuccess, role = "seller", compact = false }: CreateOfferFormProps) {
   const { account, isConnected } = useWallet();
   const [offerId, setOfferId] = useState("");
   const [side, setSide] = useState<"BUY" | "SELL">(role === "buyer" ? "BUY" : "SELL");
@@ -47,6 +49,9 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
     const id = `offer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     setOfferId(id);
   };
+  useEffect(() => {
+    if (compact) setOfferId((v) => v || `offer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  }, [compact]);
 
   const handlePaymentMethodToggle = (method: string, checked: boolean) => {
     if (checked) {
@@ -190,7 +195,8 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
   };
 
   return (
-    <Card className="escrow-card">
+    <Card className={compact ? "border-0 bg-transparent shadow-none" : "escrow-card"}>
+      {!compact && (
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Plus className="h-5 w-5 text-primary" />
@@ -202,7 +208,8 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
             : "Create a new P2P escrow offer as the seller"}
         </CardDescription>
       </CardHeader>
-      <CardContent>
+      )}
+      <CardContent className={compact ? "p-0" : undefined}>
         <form onSubmit={handleSubmit} className="space-y-4">
           {isLoading && (
             <Alert className="border-primary/50 bg-primary/5">
@@ -212,7 +219,7 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
             </Alert>
           )}
           {/* Side Selection */}
-          <div className="space-y-2">
+          <div className={compact ? "hidden" : "space-y-2"}>
             <Label>Trade Side</Label>
             <div className="flex gap-2">
               <Button
@@ -237,7 +244,7 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
           </div>
 
           {/* Offer ID */}
-          <div className="space-y-2">
+          <div className={compact ? "hidden" : "space-y-2"}>
             <Label htmlFor="offerId">Offer ID</Label>
             <div className="flex gap-2">
               <Input
@@ -333,7 +340,7 @@ export function CreateOfferForm({ onSuccess, role = "seller" }: CreateOfferFormP
 
           <Button 
             type="submit" 
-            className="w-full" 
+            className={compact ? "h-12 w-full text-base" : "w-full"} 
             disabled={!isConnected || isLoading}
           >
             {isLoading ? (
