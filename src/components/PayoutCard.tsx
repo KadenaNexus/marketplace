@@ -8,7 +8,8 @@ import { Label } from "@/components/ui/label";
 import { useWallet } from "@/hooks/useWallet";
 import { authProof } from "@/lib/session";
 import type { Escrow } from "@/lib/kadena";
-import { getPayout, payoutHint, putPayout, type PayoutItem } from "@/lib/payoutApi";
+import { getPayout, isStable, networkLabel, putPayout, stableProblem, type PayoutItem } from "@/lib/payoutApi";
+import { PayoutInput, type PayoutDraft } from "./PayoutInput";
 
 export const offerMethods = (e: Escrow): string[] => {
   try { const m = JSON.parse(e.paymentMethod || "[]"); return Array.isArray(m) ? m.map(String) : []; }
@@ -56,11 +57,11 @@ export function PayoutCard({ escrow, total }: { escrow: Escrow; total: string })
   const queryClient = useQueryClient();
   const methods = offerMethods(escrow);
   const [editing, setEditing] = useState(false);
-  const [values, setValues] = useState<Record<string, string>>({});
+  const [values, setValues] = useState<Record<string, PayoutDraft>>({});
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (data) setValues(Object.fromEntries(data.details.map((d) => [d.method, d.value])));
+    if (data) setValues(Object.fromEntries(data.details.map((d) => [d.method, { value: d.value, network: d.network }])));
   }, [data]);
 
   if (!me) return null;
@@ -90,8 +91,12 @@ export function PayoutCard({ escrow, total }: { escrow: Escrow; total: string })
     const editable = data?.editable ?? false;
     const save = async () => {
       if (!account) return;
-      const items: PayoutItem[] = (methods.length ? methods : Object.keys(values)).map((m) => ({ method: m, value: (values[m] ?? "").trim() })).filter((x) => x.value);
+      const items: PayoutItem[] = (methods.length ? methods : Object.keys(values))
+        .map((m) => ({ method: m, value: (values[m]?.value ?? "").trim(), ...(isStable(m) ? { network: values[m]?.network } : {}) }))
+        .filter((x) => x.value);
       if (!items.length) return toast.error("Add where you want to be paid for at least one payment method.");
+      const problem = items.map(stableProblem).find(Boolean);
+      if (problem) return toast.error(problem);
       setSaving(true);
       try {
         const signedCmd = await authProof(account.account, account.publicKey);
@@ -125,11 +130,7 @@ export function PayoutCard({ escrow, total }: { escrow: Escrow; total: string })
         {showForm ? (
           <div className="space-y-3">
             {(methods.length ? methods : ["Payment"]).map((m) => (
-              <div key={m} className="space-y-1">
-                <Label htmlFor={`payout-${m}`}>{m}</Label>
-                <Input id={`payout-${m}`} value={values[m] ?? ""} placeholder={payoutHint(m)} dir="ltr" autoComplete="off" maxLength={300}
-                  onChange={(e) => setValues((v) => ({ ...v, [m]: e.target.value }))} />
-              </div>
+              <PayoutInput key={m} method={m} draft={values[m] ?? { value: "" }} onChange={(d) => setValues((v) => ({ ...v, [m]: d }))} />
             ))}
             <Button type="button" className="h-11 w-full" onClick={save} disabled={saving}>
               {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}Save payment details
@@ -139,7 +140,7 @@ export function PayoutCard({ escrow, total }: { escrow: Escrow; total: string })
           <ul className="space-y-2">
             {details.map((d) => (
               <li key={d.method} className="rounded-lg bg-muted p-3">
-                <p className="text-xs text-muted-foreground">{d.method}</p>
+                <p className="text-xs text-muted-foreground">{d.method}{d.network ? ` · ${networkLabel(d.network)}` : ""}</p>
                 <p className="break-all font-mono text-sm">{d.value}</p>
               </li>
             ))}
@@ -155,7 +156,7 @@ export function PayoutCard({ escrow, total }: { escrow: Escrow; total: string })
         <p className="text-sm font-medium">Seller's payment details (as the buyer saw them{data?.updatedAt ? `, last changed ${new Date(data.updatedAt).toLocaleString()}` : ""})</p>
         {details.length === 0 ? <p className="text-sm text-muted-foreground">None added.</p> : (
           <ul className="space-y-1">
-            {details.map((d) => <li key={d.method} className="rounded bg-muted p-2"><span className="text-xs text-muted-foreground">{d.method}: </span><span className="break-all font-mono text-sm">{d.value}</span></li>)}
+            {details.map((d) => <li key={d.method} className="rounded bg-muted p-2"><span className="text-xs text-muted-foreground">{d.method}{d.network ? ` (${networkLabel(d.network)})` : ""}: </span><span className="break-all font-mono text-sm">{d.value}</span></li>)}
           </ul>
         )}
       </section>
@@ -183,6 +184,11 @@ export function PayoutCard({ escrow, total }: { escrow: Escrow; total: string })
             <li key={d.method} className="flex items-center gap-3 rounded-lg bg-muted p-3">
               <span className="min-w-0 flex-1">
                 <span className="block text-xs text-muted-foreground">{d.method}</span>
+                {d.network && (
+                  <span className="my-1 block rounded-md bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-950 dark:bg-amber-950 dark:text-amber-100">
+                    Network: {networkLabel(d.network)} only. Sending on another network loses the money.
+                  </span>
+                )}
                 <span className="block break-all font-mono text-sm">{d.value}</span>
               </span>
               <CopyButton text={d.value} />

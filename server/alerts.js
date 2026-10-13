@@ -49,6 +49,8 @@ export const alertsEnabled = () => { const c = cfg(); return !c.off && !!(c.key 
 export const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const newToken = () => crypto.randomBytes(24).toString("base64url");
 const fmtNum = (n, max = 4) => (Number.isFinite(n) ? n.toLocaleString("en-US", { maximumFractionDigits: max }) : "?");
+/** Money: 2 decimals from 1 up; small amounts keep 3 significant digits (0.23 KDA × 0.001 = "0.00023", not "0"). */
+export const fmtMoney = (n) => (!Number.isFinite(n) ? "?" : Math.abs(n) >= 1 || n === 0 ? n.toLocaleString("en-US", { maximumFractionDigits: 2 }) : n.toLocaleString("en-US", { maximumSignificantDigits: 3 }));
 const num = (x) => (x && typeof x === "object" ? Number(x.decimal ?? x.int ?? 0) : Number(x || 0));
 /** Pact time as {timep|time: iso} or iso; the contract stores 1970 for "not set". Returns ms or null. */
 export const chainTime = (v) => { const s = v && typeof v === "object" ? v.timep || v.time : v; const t = s ? Date.parse(s) : NaN; return t > 86400000 ? t : null; };
@@ -106,7 +108,7 @@ const T = {
     introOne: "A new offer matching your alerts was just posted.",
     introMany: (n) => `${n} new offers matching your alerts were just posted.`,
     introDigest: "Open offers matching your alerts. New ones in the last 24 hours are marked.",
-    firstCome: "Offers go to whoever accepts first. Connect your Ecko wallet on the Marketplace to accept; the KDA is held in the on-chain escrow until the trade completes.",
+    firstCome: "Offers go to whoever accepts first. Open the Marketplace on your phone and connect your Linx wallet to accept; the KDA is held in the on-chain escrow until the trade completes.",
     why: "You get this because you signed up for offer alerts on Kadena P2P Marketplace.",
     manage: "Change alerts", unsub: "Unsubscribe", part: "Part of Kadena Nexus",
     confirmSubj: "Confirm your Kadena Nexus offer alerts",
@@ -131,7 +133,7 @@ const T = {
     introOne: "نُشر للتو عرض جديد يطابق تنبيهاتك.",
     introMany: (n) => `نُشرت للتو ${n} عروض جديدة تطابق تنبيهاتك.`,
     introDigest: "العروض المفتوحة التي تطابق تنبيهاتك. العروض الجديدة خلال آخر 24 ساعة مُعلَّمة.",
-    firstCome: "العرض لمن يقبله أولًا. اربط محفظة Ecko في السوق لقبول العرض، وتبقى KDA محفوظة في الضمان على السلسلة حتى تكتمل الصفقة.",
+    firstCome: "العرض لمن يقبله أولًا. افتح السوق على جوالك واربط محفظة Linx لقبول العرض، وتبقى KDA محفوظة في الضمان على السلسلة حتى تكتمل الصفقة.",
     why: "تصلك هذه الرسالة لأنك اشتركت في تنبيهات العروض في سوق Kadena P2P.",
     manage: "تعديل التنبيهات", unsub: "إلغاء الاشتراك", part: "جزء من Kadena Nexus",
     confirmSubj: "أكّد اشتراكك في تنبيهات عروض Kadena Nexus",
@@ -181,7 +183,7 @@ function offerCard(o, lang, markNew) {
   const t = T[lang] || T.en;
   const head = o.side === "SELL" ? t.selling(fmtNum(o.amount)) : t.buying(fmtNum(o.amount));
   const rows = [];
-  if (o.price) rows.push([t.price, `${fmtNum(o.price, 6)} ${o.currency}`], [t.total, `${fmtNum(o.price * o.amount, 2)} ${o.currency}`]);
+  if (o.price) rows.push([t.price, `${fmtNum(o.price, 6)} ${o.currency}`], [t.total, `${fmtMoney(o.price * o.amount)} ${o.currency}`]);
   if (o.methods?.length) rows.push([t.pay, o.methods.join(", ")]);
   const tag = markNew ? ` <span style="background:${ORANGE};color:#fff;font-size:11px;border-radius:4px;padding:1px 6px">${esc(t.isNew)}</span>` : "";
   return `<div style="border:1px solid ${LINE};border-radius:10px;padding:14px;margin:12px 0">
@@ -192,7 +194,7 @@ ${button(`${cfg().url}/?offer=${encodeURIComponent(o.id)}`, t.view)}</div>`;
 function offerText(o, lang) {
   const t = T[lang] || T.en;
   const head = o.side === "SELL" ? t.selling(fmtNum(o.amount)) : t.buying(fmtNum(o.amount));
-  return [head, o.price ? `${t.price}: ${fmtNum(o.price, 6)} ${o.currency} · ${t.total}: ${fmtNum(o.price * o.amount, 2)} ${o.currency}` : "", o.methods?.length ? `${t.pay}: ${o.methods.join(", ")}` : "", `${cfg().url}/?offer=${encodeURIComponent(o.id)}`].filter(Boolean).join("\n");
+  return [head, o.price ? `${t.price}: ${fmtNum(o.price, 6)} ${o.currency} · ${t.total}: ${fmtMoney(o.price * o.amount)} ${o.currency}` : "", o.methods?.length ? `${t.pay}: ${o.methods.join(", ")}` : "", `${cfg().url}/?offer=${encodeURIComponent(o.id)}`].filter(Boolean).join("\n");
 }
 
 const MAX_IN_EMAIL = 10;
