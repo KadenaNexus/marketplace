@@ -71,9 +71,10 @@ function notify(r: Reminder) {
   }
 }
 
-export function useTradeDeadlineReminders() {
+/** `active` is false when the server sends these reminders instead (the notification feed is on). */
+export function useTradeDeadlineReminders(active = true) {
   const { account, isConnected } = useWallet();
-  const me = account?.account;
+  const me = active ? account?.account : undefined;
   const escrowsRef = useRef<Escrow[]>([]);
 
   useEffect(() => {

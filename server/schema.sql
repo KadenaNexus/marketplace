@@ -288,3 +288,41 @@ CREATE TABLE IF NOT EXISTS alert_state (
     key VARCHAR(64) PRIMARY KEY,
     value TEXT
 );
+
+-- Trade notifications (server/notifications.js): last state seen per escrow, the feed, and Web Push devices.
+CREATE TABLE IF NOT EXISTS trade_states (
+    offer_id VARCHAR(255) PRIMARY KEY,
+    state VARCHAR(20) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- wallet is a k: account, or '*' for items everyone sees (new offers). offer_id is '' when there is none.
+CREATE TABLE IF NOT EXISTS notifications (
+    id SERIAL PRIMARY KEY,
+    wallet VARCHAR(255) NOT NULL,
+    offer_id VARCHAR(255) NOT NULL DEFAULT '',
+    kind VARCHAR(64) NOT NULL,
+    title VARCHAR(200) NOT NULL,
+    body VARCHAR(600) NOT NULL DEFAULT '',
+    urgent BOOLEAN NOT NULL DEFAULT FALSE,
+    data JSONB,
+    pushed_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (wallet, offer_id, kind)
+);
+CREATE INDEX IF NOT EXISTS idx_notifications_wallet_created ON notifications(wallet, created_at);
+
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id SERIAL PRIMARY KEY,
+    endpoint VARCHAR(1000) NOT NULL UNIQUE,
+    p256dh VARCHAR(200) NOT NULL,
+    auth VARCHAR(100) NOT NULL,
+    wallet VARCHAR(255),
+    trades BOOLEAN NOT NULL DEFAULT TRUE,
+    offers BOOLEAN NOT NULL DEFAULT FALSE,
+    fail_count INTEGER NOT NULL DEFAULT 0,
+    last_ok_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_push_subscriptions_wallet ON push_subscriptions(wallet);

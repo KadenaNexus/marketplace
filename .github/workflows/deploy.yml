@@ -43,6 +43,8 @@ jobs:
         run: npm run test:db-hardening
       - name: Run offer alert tests
         run: npm run test:alerts
+      - name: Run notification tests
+        run: npm run test:notifications
   deploy:
     name: deploy
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

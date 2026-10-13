@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useQuery, useQueries, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -339,20 +340,22 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
     return set;
   }, [disputeQueries, displayedEscrows]);
 
-  // Link from an offer alert email (?offer=ID): select that offer once it is in the list and scroll to it.
-  const deepLinkDone = useRef(false);
+  // Link to an offer or trade (?offer=ID) from an alert email or a notification: select it once it is in
+  // this list and scroll to it. Reacts every time the link changes, not only on first load.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const linkedOffer = searchParams.get("offer");
+  const handledLink = useRef<string | null>(null);
   useEffect(() => {
-    if (deepLinkDone.current || viewMode !== "new") return;
-    const id = new URLSearchParams(window.location.search).get("offer");
-    if (!id) { deepLinkDone.current = true; return; }
-    if (!displayedEscrows.some((e) => e.offerId === id)) return;
-    deepLinkDone.current = true;
-    setSelectedOfferId(id);
-    setTimeout(() => document.getElementById(`offer-card-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 150);
-    const u = new URL(window.location.href);
-    u.searchParams.delete("offer");
-    window.history.replaceState(window.history.state, "", u.pathname + u.search + u.hash);
-  }, [displayedEscrows, viewMode]);
+    if (!linkedOffer || handledLink.current === linkedOffer) return;
+    if (viewMode !== "new" && viewMode !== "active") return;
+    if (!displayedEscrows.some((e) => e.offerId === linkedOffer)) return;
+    handledLink.current = linkedOffer;
+    setSelectedOfferId(linkedOffer);
+    setTimeout(() => document.getElementById(`offer-card-${linkedOffer}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 150);
+    const next = new URLSearchParams(searchParams);
+    next.delete("offer");
+    setSearchParams(next, { replace: true });
+  }, [linkedOffer, displayedEscrows, viewMode, searchParams, setSearchParams]);
 
   // On-chain reputation (minimal counters; score calculation off-chain)
   const { data: sellerRep } = useQuery({
