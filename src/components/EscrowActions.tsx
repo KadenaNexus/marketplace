@@ -11,6 +11,7 @@ import { EscrowStatus } from "./EscrowStatus";
 import { ProfileSummaryView } from "./ProfileSummary";
 import { OfferCard } from "./OfferCard";
 import { PayoutCard } from "./PayoutCard";
+import { MarkPaidDialog, ProofCard, ReleaseDialog } from "./TradeSafety";
 import { getSocket } from "@/hooks/useOnlineStatus";
 import { currencyPrefix } from "@/lib/markets";
 import { getPayout } from "@/lib/payoutApi";
@@ -59,7 +60,7 @@ import {
 import { getOfferDetails } from "@/lib/offerDetailsApi";
 import { formatFiat } from "@/lib/utils";
 import { TradeTimer, isStepExpired } from "./TradeTimer";
-import { TradeSteps, YourTurnCard, kdaAmount, tradeTitle } from "./MobileTrade";
+import { TradeSteps, YourTurnCard, kdaAmount, tradeTitle, turnInfo } from "./MobileTrade";
 import { useIsMobile } from "@/hooks/use-mobile";
 import type { OfferFilters } from "./OfferFilters";
 import { 
@@ -114,6 +115,7 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
   const [registeringCompletion, setRegisteringCompletion] = useState(false);
 
 const ACTIVE_STATES = ["ACCEPTED", "FUNDED", "PAID", "DISPUTED"] as const;
+const tradeTotal = (e: Escrow) => `${currencyPrefix(e.fiatCurrency)}${formatFiat(e.amount * e.price)}`;
 const PAST_TERMINAL_STATES = ["COMPLETED", "REFUNDED", "CLOSED"] as const;
 const CRITICAL_ACTION_LOADING = ["Accept Offer", "Deposit", "Mark Paid", "Release", "Delete Offer"] as const;
 const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena network. This may take up to 60 seconds.";
@@ -649,14 +651,20 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
     );
   };
 
-  const handleMarkPaid = () => {
+  // Mark as Paid and Release first open a safety step (proof of payment / check your own account)
+  const [markPaidOpen, setMarkPaidOpen] = useState(false);
+  const [releaseOpen, setReleaseOpen] = useState(false);
+  const handleMarkPaid = () => { if (account && selectedEscrow) setMarkPaidOpen(true); };
+  const handleRelease = () => { if (account && selectedEscrow) setReleaseOpen(true); };
+
+  const doMarkPaid = () => {
     if (!account || !selectedEscrow) return;
     executeAction("Mark Paid", () => 
       buildMarkPaidTx(selectedEscrow.offerId, account.account, account.publicKey)
     );
   };
 
-  const handleRelease = async () => {
+  const doRelease = async () => {
     if (!account || !selectedEscrow) return;
     const releaseRecipient = selectedEscrow.side === "SELL" ? selectedEscrow.buyer! : selectedEscrow.creator;
     const vaultAccount = await getEscrowVaultAccount(selectedEscrow.offerId);
@@ -913,7 +921,8 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                   </p>
                 </div>
               </div>
-              <div className="sm:col-span-2">
+              <div className="sm:col-span-2 space-y-4">
+                <ProofCard escrow={selectedEscrow} />
                 <PayoutCard
                   escrow={selectedEscrow}
                   total={`${currencyPrefix(selectedEscrow.fiatCurrency)}${formatFiat(selectedEscrow.amount * selectedEscrow.price)}`}
@@ -1216,7 +1225,11 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
   );
   const mineGroups: [string, Escrow[]][] = viewMode === "mine"
     ? [
-        ["In progress", displayedEscrows.filter((e) => ACTIVE_STATES.includes(e.state as (typeof ACTIVE_STATES)[number]))],
+        // trades waiting for you first, the most urgent at the top
+        ["Your turn", displayedEscrows
+          .filter((e) => ACTIVE_STATES.includes(e.state as (typeof ACTIVE_STATES)[number]) && !openDisputeOfferIds.has(e.offerId) && turnInfo(e, account?.account)?.mine)
+          .sort((a, b) => (turnInfo(a, account?.account)?.remaining ?? 1e9) - (turnInfo(b, account?.account)?.remaining ?? 1e9))],
+        ["Waiting for the other side", displayedEscrows.filter((e) => ACTIVE_STATES.includes(e.state as (typeof ACTIVE_STATES)[number]) && (openDisputeOfferIds.has(e.offerId) || !turnInfo(e, account?.account)?.mine))],
         ["Your open offers", displayedEscrows.filter((e) => e.state === "CREATED")],
         ["Finished", displayedEscrows.filter((e) => PAST_TERMINAL_STATES.includes(e.state as (typeof PAST_TERMINAL_STATES)[number]))],
       ]
@@ -1370,6 +1383,13 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
             {detailTabs}
           </CardContent>
         </Card>
+      )}
+
+      {selectedEscrow && (
+        <>
+          <MarkPaidDialog escrow={selectedEscrow} total={tradeTotal(selectedEscrow)} open={markPaidOpen} onOpenChange={setMarkPaidOpen} onConfirm={doMarkPaid} />
+          <ReleaseDialog escrow={selectedEscrow} total={tradeTotal(selectedEscrow)} open={releaseOpen} onOpenChange={setReleaseOpen} onConfirm={() => { void doRelease(); }} />
+        </>
       )}
 
       {/* Rate trade dialog (only for completed trades) */}

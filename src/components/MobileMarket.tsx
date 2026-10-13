@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { PushPrompt } from "@/components/PushPrompt";
 import { Link } from "react-router-dom";
 import { Bell, Clock, List, Megaphone, Plus, SlidersHorizontal, X } from "lucide-react";
 import { EscrowActions } from "@/components/EscrowActions";
@@ -137,6 +138,7 @@ export function MobileMarket({
               </Link>
             )}
           </div>
+          <PushPrompt />
           <EscrowActions refreshTrigger={refresh} role="seller" viewMode="mine" />
         </div>
       )}

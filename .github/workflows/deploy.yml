@@ -51,6 +51,8 @@ jobs:
         run: npm run test:trade-txs
       - name: Run payout details tests
         run: npm run test:payout
+      - name: Run payment proof tests
+        run: npm run test:proofs
   deploy:
     name: deploy
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
