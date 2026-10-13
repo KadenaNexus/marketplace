@@ -11,7 +11,7 @@ import { createQuicksignWithWalletConnect, createSignWithWalletConnect } from "@
 import { API_HOST, CHAIN_ID, NETWORK_ID, type WalletAccount } from "@/lib/kadena";
 
 // The Reown project ID is public (it identifies the site to the WalletConnect relay); set it here or in VITE_WALLETCONNECT_PROJECT_ID.
-const DEFAULT_PROJECT_ID = "";
+const DEFAULT_PROJECT_ID = "f4249de4e19f3c57f77d259b691a8d0e"; // Reown project "Kadena Adoption Index", shared; marketplace.kadena.ws is on its domain allowlist
 export const WC_PROJECT_ID = String(import.meta.env?.VITE_WALLETCONNECT_PROJECT_ID || DEFAULT_PROJECT_ID).trim();
 export const WC_CHAIN = `kadena:${NETWORK_ID}` as const;
 export const walletConnectReady = () => WC_PROJECT_ID.length > 0;
