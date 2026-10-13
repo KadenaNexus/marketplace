@@ -1,5 +1,6 @@
 import { buildProfileAuthTx, signTransaction } from "@/lib/kadena";
 import type { IUnsignedCommand } from "@kadena/client";
+import { walletLog } from "@/lib/walletLog";
 
 /**
  * Sign in once per device (server/session.js).
@@ -81,10 +82,12 @@ export async function authProof(wallet: string, publicKey: string, opts: { fresh
         const { token } = (await r.json()) as { token?: string };
         if (token) {
           try { localStorage.setItem(key(wallet), token); } catch { /* ignore */ }
+          walletLog("signed in", "saved for 30 days on this device");
           return token;
         }
       }
-    } catch { /* fall back to the signature itself */ }
+      walletLog("sign-in not saved", `server answered ${r.status}: ${(await r.text().catch(() => "")).slice(0, 160)}`);
+    } catch (e) { walletLog("sign-in not saved", e instanceof Error ? e.message : String(e)); /* fall back to the signature itself */ }
     return signedCmd;
   })();
   if (!opts.fresh) {
@@ -92,4 +95,19 @@ export async function authProof(wallet: string, publicKey: string, opts: { fresh
     run.finally(() => { if (pending === run) pending = null; }).catch(() => {});
   }
   return run;
+}
+
+/**
+ * Sign-in the page does on its own (online status): at most one wallet request per page visit.
+ * On a phone, every return from the wallet app reconnects the page; without this, a sign-in that did
+ * not finish was asked again each time.
+ */
+const autoTried = new Set<string>();
+export async function autoSignIn(wallet: string, publicKey: string): Promise<unknown | null> {
+  const t = getSessionToken(wallet);
+  if (t) return t;
+  if (pending) return pending;
+  if (autoTried.has(wallet)) return null;
+  autoTried.add(wallet);
+  return authProof(wallet, publicKey);
 }

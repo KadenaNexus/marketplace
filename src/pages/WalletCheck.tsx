@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { NETWORK_ID } from "@/lib/kadena";
+import { clearWalletLog, readWalletLog } from "@/lib/walletLog";
 import { connectedWalletInfo } from "@/lib/walletconnect";
 
 /**
@@ -61,6 +62,7 @@ export default function WalletCheck() {
   const add = (when: string, data: unknown) => setReport((r) => [...r, { when, data }]);
 
   useEffect(() => {
+    add("wallet log on this device (newest last)", readWalletLog().map((e) => `${e.t} ${e.event}${e.detail ? ` – ${e.detail}` : ""}`));
     add("browser", { userAgent: navigator.userAgent, url: location.href, standalone: (navigator as unknown as { standalone?: boolean }).standalone ?? null });
     add("scan now", scan());
     const t1 = setTimeout(() => add("scan after 1 s", scan()), 1000);
@@ -88,7 +90,7 @@ export default function WalletCheck() {
   return (
     <main className="mx-auto max-w-2xl space-y-4 px-4 py-6">
       <h1 className="font-display text-2xl font-bold">Wallet check</h1>
-      <p className="text-sm text-muted-foreground">Open this page inside your wallet app's browser. It shows what the wallet gives this site. Nothing is signed or sent.</p>
+      <p className="text-sm text-muted-foreground">Shows this device's wallet log (what the phone wallet answered) and what a wallet app's browser gives this site. Copy the report and send it to support. Nothing is signed or sent.</p>
       <div className="grid grid-cols-2 gap-2">
         <Button variant="outline" onClick={() => call("kda_checkStatus")}>Check status</Button>
         <Button onClick={() => call("kda_connect")}>Connect</Button>
@@ -96,6 +98,7 @@ export default function WalletCheck() {
         <Button variant="outline" onClick={() => call("kda_requestAccount")}>Account</Button>
         <Button variant="outline" onClick={() => add("scan", scan())}>Scan again</Button>
         <Button variant="secondary" onClick={copy}>Copy report</Button>
+        <Button variant="outline" className="col-span-2" onClick={() => { clearWalletLog(); add("wallet log", "cleared"); }}>Clear wallet log</Button>
       </div>
       <section className="space-y-2 rounded-xl border border-border p-3">
         <h2 className="font-semibold">Open the wallet app</h2>
