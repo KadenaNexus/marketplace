@@ -1,7 +1,7 @@
 import type { Lang } from "@/components/NexusLanding";
 
 export type AlertsCopy = {
-  cta: string; ctaShort: string; strip: string;
+  cta: string; ctaShort: string; signUp: string; strip: string;
   title: string; intro: string;
   email: string; emailPh: string;
   what: string; sell: string; sellSub: string; buy: string; buySub: string;
@@ -25,6 +25,7 @@ export const ALERTS_COPY: Record<Lang, AlertsCopy> = {
   en: {
     cta: "Get offer alerts by email",
     ctaShort: "Offer alerts",
+    signUp: "Sign up",
     strip: "Get an email when a new offer is posted, so you don't miss one.",
     title: "Offer alerts",
     intro: "We email you when a new offer is posted. No wallet needed to sign up.",
@@ -66,6 +67,7 @@ export const ALERTS_COPY: Record<Lang, AlertsCopy> = {
   ar: {
     cta: "استلم تنبيهات العروض بالبريد",
     ctaShort: "تنبيهات العروض",
+    signUp: "اشترك",
     strip: "استلم رسالة عند نشر عرض جديد حتى لا يفوتك.",
     title: "تنبيهات العروض",
     intro: "نرسل لك رسالة عند نشر عرض جديد. لا تحتاج محفظة للاشتراك.",

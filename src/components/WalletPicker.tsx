@@ -31,7 +31,7 @@ export function WalletPicker({ open, onOpenChange, onEcko, onPhone }: {
         </DialogHeader>
         <div className="space-y-3">
           {option(Monitor, "Ecko Wallet extension", "In this browser", onEcko)}
-          {option(Smartphone, "Phone wallet", "Ecko app, Linx, Koala or another Kadena wallet. Scan a QR code with your phone.", onPhone)}
+          {option(Smartphone, "Linx Wallet on your phone", "Scan a code with the Linx app.", onPhone)}
         </div>
       </DialogContent>
     </Dialog>
@@ -52,8 +52,12 @@ export function WalletApprovalBanner() {
             <span className="relative inline-flex h-3 w-3 rounded-full bg-primary" />
           </span>
           <div className="min-w-0 flex-1">
-            <p className="font-semibold">Approve in {p.wallet}</p>
-            <p className="text-sm text-muted-foreground">Switch to {p.wallet}, check the request and approve it, then come back here. This page updates by itself.</p>
+            <p className="font-semibold">Approve in {p.wallet}: {p.what}</p>
+            <p className="text-sm text-muted-foreground">
+              {p.signIn
+                ? <>Second approval: sign in. You do this once on this phone. Switch to {p.wallet}, approve, then come back here.</>
+                : <>Switch to {p.wallet}, check the request and approve it, then come back here. This page updates by itself.</>}
+            </p>
           </div>
           <button type="button" onClick={p.cancel} aria-label="Stop waiting" className="-m-1 rounded p-1 text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>
         </div>
@@ -62,6 +66,24 @@ export function WalletApprovalBanner() {
           <a href={p.href} className="mt-3 flex h-11 w-full items-center justify-center rounded-md bg-primary text-sm font-medium text-primary-foreground hover:bg-primary/90">Open {p.wallet}</a>
         )}
       </div>
+    </div>
+  );
+}
+
+export const LINX_APP_STORE = "https://apps.apple.com/app/linx-wallet/id6450412379";
+
+/** What approving in Linx looks like, so nobody is surprised by the requests. */
+function LinxExpectations() {
+  return (
+    <div className="space-y-1.5 rounded-xl bg-muted/60 p-3 text-sm">
+      <p className="font-semibold">What to expect in Linx</p>
+      <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
+        <li>Now: <b className="text-foreground">2 approvals</b>, Connect and Sign in. Once per phone.</li>
+        <li>Then <b className="text-foreground">1 approval for every trade step</b>: create, accept, deposit, mark as paid, release. Switch to Linx, approve, come back.</li>
+      </ul>
+      <p className="pt-1 text-xs text-muted-foreground">
+        No Linx yet? <a href={LINX_APP_STORE} target="_blank" rel="noopener noreferrer" className="font-medium text-primary underline">Get it on the App Store</a>
+      </p>
     </div>
   );
 }
@@ -111,8 +133,8 @@ export function PhoneWalletSheet({ state }: { state: { uri: string | null; cance
     <Dialog open={!!state} onOpenChange={(o) => { if (!o) state?.cancel(); }}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle className="font-display text-xl">Connect your phone wallet</DialogTitle>
-          <DialogDescription>Works with Ecko, Linx, Koala and other Kadena wallets that support WalletConnect.</DialogDescription>
+          <DialogTitle className="font-display text-xl">Connect Linx Wallet</DialogTitle>
+          <DialogDescription>The marketplace works with the Linx wallet app. Your keys stay in Linx.</DialogDescription>
         </DialogHeader>
         {!uri ? (
           <p className="flex items-center gap-2 py-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Preparing a secure connection link…</p>
@@ -130,11 +152,11 @@ export function PhoneWalletSheet({ state }: { state: { uri: string | null; cance
               </li>
               <li className="flex gap-3">
                 <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">2</span>
-                <p className="flex-1">Open your wallet app and paste the link in its scan or WalletConnect screen. In <b>Linx</b>: tap <b>Scan</b>, then <b>Paste</b>.</p>
+                <p className="flex-1">Open <b>Linx</b>, tap <b>Scan</b>, then <b>Paste</b>.</p>
               </li>
               <li className="flex gap-3">
                 <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">3</span>
-                <p className="flex-1">Check the site name says <b>Kadena P2P Marketplace</b> and approve. Then switch back to this browser: the page connects by itself and asks your wallet once more to sign in.</p>
+                <p className="flex-1">Approve <b>twice</b> in Linx: first <b>Connect</b> (check it says Kadena P2P Marketplace), then <b>Sign in</b>. Come back to this browser after each one. Then you can trade.</p>
               </li>
             </ol>
             <div className="space-y-2 border-t border-border pt-4">
@@ -148,12 +170,13 @@ export function PhoneWalletSheet({ state }: { state: { uri: string | null; cance
         ) : (
           <div className="space-y-4">
             {qrBlock}
-            <p className="text-center text-sm">Open <b>Ecko</b>, <b>Linx</b> or <b>Koala</b> on your phone, go to <b>WalletConnect</b> and scan this code.</p>
+            <p className="text-center text-sm">Open <b>Linx</b> on your phone, tap <b>Scan</b> and scan this code. Then approve twice in Linx: <b>Connect</b>, then <b>Sign in</b>.</p>
             <Button variant="outline" className="h-10 w-full gap-2" onClick={copy}>
               {copied ? <><Check className="h-4 w-4" />Copied</> : <><Copy className="h-4 w-4" />Copy link instead</>}
             </Button>
           </div>
         )}
+        {uri && <LinxExpectations />}
         {uri && (
           <p className="flex items-center justify-center gap-2 text-xs text-muted-foreground" aria-live="polite">
             <span className="h-2 w-2 animate-pulse rounded-full bg-primary" />Waiting for your wallet…
