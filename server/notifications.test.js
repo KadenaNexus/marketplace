@@ -81,7 +81,7 @@ test("watcher: silent first run, then feed items and pushes", async () => {
   sent.length = 0;
   await runNotificationsOnce(pool, { chain: [esc({ state: "ACCEPTED", buyer: B, acceptedAt: T0 + 90e3 })], now: T0 + 90e3, send });
   assert.deepEqual(sent.map((s) => s.to), [S]);
-  assert.equal(sent[0].title, "Your offer was accepted");
+  assert.equal(sent[0].title, "Your offer was accepted · #NTEST1", "push titles carry the trade code");
   sent.length = 0;
   await runNotificationsOnce(pool, { chain: [esc({ state: "FUNDED", buyer: B, acceptedAt: T0 + 90e3, fundedAt: T0 + 120e3 })], now: T0 + 120e3, send });
   assert.deepEqual(sent.map((s) => s.endpoint).sort(), ["https://push.example/buyer", "https://push.example/gone"]);
@@ -94,7 +94,7 @@ test("watcher: silent first run, then feed items and pushes", async () => {
   assert.equal(sent.length, 0);
   await runNotificationsOnce(pool, { chain: [funded], now: T0 + 120e3 + 4 * 3600e3 - 10 * 60e3, send });
   await runNotificationsOnce(pool, { chain: [funded], now: T0 + 120e3 + 4 * 3600e3 - 9 * 60e3, send });
-  assert.deepEqual(sent.map((s) => s.title), ["10 min left to pay"]);
+  assert.deepEqual(sent.map((s) => s.title), ["10 min left to pay · #NTEST1"]);
 });
 
 test("feed over HTTP, messages, and subscribing", async () => {

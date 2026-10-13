@@ -132,7 +132,9 @@ async function webPushSend(sub, payload) {
 }
 
 async function pushTo(pool, subs, n, send) {
-  const payload = { title: n.title, body: n.body, url: n.offer_id ? `/?offer=${encodeURIComponent(n.offer_id)}` : "/", tag: `${n.offer_id || "x"}:${n.kind}`, urgent: !!n.urgent };
+  // phone notifications carry the trade's short code (same as the colored #CODE on the site)
+  const code = tradeCode(n.offer_id);
+  const payload = { title: code && n.kind !== "new_offer" ? `${n.title} · #${code}` : n.title, body: n.body, url: n.offer_id ? `/?offer=${encodeURIComponent(n.offer_id)}` : "/", tag: `${n.offer_id || "x"}:${n.kind}`, urgent: !!n.urgent };
   let sent = 0;
   for (const s of subs) {
     const r = await send(s, payload);
@@ -237,6 +239,13 @@ export function startNotificationWatcher(getPool, everyMs = 30 * 1000) {
 let runSoon = null, soonTimer = null;
 /** Ask for a notifications round right away (after a confirmed trade step). */
 export function notifyTradeChangeSoon() { runSoon?.(); }
+
+/** "offer-1791905154488-mpamy7" -> "MPAMY7" (same rule as src/components/TradeCode.tsx) */
+export function tradeCode(offerId) {
+  if (!offerId) return "";
+  const last = String(offerId).split("-").pop() || "";
+  return (/^[a-z0-9]{4,8}$/i.test(last) ? last : String(offerId).replace(/[^a-z0-9]/gi, "").slice(-6)).toUpperCase();
+}
 
 /* ---------------- HTTP API ---------------- */
 const walletSchema = z.string().regex(/^k:[0-9a-f]{64}$/);
