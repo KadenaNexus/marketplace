@@ -18,6 +18,7 @@ import { CHAIN_ID, NETWORK_ID, PLATFORM_ARBITER, readEscrow } from "@/lib/kadena
 import { LogOut, Shield, Megaphone, Bell } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { NotificationBell } from "@/components/NotificationBell";
 import { toast } from "sonner";
 
 type UserRole = "buyer" | "seller" | null;
@@ -40,17 +41,22 @@ const Index = () => {
   const alerts = useAlertsStatus();
   const [params] = useSearchParams();
   const linkedOffer = params.get("offer");
-  const linkHandled = useRef(false);
+  // Links to an offer or trade (?offer=ID) from alert emails and notifications: an open offer opens on the
+  // side that can accept it; a trade you are part of opens in Active Trades on the home view.
+  const linkHandled = useRef<string | null>(null);
   useEffect(() => {
-    if (!linkedOffer || !isConnected || role !== null || linkHandled.current) return;
-    linkHandled.current = true;
+    if (!linkedOffer || !isConnected || !account || linkHandled.current === linkedOffer) return;
+    linkHandled.current = linkedOffer;
+    const me = account.account;
     readEscrow(linkedOffer)
       .then((e) => {
-        if (e && e.state === "CREATED") setRole(e.side === "SELL" ? "buyer" : "seller");
+        if (!e) return toast.info(ALERTS_COPY[lang].offerGone);
+        if (e.state === "CREATED" && e.creator !== me) setRole(e.side === "SELL" ? "buyer" : "seller");
+        else if (e.creator === me || e.buyer === me || e.seller === me) setRole(null);
         else toast.info(ALERTS_COPY[lang].offerGone);
       })
       .catch(() => {});
-  }, [linkedOffer, isConnected, role, lang]);
+  }, [linkedOffer, isConnected, account, lang]);
 
   const handleRoleSelect = (selectedRole: UserRole) => {
     setRole(selectedRole);
@@ -75,6 +81,7 @@ const Index = () => {
               {NETWORK_ID === "mainnet01" ? "Mainnet" : NETWORK_ID} · Chain {CHAIN_ID}
             </span>
             <ThemeToggle />
+            <NotificationBell />
             {isArbiter && (
               <Link to="/admin" title="Admin / Arbiter panel">
                 <Button variant="outline" size="sm" className="gap-1.5 px-2 sm:px-3" aria-label="Admin">

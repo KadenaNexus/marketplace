@@ -49,6 +49,8 @@ export const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&a
 const newToken = () => crypto.randomBytes(24).toString("base64url");
 const fmtNum = (n, max = 4) => (Number.isFinite(n) ? n.toLocaleString("en-US", { maximumFractionDigits: max }) : "?");
 const num = (x) => (x && typeof x === "object" ? Number(x.decimal ?? x.int ?? 0) : Number(x || 0));
+/** Pact time as {timep|time: iso} or iso; the contract stores 1970 for "not set". Returns ms or null. */
+export const chainTime = (v) => { const s = v && typeof v === "object" ? v.timep || v.time : v; const t = s ? Date.parse(s) : NaN; return t > 86400000 ? t : null; };
 function methodsOf(raw) {
   try { const a = JSON.parse(raw || "[]"); return Array.isArray(a) ? a.map((m) => String(m).slice(0, 40)).slice(0, 8) : []; }
   catch { return raw ? [String(raw).slice(0, 60)] : []; }
@@ -71,7 +73,8 @@ export async function fetchChainOffers() {
       if (d.result?.status !== "success") throw new Error(`Pact error: ${d.result?.error?.message || "unknown"}`);
       return (d.result.data || []).map((e) => ({
         id: String(e.id), state: String(e.state || "").toUpperCase(), side: String(e.side || "").toUpperCase() === "BUY" ? "BUY" : "SELL",
-        amount: num(e.amount), creator: String(e.creator || ""),
+        amount: num(e.amount), creator: String(e.creator || ""), buyer: String(e.buyer || ""),
+        acceptedAt: chainTime(e.acceptedAt), fundedAt: chainTime(e.fundedAt), paidAt: chainTime(e.paidAt),
       }));
     } catch (e) { last = e; if (String(e.message).startsWith("Pact error")) throw e; }
   }

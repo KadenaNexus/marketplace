@@ -10,6 +10,7 @@
 
 import "dotenv/config";
 import { registerAlertRoutes, startAlertWatcher } from "./alerts.js";
+import { registerNotificationRoutes, startNotificationWatcher, notifyMessage } from "./notifications.js";
 import express from "express";
 import rateLimit from "express-rate-limit";
 import cors from "cors";
@@ -293,6 +294,8 @@ let pool;
 
 // Offer alerts by email (off until RESEND_API_KEY is set)
 registerAlertRoutes(app, () => pool);
+// Trade notifications: in-page feed and Web Push
+registerNotificationRoutes(app, () => pool);
 
 // WebSocket server for online status tracking
 const httpServer = createServer(app);
@@ -1013,6 +1016,7 @@ app.post("/api/messages", (req, res, next) => {
     io.to(roomName).emit("new-message", messageData);
     // Notify recipient even when they don't have this conversation open (so they get toast/badge)
     io.to(`user:${messageData.to}`).emit("new-message", messageData);
+    notifyMessage(() => pool, { id: messageData.id, from: messageData.from, to: messageData.to, offerId: messageData.contextOfferId });
     return res.json({
       id: msg.id,
       from: msg.from_wallet,
@@ -2292,6 +2296,7 @@ async function start() {
   httpServer.listen(PORT, () => {
     console.log(`Profile API listening on http://localhost:${PORT}`);
     startAlertWatcher(() => pool);
+    startNotificationWatcher(() => pool);
     console.log(`WebSocket server ready for online status tracking`);
   });
 }

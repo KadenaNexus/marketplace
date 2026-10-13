@@ -8,6 +8,7 @@ import { ThemeProvider } from "next-themes";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { useNewMessageNotification } from "@/hooks/useNewMessageNotification";
 import { useTradeDeadlineReminders } from "@/hooks/useTradeDeadlineReminders";
+import { NotificationsProvider, useNotifications } from "@/hooks/useNotifications";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import Profile from "./pages/Profile";
@@ -21,8 +22,14 @@ const queryClient = new QueryClient();
 function OnlineStatusProvider({ children }: { children: React.ReactNode }) {
   useOnlineStatus(); // Initialize WebSocket connection
   useNewMessageNotification(); // Toast + invalidate when user receives a message
-  useTradeDeadlineReminders(); // Toast (and background notification) before a trade deadline the user must meet
   return <>{children}</>;
+}
+
+// The server sends deadline reminders when its notification feed is on; otherwise the browser does it here.
+function DeadlineFallback() {
+  const { feed } = useNotifications();
+  useTradeDeadlineReminders(feed === "off");
+  return null;
 }
 
 const App = () => (
@@ -34,6 +41,8 @@ const App = () => (
         <BrowserRouter>
           <WalletProvider>
             <OnlineStatusProvider>
+              <NotificationsProvider>
+              <DeadlineFallback />
               <Routes>
                 <Route path="/" element={<Index />} />
                 <Route path="/u/:wallet" element={<Profile />} />
@@ -43,6 +52,7 @@ const App = () => (
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
               </Routes>
+              </NotificationsProvider>
             </OnlineStatusProvider>
           </WalletProvider>
         </BrowserRouter>
