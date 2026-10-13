@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useState } from "react";
+import { FormEvent, ReactNode, isValidElement, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Bell, CheckCircle2, Loader2, MailCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -165,10 +165,11 @@ export function OfferAlertsButton({ lang, children, className, variant = "outlin
   return (
     <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) { setDone(false); setError(null); } }}>
       <DialogTrigger asChild>
-        {children ?? (
+        {isValidElement(children) ? children : (
+          // a plain label (e.g. "Alerts") still needs a real button around it, or nothing opens
           <Button type="button" variant={variant} className={cn("gap-2", className)}>
             <Bell className="h-4 w-4" />
-            {t.cta}
+            {children ?? t.cta}
           </Button>
         )}
       </DialogTrigger>

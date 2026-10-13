@@ -19,6 +19,7 @@
 
 import { ReactNode, useEffect, useState } from "react";
 import { OfferAlertsButton } from "@/components/OfferAlerts";
+import { LINX_APP_STORE } from "@/components/WalletPicker";
 import { ALERTS_COPY } from "@/lib/alertsCopy";
 
 export type Lang = "en" | "ar";
@@ -192,7 +193,7 @@ const COPY: Record<Lang, Copy> = {
       "items": [
         [
           "A Kadena wallet",
-          "Ecko Wallet (browser extension or phone app), Linx, Koala, Chainweaver, or another Kadena wallet that supports WalletConnect. Your wallet is your account; there is no separate sign-up."
+          "The Linx Wallet app on your phone (on a computer, the Ecko Wallet browser extension also works). Your wallet is your account; there is no separate sign-up."
         ],
         [
           "A little KDA on Chain 1 for gas",
@@ -284,7 +285,7 @@ const COPY: Record<Lang, Copy> = {
     },
     "start": {
       "lead": "Connect your wallet to see open offers and post your own.",
-      "getEcko": "Get Ecko Wallet",
+      "getEcko": "Get Linx Wallet",
       "connect": "Connect wallet",
       "questionsPre": "Questions first? Ask in the ",
       "tg": "Kadena Nexus Telegram group",
@@ -432,7 +433,7 @@ const COPY: Record<Lang, Copy> = {
       "items": [
         [
           "محفظة Kadena",
-          "Ecko Wallet (إضافة المتصفح أو تطبيق الجوال) أو Linx أو Koala أو Chainweaver أو أي محفظة Kadena تدعم WalletConnect. المحفظة هي حسابك؛ لا يوجد تسجيل منفصل."
+          "تطبيق محفظة Linx على جوالك (وعلى الكمبيوتر تعمل أيضًا إضافة Ecko Wallet للمتصفح). المحفظة هي حسابك؛ لا يوجد تسجيل منفصل."
         ],
         [
           "قليل من KDA على السلسلة 1 لرسوم الشبكة",
@@ -524,7 +525,7 @@ const COPY: Record<Lang, Copy> = {
     },
     "start": {
       "lead": "اربط محفظتك لترى العروض المفتوحة وتنشر عرضك.",
-      "getEcko": "احصل على Ecko Wallet",
+      "getEcko": "احصل على محفظة Linx",
       "connect": "اربط المحفظة",
       "questionsPre": "لديك أسئلة أولاً؟ اسأل في ",
       "tg": "مجموعة Kadena Nexus على تيليجرام",
@@ -896,7 +897,7 @@ export default function NexusLanding({ walletAction, practiceVideoUrl, contractU
             <div className="mt-5 flex flex-wrap items-center gap-3">
               {walletAction}
               <a
-                href="https://www.ecko.finance/wallet"
+                href={LINX_APP_STORE}
                 target="_blank"
                 rel="noreferrer"
                 className="inline-flex h-11 items-center rounded-full border border-border px-5 font-semibold text-foreground hover:border-primary"

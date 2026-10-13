@@ -111,11 +111,14 @@ export function MobileMarket({
           </div>
           <EscrowActions key={side} refreshTrigger={refresh} filters={filters} role={side} viewMode="new" />
           {alertsEnabled && (
-            <div className="flex items-center gap-3 rounded-xl border border-dashed border-border p-3">
-              <Bell className="h-4 w-4 shrink-0 text-orange-600" />
-              <p className="flex-1 text-sm text-muted-foreground">{ALERTS_COPY[lang].strip}</p>
-              <OfferAlertsButton lang={lang} className="shrink-0">Alerts</OfferAlertsButton>
-            </div>
+            // the whole strip opens the sign-up form (email + what to be told about)
+            <OfferAlertsButton lang={lang}>
+              <button type="button" className="flex w-full items-center gap-3 rounded-xl border border-dashed border-border p-3 text-left hover:border-primary">
+                <Bell className="h-4 w-4 shrink-0 text-orange-600" />
+                <span className="flex-1 text-sm text-muted-foreground">{ALERTS_COPY[lang].strip}</span>
+                <span className="shrink-0 rounded-full bg-primary px-3 py-1.5 text-sm font-semibold text-primary-foreground">{ALERTS_COPY[lang].signUp}</span>
+              </button>
+            </OfferAlertsButton>
           )}
         </div>
       )}

@@ -139,7 +139,7 @@ export async function onWalletConnectEnded(fn: () => void) {
 
 /* ---------- signing ---------- */
 
-type Pending = { wallet: string; open: (() => void) | null; href: string | null; cancel: () => void };
+type Pending = { wallet: string; open: (() => void) | null; href: string | null; cancel: () => void; /** what is being approved, e.g. "Deposit KDA" */ what: string; signIn: boolean };
 let pending: Pending | null = null;
 const listeners = new Set<(p: Pending | null) => void>();
 const emit = () => listeners.forEach((l) => l(pending));
@@ -161,6 +161,28 @@ function walletLink(session: Session): string | null {
   if (!v || !/^[a-z][a-z0-9+.-]*:/i.test(v)) return null;
   if (/^(https?|javascript|data|vbscript|file|about|blob):/i.test(v)) return null;
   return v;
+}
+
+const STEP_NAMES: Record<string, string> = {
+  "create-offer": "Create offer",
+  "accept-offer": "Accept offer",
+  "deposit": "Deposit KDA",
+  "mark-paid": "Mark as paid",
+  "release": "Release KDA",
+  "refund": "Refund",
+  "close-offer": "Close offer",
+  "delete-offer": "Delete offer",
+  "cancel-accepted-offer": "Cancel trade",
+  "timeout-accepted-close": "Close trade",
+  "timeout-funded-refund": "Refund",
+  "timeout-paid-dispute": "Open dispute",
+};
+/** "Deposit KDA", "Sign in", … for the approval banner. */
+function stepName(cmd: string): string {
+  const d = describeCmd(cmd);
+  if (d === "sign-in") return "Sign in";
+  const fn = d.split(".").pop() ?? d;
+  return STEP_NAMES[fn] ?? "Transaction";
 }
 
 /** "create-offer", "profile sign-in", … from the Pact code, for the log. */
@@ -220,7 +242,7 @@ export async function signWithWalletConnect(command: IUnsignedCommand): Promise<
   const open = link ? () => { window.open(link, "_self", "noreferrer noopener"); } : null;
   let cancel: () => void = () => {};
   const cancelled = new Promise<never>((_, reject) => { cancel = () => reject(new Error("Cancelled. Nothing was signed.")); });
-  pending = { wallet: walletName(session), open, href: link, cancel };
+  pending = { wallet: walletName(session), open, href: link, cancel, what: stepName(command.cmd), signIn: describeCmd(command.cmd) === "sign-in" };
   emit();
   try {
     const result = (sign as (c: IUnsignedCommand) => Promise<unknown>)(command);
