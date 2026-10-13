@@ -139,3 +139,22 @@ export async function getUnreadCount(params: GetUnreadCountParams): Promise<{ un
   }
   return res.json();
 }
+
+export interface OfferThread {
+  /** The other person in the conversation */
+  wallet: string;
+  lastAt: string;
+  unread: number;
+}
+
+/** For an offer's creator: who has written about this offer (newest first). */
+export async function getOfferThreads(params: { offerId: string; wallet: string; publicKey: string; signedCmd: unknown }): Promise<OfferThread[]> {
+  const q = new URLSearchParams({
+    wallet: params.wallet,
+    publicKey: params.publicKey,
+    signedCmd: typeof params.signedCmd === "string" ? params.signedCmd : JSON.stringify(params.signedCmd),
+  });
+  const res = await fetch(`${API}/api/messages/offer/${encodeURIComponent(params.offerId)}/threads?${q.toString()}`);
+  if (!res.ok) throw new Error((await res.text().catch(() => "")) || "Could not load conversations");
+  return res.json();
+}
