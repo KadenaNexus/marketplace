@@ -16,6 +16,7 @@ import type { IUnsignedCommand } from "@kadena/client";
 import { addSignatures, createSignWithWalletConnect } from "@kadena/client";
 import { CHAIN_ID, NETWORK_ID, type WalletAccount } from "@/lib/kadena";
 import { signaturesFromQuicksign } from "@/lib/quicksignAnswer";
+import { walletLog } from "@/lib/walletLog";
 
 // The Reown project ID is public (it identifies the site to the WalletConnect relay).
 // Shared with the Adoption Index; marketplace.kadena.ws is on its domain allowlist.
@@ -109,7 +110,9 @@ export async function connectWalletConnect(onUri: (uri: string) => void, cancell
     requiredNamespaces: { kadena: { methods: METHODS, chains: [WC_CHAIN], events: [] } },
   });
   if (uri) onUri(uri);
-  const session = await Promise.race([approval(), cancelled]);
+  walletLog("connect link ready");
+  const session = await Promise.race([approval(), cancelled]).catch((e) => { walletLog("connect stopped", e instanceof Error ? e.message : String(e)); throw e; });
+  walletLog("connected", { wallet: walletName(session), methods: session.namespaces?.kadena?.methods, redirect: session.peer?.metadata?.redirect });
   const account = accountFromSession(session);
   if (!account) {
     await c.disconnect({ topic: session.topic, reason: { code: 6000, message: "No k: account" } }).catch(() => {});
@@ -159,9 +162,20 @@ function walletLink(session: Session): string | null {
   return v;
 }
 
+/** "create-offer", "profile sign-in", … from the Pact code, for the log. */
+function describeCmd(cmd: string): string {
+  try {
+    const code = (JSON.parse(cmd) as { payload?: { exec?: { code?: string; data?: Record<string, unknown> } } }).payload?.exec;
+    if (code?.data && "profile-auth" in code.data) return "sign-in";
+    const m = code?.code?.match(/\(([\w.-]+)/);
+    return m ? m[1] : "transaction";
+  } catch { return "transaction"; }
+}
+
 async function quicksign(c: Client, session: Session, command: IUnsignedCommand): Promise<IUnsignedCommand> {
   const parsed = JSON.parse(command.cmd) as { signers?: { pubKey: string }[] };
   const keys = (parsed.signers ?? []).map((s) => s.pubKey);
+  walletLog("quicksign sent", { what: describeCmd(command.cmd) });
   const answer = await c.request({
     topic: session.topic,
     chainId: WC_CHAIN,
@@ -170,8 +184,15 @@ async function quicksign(c: Client, session: Session, command: IUnsignedCommand)
       params: { commandSigDatas: [{ cmd: command.cmd, sigs: keys.map((pubKey, i) => ({ pubKey, sig: command.sigs?.[i]?.sig ?? null })) }] },
     },
   });
-  const sigs = signaturesFromQuicksign(answer, command.hash, keys);
-  return addSignatures(command, ...sigs) as IUnsignedCommand;
+  const shape = answer && typeof answer === "object" ? Object.keys(answer as object).slice(0, 6).join(",") : typeof answer;
+  try {
+    const sigs = signaturesFromQuicksign(answer, command.hash, keys);
+    walletLog("quicksign answer ok", { shape, sigs: sigs.length });
+    return addSignatures(command, ...sigs) as IUnsignedCommand;
+  } catch (e) {
+    walletLog("quicksign answer not usable", { shape, error: e instanceof Error ? e.message : String(e) });
+    throw e;
+  }
 }
 
 /** Sign with the connected phone wallet. The approval banner offers a button to open the wallet app. */
@@ -197,6 +218,9 @@ export async function signWithWalletConnect(command: IUnsignedCommand): Promise<
     // No automatic jump to the wallet app: the person taps "Open <wallet>" (or switches apps). Opening it
     // by itself left the page, and a reload asked the wallet again.
     return await Promise.race([result, cancelled]);
+  } catch (e) {
+    walletLog("signing failed", e instanceof Error ? e.message : String(e));
+    throw e;
   } finally {
     pending = null;
     emit();

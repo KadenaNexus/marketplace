@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { io, Socket } from "socket.io-client";
 import { useWallet } from "./useWallet";
-import { authProof } from "@/lib/session";
+import { autoSignIn } from "@/lib/session";
 
 /** Normalize signed command (unwrap signedCmd, ensure sigs[0].sig) for server. */
 function normalizeSignedCmd(r: unknown): { cmd?: unknown; hash?: string; sigs?: Array<{ pubKey?: string; sig?: string; signature?: string }> } | null {
@@ -122,7 +122,8 @@ async function identifyWithProof(
   publicKey: string
 ): Promise<void> {
   try {
-    const raw = await authProof(wallet, publicKey) as unknown;
+    const raw = await autoSignIn(wallet, publicKey) as unknown;
+    if (raw == null) return; // already asked once on this visit; chat or a trade step will sign in when needed
     const signedCmd = normalizeSignedCmd(raw);
     if (!signedCmd) {
       console.error("Identify: failed to normalize signed command");
