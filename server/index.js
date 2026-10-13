@@ -10,9 +10,9 @@
 
 import "dotenv/config";
 import { registerAlertRoutes, startAlertWatcher } from "./alerts.js";
+import { registerMarketRoutes } from "./market.js";
 import { registerNotificationRoutes, startNotificationWatcher, notifyMessage, notifyTradeChangeSoon, notify } from "./notifications.js";
 import { registerTradeTxRoutes, startTradeTxWatcher } from "./tradeTxs.js";
-import { registerMarketRoutes } from "./market.js";
 import { registerPayoutRoutes } from "./payout.js";
 import { registerProofRoutes } from "./proofs.js";
 import { initSessionSecret, isSessionToken, issueSessionToken, verifySessionToken } from "./session.js";
