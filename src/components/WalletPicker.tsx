@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { ChevronRight, Monitor, Smartphone, X } from "lucide-react";
+import { Check, ChevronRight, Copy, ExternalLink, Loader2, Monitor, QrCode, Smartphone, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { onPendingApproval } from "@/lib/walletconnect";
+import { isPhone, onPendingApproval } from "@/lib/walletconnect";
 
 /** Choice shown when this browser has the Ecko extension and phone wallets are also possible. */
 export function WalletPicker({ open, onOpenChange, onEcko, onPhone }: {
@@ -62,5 +62,105 @@ export function WalletApprovalBanner() {
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * Connecting a phone wallet. Kadena wallets mostly connect by scanning or pasting a WalletConnect link,
+ * so: a QR code on a computer; on a phone, Copy link (to paste in the wallet) and Open wallet app.
+ */
+export function PhoneWalletSheet({ state }: { state: { uri: string | null; cancel: () => void } | null }) {
+  const phone = typeof navigator !== "undefined" && isPhone();
+  const [qr, setQr] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [showQr, setShowQr] = useState(!phone);
+  const uri = state?.uri ?? null;
+
+  useEffect(() => { setCopied(false); setShowQr(!phone); }, [state?.cancel, phone]);
+  useEffect(() => {
+    setQr(null);
+    if (!uri || !showQr) return;
+    import("qrcode")
+      .then((QRCode) => QRCode.toDataURL(uri, { margin: 1, width: 480, errorCorrectionLevel: "M", color: { dark: "#123A48", light: "#FFFFFF" } }))
+      .then(setQr).catch(() => setQr(null));
+  }, [uri, showQr]);
+
+  const copy = async () => {
+    if (!uri) return;
+    try { await navigator.clipboard.writeText(uri); }
+    catch {
+      const t = document.createElement("textarea"); t.value = uri; document.body.appendChild(t); t.select();
+      try { document.execCommand("copy"); } catch { /* ignore */ }
+      t.remove();
+    }
+    setCopied(true);
+  };
+
+  const qrBlock = (
+    <div className="flex justify-center">
+      <div className="flex h-60 w-60 items-center justify-center rounded-2xl border border-border bg-white p-3">
+        {qr ? <img src={qr} alt="WalletConnect code to scan with your phone wallet" className="h-full w-full" /> : <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />}
+      </div>
+    </div>
+  );
+
+  return (
+    <Dialog open={!!state} onOpenChange={(o) => { if (!o) state?.cancel(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="font-display text-xl">Connect your phone wallet</DialogTitle>
+          <DialogDescription>Works with Ecko, Linx, Koala and other Kadena wallets that support WalletConnect.</DialogDescription>
+        </DialogHeader>
+        {!uri ? (
+          <p className="flex items-center gap-2 py-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Preparing a secure connection link…</p>
+        ) : phone ? (
+          <div className="space-y-4">
+            <ol className="space-y-3 text-sm">
+              <li className="flex gap-3">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">1</span>
+                <div className="flex-1 space-y-2">
+                  <p>Copy the connection link.</p>
+                  <Button className="h-11 w-full gap-2" onClick={copy}>
+                    {copied ? <><Check className="h-4 w-4" />Copied</> : <><Copy className="h-4 w-4" />Copy link</>}
+                  </Button>
+                </div>
+              </li>
+              <li className="flex gap-3">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">2</span>
+                <p className="flex-1">Open your wallet app, go to <b>WalletConnect</b> (often a scan icon) and choose <b>Paste</b>.</p>
+              </li>
+              <li className="flex gap-3">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">3</span>
+                <p className="flex-1">Check the site name says <b>Kadena P2P Marketplace</b>, approve, then come back here. This page connects by itself.</p>
+              </li>
+            </ol>
+            <div className="space-y-2 border-t border-border pt-4">
+              <a href={uri} className="flex h-11 w-full items-center justify-center gap-2 rounded-md border border-border text-sm font-medium hover:border-primary">
+                <ExternalLink className="h-4 w-4" />Open wallet app
+              </a>
+              <p className="text-center text-xs text-muted-foreground">Works when your wallet opens WalletConnect links. If nothing happens, use Copy link.</p>
+              {!showQr ? (
+                <button type="button" onClick={() => setShowQr(true)} className="flex w-full items-center justify-center gap-2 py-1 text-sm text-primary">
+                  <QrCode className="h-4 w-4" />Wallet on another phone? Show QR code
+                </button>
+              ) : qrBlock}
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {qrBlock}
+            <p className="text-center text-sm">Open <b>Ecko</b>, <b>Linx</b> or <b>Koala</b> on your phone, go to <b>WalletConnect</b> and scan this code.</p>
+            <Button variant="outline" className="h-10 w-full gap-2" onClick={copy}>
+              {copied ? <><Check className="h-4 w-4" />Copied</> : <><Copy className="h-4 w-4" />Copy link instead</>}
+            </Button>
+          </div>
+        )}
+        {uri && (
+          <p className="flex items-center justify-center gap-2 text-xs text-muted-foreground" aria-live="polite">
+            <span className="h-2 w-2 animate-pulse rounded-full bg-primary" />Waiting for your wallet…
+          </p>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
