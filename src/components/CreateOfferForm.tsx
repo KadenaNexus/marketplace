@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -31,6 +31,8 @@ import { FIAT_CURRENCIES, PAYMENT_METHODS, currencyPrefix } from "@/lib/markets"
 import { useMarket, vsMarket, vsMarketText } from "@/lib/market";
 import { formatFiat } from "@/lib/utils";
 import { TradeEmailGate, useNeedsTradeEmail } from "./TradeEmail";
+import { useMyCompletedTrades, useTermsGate } from "./Trust";
+import { NEW_TRADER_MAX_KDA, NEW_TRADER_TRADES, isNewTrader, newTraderProblem } from "@/lib/trust";
 const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena network. This may take up to 60 seconds.";
 
 interface CreateOfferFormProps {
@@ -50,6 +52,10 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
   // SELL offers: where the seller is paid, per payment method (shown to the buyer once someone accepts)
   const needsEmail = useNeedsTradeEmail();
   const [emailGateOpen, setEmailGateOpen] = useState(false);
+  // New traders: limited amount until a few completed trades; terms accepted once before the first trade
+  const myCompleted = useMyCompletedTrades();
+  const formRef = useRef<HTMLFormElement>(null);
+  const terms = useTermsGate(() => formRef.current?.requestSubmit());
   const { data: market } = useMarket();
   const [payout, setPayout] = useState<Record<string, PayoutDraft>>({});
   const [fiatCurrency, setFiatCurrency] = useState("USD");
@@ -115,6 +121,12 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
       toast.error("Please enter a valid amount (KDA)");
       return;
     }
+    const limitProblem = newTraderProblem(amountNum, myCompleted);
+    if (limitProblem) {
+      toast.error(`Up to ${NEW_TRADER_MAX_KDA} KDA for now`, { description: limitProblem });
+      return;
+    }
+    if (!(await terms.check())) return;
 
     setIsLoading(true);
     // Yield so React paints the status message before wallet/signing
@@ -247,7 +259,7 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
       </CardHeader>
       )}
       <CardContent className={compact ? "p-0" : undefined}>
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form ref={formRef} onSubmit={handleSubmit} className="space-y-4">
           {isLoading && (
             <Alert className="border-primary/50 bg-primary/5">
               <Info className="h-4 w-4" />
@@ -342,7 +354,13 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
               onChange={(e) => setAmount(e.target.value)}
               placeholder="0.00"
               className="font-mono"
+              aria-describedby={isNewTrader(myCompleted) ? "amount-limit" : undefined}
             />
+            {isNewTrader(myCompleted) && (
+              <p id="amount-limit" className={`text-xs ${newTraderProblem(parseFloat(amount), myCompleted) ? "text-destructive" : "text-muted-foreground"}`}>
+                New traders can trade up to {NEW_TRADER_MAX_KDA} KDA at a time ({myCompleted} of {NEW_TRADER_TRADES} trades done).
+              </p>
+            )}
           </div>
 
           {/* Fiat Currency */}
@@ -432,6 +450,7 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
             );
           })()}
           <TradeEmailGate open={emailGateOpen} onOpenChange={setEmailGateOpen} />
+          {terms.gate}
         </form>
       </CardContent>
     </Card>

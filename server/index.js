@@ -11,6 +11,7 @@
 import "dotenv/config";
 import { registerAlertRoutes, startAlertWatcher } from "./alerts.js";
 import { registerMarketRoutes } from "./market.js";
+import { registerTrustRoutes, recheckCompletedOffers } from "./trust.js";
 import { registerTradeEmailRoutes, emailNotification } from "./tradeEmails.js";
 import { registerNotificationRoutes, startNotificationWatcher, notifyMessage, notifyTradeChangeSoon, notify, onNotificationCreated } from "./notifications.js";
 import { registerTradeTxRoutes, startTradeTxWatcher } from "./tradeTxs.js";
@@ -321,6 +322,7 @@ registerTradeTxRoutes(app, () => pool, { onSettled: (x) => onTradeStepSettled(x)
 registerMarketRoutes(app);
 registerTradeEmailRoutes(app, { getPool: () => pool, requireAuth: (...a) => requireAuth(...a), sendAuthError: (...a) => sendAuthError(...a) });
 onNotificationCreated((row) => emailNotification(pool, row));
+registerTrustRoutes(app, { getPool: () => pool, requireAuth: (...a) => requireAuth(...a), sendAuthError: (...a) => sendAuthError(...a) });
 registerPayoutRoutes(app, { getPool: () => pool, requireAuth: (...a) => requireAuth(...a), sendAuthError: (...a) => sendAuthError(...a) });
 registerProofRoutes(app, {
   getPool: () => pool,
@@ -2536,6 +2538,10 @@ async function start() {
     startAlertWatcher(() => pool);
     startNotificationWatcher(() => pool);
     startTradeTxWatcher(() => pool, 15000, (x) => onTradeStepSettled(x));
+    // once: drop rating registrations from before they were checked against the chain (kept in *_removed)
+    setTimeout(() => recheckCompletedOffers(pool)
+      .then((r) => { if (!r.skipped) console.log("[trust] rating registrations re-checked:", JSON.stringify(r)); })
+      .catch((e) => console.warn("[trust] re-check postponed:", e.message)), 20000);
     console.log(`WebSocket server ready for online status tracking`);
   });
 }

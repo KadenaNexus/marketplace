@@ -379,3 +379,30 @@ CREATE TABLE IF NOT EXISTS trade_emails (
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Terms of use, accepted once per wallet per version (server/trust.js)
+CREATE TABLE IF NOT EXISTS terms_acceptances (
+    wallet VARCHAR(255) NOT NULL,
+    version VARCHAR(20) NOT NULL,
+    accepted_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (wallet, version)
+);
+
+-- Rating registrations and ratings removed by the one-time chain re-check (kept for the record)
+CREATE TABLE IF NOT EXISTS completed_offers_removed (
+    offer_id VARCHAR(255) PRIMARY KEY,
+    buyer_wallet VARCHAR(255),
+    seller_wallet VARCHAR(255),
+    reason VARCHAR(100),
+    removed_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS ratings_removed (
+    id SERIAL PRIMARY KEY,
+    offer_id VARCHAR(255),
+    rater_wallet VARCHAR(255),
+    rated_wallet VARCHAR(255),
+    rating SMALLINT,
+    comment VARCHAR(500),
+    created_at TIMESTAMP WITH TIME ZONE,
+    removed_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

@@ -214,6 +214,10 @@ const Index = () => {
               Adoption Index
             </a>
             <span aria-hidden="true">·</span>
+            <Link className="transition-colors hover:text-foreground" to="/terms">
+              Terms and risks
+            </Link>
+            <span aria-hidden="true">·</span>
             <a className="transition-colors hover:text-foreground" href="https://earn.kadena.ws/">
               Kadena Earn
             </a>
