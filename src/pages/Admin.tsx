@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { ArrowLeft, Shield, Loader2, AlertCircle, RefreshCw } from "lucide-react";
 
 export default function Admin() {
-  const { account, isConnected } = useWallet();
+  const { account, isConnected, isConnecting, connect, disconnect, error } = useWallet();
 
   const { data: escrows = [], isLoading: loadingEscrows, refetch: refetchEscrows } = useQuery({
     queryKey: ["admin-escrows", account?.account],
@@ -31,18 +31,37 @@ export default function Admin() {
   const myDisputes = disputes.filter((d) => arbiterOfferIds.has(d.offerId));
   const offerMap = Object.fromEntries(escrows.map((e) => [e.offerId, e]));
 
-  if (!isConnected || !account) {
+  // The arbiter's way in on a computer (the rest of the Marketplace is for phones): connect the arbiter
+  // wallet here. Any other wallet is turned away; the server checks the arbiter's signature on every action.
+  if (!isConnected || !account || !isPlatformArbiter) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <p className="text-muted-foreground">Connect your wallet to access the Admin panel.</p>
-      </div>
-    );
-  }
-
-  if (!isPlatformArbiter) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <p className="text-muted-foreground">Access denied. This panel is only accessible to the platform arbiter.</p>
+      <div className="flex min-h-screen items-center justify-center bg-background px-4">
+        <Card className="w-full max-w-md">
+          <CardHeader className="text-center">
+            <Shield className="mx-auto h-10 w-10 text-primary" />
+            <CardTitle className="font-display text-2xl">Arbiter sign-in</CardTitle>
+            <CardDescription>
+              {account && isConnected
+                ? "This wallet is not the Marketplace arbiter. The dispute board opens only for the arbiter wallet."
+                : "Connect the arbiter wallet (Ecko Wallet extension) to open the dispute board."}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {account && isConnected ? (
+              <>
+                <p className="break-all text-center font-mono text-xs text-muted-foreground">{account.account}</p>
+                <Button variant="outline" className="w-full" onClick={() => disconnect()}>Disconnect and use another wallet</Button>
+              </>
+            ) : (
+              <Button className="w-full gap-2" onClick={() => connect()} disabled={isConnecting}>
+                {isConnecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Shield className="h-4 w-4" />}
+                Connect arbiter wallet
+              </Button>
+            )}
+            {error && <p role="alert" className="text-center text-sm text-destructive">{error}</p>}
+            <p className="text-center text-xs text-muted-foreground">Trading itself is on the phone: open marketplace.kadena.ws there.</p>
+          </CardContent>
+        </Card>
       </div>
     );
   }

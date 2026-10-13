@@ -1,10 +1,10 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 import { Bell, MessageCircle, Smartphone, Wallet } from "lucide-react";
 import { AppLogo } from "@/components/AppLogo";
 import { useLang } from "@/components/NexusLanding";
 import { LINX_APP_STORE } from "@/components/WalletPicker";
 
-const OK_KEY = "nx-desktop-ok";
 
 const COPY = {
   en: {
@@ -19,7 +19,7 @@ const COPY = {
       ["Made for one hand", "One clear button for the step that is yours."],
     ],
     getLinx: "Get Linx Wallet",
-    stay: "Arbiter, or need this computer? Continue here",
+    stay: "Arbiter sign-in",
   },
   ar: {
     title: "السوق الآن على جوالك",
@@ -33,7 +33,7 @@ const COPY = {
       ["مصمم لليد الواحدة", "زر واضح واحد للخطوة المطلوبة منك."],
     ],
     getLinx: "احصل على محفظة Linx",
-    stay: "محكّم أو تحتاج هذا الكمبيوتر؟ تابع هنا",
+    stay: "دخول المحكّم",
   },
 } as const;
 
@@ -45,22 +45,19 @@ function isComputer(): boolean {
   const coarse = window.matchMedia?.("(pointer: coarse)").matches ?? false;
   return !coarse && window.innerWidth >= 768;
 }
-function desktopAllowed(): boolean {
-  try { return window.localStorage.getItem(OK_KEY) === "1"; } catch { return false; }
-}
 
 /**
  * The Marketplace is for phones. On a computer, show where to open it instead (a QR code of this very
- * page, so an offer link from an email opens the same offer on the phone). Arbiters and anyone who needs
- * the computer can continue; that choice is remembered in this browser.
+ * page, so an offer link from an email opens the same offer on the phone). The only computer use left is
+ * the arbiter's dispute board (/admin), reached from a small link at the bottom.
  */
 export function PhoneFirst({ children }: { children: ReactNode }) {
-  const [gate, setGate] = useState(() => isComputer() && !desktopAllowed());
+  const [gate] = useState(isComputer);
   if (!gate) return <>{children}</>;
-  return <PhoneOnlyScreen onContinue={() => { try { window.localStorage.setItem(OK_KEY, "1"); } catch { /* ignore */ } setGate(false); }} />;
+  return <PhoneOnlyScreen />;
 }
 
-function PhoneOnlyScreen({ onContinue }: { onContinue: () => void }) {
+function PhoneOnlyScreen() {
   const [lang] = useLang();
   const t = COPY[lang];
   const [qr, setQr] = useState<string | null>(null);
@@ -111,7 +108,7 @@ function PhoneOnlyScreen({ onContinue }: { onContinue: () => void }) {
         </div>
       </main>
       <footer className="container mx-auto px-4 pb-10 text-center">
-        <button type="button" onClick={onContinue} className="text-sm text-muted-foreground underline hover:text-foreground">{t.stay}</button>
+        <Link to="/admin" className="text-xs text-muted-foreground underline hover:text-foreground">{t.stay}</Link>
       </footer>
     </div>
   );
