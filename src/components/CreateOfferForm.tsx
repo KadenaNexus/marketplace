@@ -21,7 +21,8 @@ import {
   isInsufficientFunds,
 } from "@/lib/kadena";
 import { putOfferDetails } from "@/lib/offerDetailsApi";
-import { payoutHint, putPayout } from "@/lib/payoutApi";
+import { isStable, putPayout, stableProblem } from "@/lib/payoutApi";
+import { PayoutInput, type PayoutDraft } from "./PayoutInput";
 import { authProof } from "@/lib/session";
 import { Plus, Loader2, ShoppingCart, Store, Info } from "lucide-react";
 import { toast } from "sonner";
@@ -50,7 +51,7 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
   const needsEmail = useNeedsTradeEmail();
   const [emailGateOpen, setEmailGateOpen] = useState(false);
   const { data: market } = useMarket();
-  const [payout, setPayout] = useState<Record<string, string>>({});
+  const [payout, setPayout] = useState<Record<string, PayoutDraft>>({});
   const [fiatCurrency, setFiatCurrency] = useState("USD");
   const [isLoading, setIsLoading] = useState(false);
 
@@ -89,7 +90,14 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
       return;
     }
 
-    const payoutItems = paymentMethods.map((m) => ({ method: m, value: (payout[m] ?? "").trim() })).filter((x) => x.value);
+    const payoutItems = paymentMethods
+      .map((m) => ({ method: m, value: (payout[m]?.value ?? "").trim(), ...(isStable(m) ? { network: payout[m]?.network } : {}) }))
+      .filter((x) => x.value);
+    const payoutProblem = payoutItems.map(stableProblem).find(Boolean);
+    if (side === "SELL" && payoutProblem) {
+      toast.error("Check where you get paid", { description: payoutProblem });
+      return;
+    }
     if (side === "SELL" && payoutItems.length === 0) {
       toast.error("Add where you want to be paid", { description: "Fill in at least one payment detail, e.g. your USDT address or bank IBAN." });
       return;
@@ -385,11 +393,7 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
                 <p className="text-xs text-muted-foreground">Only the buyer sees this, after accepting your offer. You can change it until you deposit.</p>
               </div>
               {paymentMethods.map((m) => (
-                <div key={m} className="space-y-1">
-                  <Label htmlFor={`payout-${m}`} className="text-sm font-normal">{m}</Label>
-                  <Input id={`payout-${m}`} value={payout[m] ?? ""} placeholder={payoutHint(m)} dir="ltr" autoComplete="off" maxLength={300}
-                    onChange={(e) => setPayout((p) => ({ ...p, [m]: e.target.value }))} />
-                </div>
+                <PayoutInput key={m} method={m} small draft={payout[m] ?? { value: "" }} onChange={(d) => setPayout((p) => ({ ...p, [m]: d }))} />
               ))}
             </div>
           )}

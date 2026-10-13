@@ -26,7 +26,7 @@ const DETAILS_WAIT_MS = 3 * 60 * 1000;
 const enabled = () => (process.env.NOTIFICATIONS_ENABLED || "true").toLowerCase() !== "false";
 const short = (w) => (w && w.length > 14 ? `${w.slice(0, 6)}…${w.slice(-4)}` : w || "someone");
 const kda = (n) => `${Number(n).toLocaleString("en-US", { maximumFractionDigits: 4 })} KDA`;
-const money = (n, cur) => `${Number(n).toLocaleString("en-US", { maximumFractionDigits: 2 })} ${cur || ""}`.trim();
+const money = (n, cur) => `${Math.abs(Number(n)) >= 1 || Number(n) === 0 ? Number(n).toLocaleString("en-US", { maximumFractionDigits: 2 }) : Number(n).toLocaleString("en-US", { maximumSignificantDigits: 3 })} ${cur || ""}`.trim();
 const parties = (e) => ({
   seller: e.side === "SELL" ? e.creator : e.buyer,
   buyer: e.side === "SELL" ? e.buyer : e.creator,

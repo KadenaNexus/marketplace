@@ -49,6 +49,11 @@ export function sidesOf(e) {
   return e.side === "SELL" ? { holder: e.creator, payer: e.buyer } : { holder: e.buyer, payer: e.creator };
 }
 
+// USDT/USDC: the network is chosen separately, and the address must fit it (same list as src/lib/payoutApi.ts)
+const EVM = /^0x[0-9a-fA-F]{40}$/;
+export const STABLE_NETWORKS = { TRC20: /^T[1-9A-HJ-NP-Za-km-z]{33}$/, ERC20: EVM, BEP20: EVM, Polygon: EVM, Arbitrum: EVM, Solana: /^[1-9A-HJ-NP-Za-km-z]{32,44}$/ };
+const isStable = (m) => /^(USDT|USDC)$/i.test(m);
+
 export function cleanDetails(raw) {
   if (!Array.isArray(raw)) return { error: "details must be a list" };
   const out = [];
@@ -57,6 +62,14 @@ export function cleanDetails(raw) {
     const value = String(it?.value ?? "").replace(/\r/g, "").trim();
     if (!method || !value) continue;
     if (value.length > 300) return { error: `${method}: keep it under 300 characters` };
+    if (isStable(method)) {
+      const network = String(it?.network ?? "");
+      const re = STABLE_NETWORKS[network];
+      if (!re) return { error: `${method}: choose the network` };
+      if (!re.test(value)) return { error: `${method}: that address does not fit the ${network} network` };
+      out.push({ method, value, network });
+      continue;
+    }
     out.push({ method, value });
   }
   if (!out.length) return { error: "Add where you want to be paid for at least one payment method" };

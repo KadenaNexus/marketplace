@@ -27,10 +27,13 @@ after(async () => { server?.close(); await pool.query("DELETE FROM trade_payouts
 
 const get = (id, wallet) => fetch(`${base}/api/offers/${id}/payout?wallet=${wallet}&publicKey=x&signedCmd=x`).then(async (r) => ({ status: r.status, body: await r.json() }));
 const put = (id, wallet, details) => fetch(`${base}/api/offers/${id}/payout`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ wallet, publicKey: "x", signedCmd: "x", details }) }).then(async (r) => ({ status: r.status, body: await r.json() }));
-const USDT = [{ method: "USDT", value: "TRC20 TXyz123" }];
+const USDT = [{ method: "USDT", value: "TQn9Y2khEsLJW1ChVWFMSMeRDow5KcbLSE", network: "TRC20" }];
 
 test("details are cleaned and limited", () => {
-  assert.deepEqual(cleanDetails([{ method: " USDT ", value: " T1 " }, { method: "PayPal", value: "" }]), { details: [{ method: "USDT", value: "T1" }] });
+  assert.deepEqual(cleanDetails([{ method: " Wise ", value: " me@x.com " }, { method: "Revolut", value: "" }]), { details: [{ method: "Wise", value: "me@x.com" }] });
+  assert.deepEqual(cleanDetails([{ method: "USDT", value: "0x52908400098527886E0F7030069857D2E4169EE7", network: "BEP20" }]).details[0].network, "BEP20");
+  assert.match(cleanDetails([{ method: "USDT", value: "0x5290" }]).error, /choose the network/);
+  assert.match(cleanDetails([{ method: "USDC", value: "0x52908400098527886E0F7030069857D2E4169EE7", network: "TRC20" }]).error, /does not fit the TRC20/);
   assert.ok(cleanDetails([]).error);
   assert.ok(cleanDetails([{ method: "Bank", value: "x".repeat(301) }]).error);
   assert.deepEqual(sidesOf({ side: "BUY", creator: BUYER, buyer: SELLER }), { holder: SELLER, payer: BUYER });
@@ -52,7 +55,7 @@ test("sell offer: the creator sets details; the buyer sees them only after accep
   assert.equal((await get(id, ARB)).status, 200, "the arbiter");
 
   chain.set(id, { side: "SELL", creator: SELLER, buyer: BUYER, arbiter: ARB, state: "FUNDED" });
-  assert.equal((await put(id, SELLER, [{ method: "USDT", value: "other address" }])).status, 409, "locked");
+  assert.equal((await put(id, SELLER, [{ method: "USDT", value: "0x52908400098527886E0F7030069857D2E4169EE7", network: "ERC20" }])).status, 409, "locked");
   assert.deepEqual((await get(id, BUYER)).body.details, USDT);
   assert.equal((await get(id, SELLER)).body.editable, false);
 });
