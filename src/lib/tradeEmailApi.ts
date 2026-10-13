@@ -1,7 +1,7 @@
 /** Trade emails for the connected wallet. See server/tradeEmails.js. */
 import { authProof } from "@/lib/session";
 
-export interface TradeEmailStatus { available: boolean; email: string | null; confirmed: boolean; on: boolean }
+export interface TradeEmailStatus { available: boolean; email: string | null; pending: string | null; confirmed: boolean; on: boolean }
 type Who = { account: string; publicKey: string };
 const proofOf = async (w: Who) => { const s = await authProof(w.account, w.publicKey); return typeof s === "string" ? s : JSON.stringify(s); };
 
@@ -20,4 +20,3 @@ async function post(path: string, w: Who, body: Record<string, unknown> = {}) {
   return j as { ok: boolean; confirmed?: boolean };
 }
 export const setTradeEmail = (w: Who, email: string, lang: string) => post("/api/trade-email", w, { email, lang });
-export const turnOffTradeEmail = (w: Who) => post("/api/trade-email/off", w);

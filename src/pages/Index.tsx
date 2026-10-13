@@ -69,9 +69,8 @@ const Index = () => {
   const tradeEmail = params.get("trade-email");
   useEffect(() => {
     if (!tradeEmail) return;
-    if (tradeEmail === "on") toast.success("Trade emails are on", { description: "You'll get an email when a trade needs you." });
-    else if (tradeEmail === "off") toast.info("Trade emails are off", { description: "Turn them on again from the bell." });
-    else toast.error("This email link has expired", { description: "Ask for a new one from the bell." });
+    if (tradeEmail === "on") toast.success("Email confirmed", { description: "You can trade now. Every step of your trades comes by email too." });
+    else toast.error("This email link has expired or was already used", { description: "Ask for a new one from the bell." });
     navigate("/", { replace: true });
   }, [tradeEmail, navigate]);
 

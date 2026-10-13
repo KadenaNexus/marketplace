@@ -365,10 +365,12 @@ CREATE TABLE IF NOT EXISTS payment_proofs (
 );
 CREATE INDEX IF NOT EXISTS idx_payment_proofs_offer ON payment_proofs(offer_id);
 
--- Trade emails: a wallet's email for its trade notifications (see server/tradeEmails.js). Works once confirmed.
+-- Trade emails: a wallet's email for its trade notifications (see server/tradeEmails.js). Required to trade;
+-- works once confirmed. A new address waits in pending_email (the old one keeps working) until confirmed.
 CREATE TABLE IF NOT EXISTS trade_emails (
     wallet VARCHAR(255) PRIMARY KEY,
     email VARCHAR(254) NOT NULL,
+    pending_email VARCHAR(254),
     token VARCHAR(64) NOT NULL UNIQUE,
     lang VARCHAR(5) NOT NULL DEFAULT 'en',
     confirmed_at TIMESTAMP WITH TIME ZONE,

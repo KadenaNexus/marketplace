@@ -25,7 +25,9 @@ function KindIcon({ kind }: { kind: string }) {
   const cls = "h-4 w-4";
   if (kind === "accepted" || kind === "paid") return <Check className={cls} />;
   if (kind === "proof") return <Receipt className={cls} />;
-  if (kind === "funded") return <Lock className={cls} />;
+  if (kind === "funded" || kind === "locked") return <Lock className={cls} />;
+  if (kind === "started") return <Clock className={cls} />;
+  if (kind === "marked") return <Check className={cls} />;
   if (kind === "completed") return <Star className={cls} />;
   if (kind === "disputed" || kind.startsWith("expired")) return <AlertTriangle className={cls} />;
   if (kind === "refunded") return <Undo2 className={cls} />;

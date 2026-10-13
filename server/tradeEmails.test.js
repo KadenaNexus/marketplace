@@ -40,10 +40,10 @@ test("which notifications are emailed", () => {
   for (const k of ["message:9", "new_offer", ""]) assert.ok(!emailable(k), k);
 });
 
-test("sign up, confirm, receive trade emails, turn off with one click", async () => {
+test("sign up, confirm, receive trade emails; change the address safely", async () => {
   assert.equal((await post("/api/trade-email", { email: "not-an-email" })).status, 400);
   assert.equal((await post("/api/trade-email", { email: "Trader@Example.com" })).status, 200);
-  assert.deepEqual(await status(), { available: true, email: "trader@example.com", confirmed: false, on: false });
+  assert.deepEqual(await status(), { available: true, email: "trader@example.com", pending: "trader@example.com", confirmed: false, on: false });
   const confirm = mails().at(-1);
   assert.equal(confirm.kind, "trade-conf");
   assert.equal(await emailNotification(pool, n("accepted")), false, "nothing before the address is confirmed");
@@ -53,22 +53,26 @@ test("sign up, confirm, receive trade emails, turn off with one click", async ()
   assert.equal(r.status, 302);
   assert.equal(r.headers.get("location"), "https://market.test/?trade-email=on");
   assert.equal((await status()).on, true);
+  const again = await fetch(`${base}/api/trade-email/confirm?token=${token}`, { redirect: "manual" });
+  assert.equal(again.headers.get("location"), "https://market.test/?trade-email=expired", "a confirmation link works once");
 
-  assert.equal(await emailNotification(pool, n("accepted")), true);
+  assert.equal(await emailNotification(pool, n("accepted", "Action needed: deposit 15 KDA")), true);
   const m = mails().at(-1);
   assert.equal(m.to, "trader@example.com");
-  assert.equal(m.subject, "Your offer was accepted · #ABCDEF");
+  assert.equal(m.subject, "Action needed: deposit 15 KDA · #ABCDEF");
   assert.match(m.text, /https:\/\/market\.test\/\?offer=offer-1-abcdef/);
-  assert.match(m.headers["List-Unsubscribe"], /unsubscribe\?token=/);
+  assert.match(m.text, /can't be turned off/);
+  assert.equal(m.headers, undefined, "transactional: no unsubscribe header");
   assert.equal(await emailNotification(pool, n("message:5", "New message")), false, "chat is not emailed");
   assert.equal(await emailNotification(pool, { ...n("accepted"), wallet: "*" }), false);
 
-  const off = await fetch(`${base}/api/trade-email/unsubscribe?token=${token}`, { method: "POST" });
-  assert.deepEqual(await off.json(), { ok: true });
-  assert.equal((await status()).on, false);
-  assert.equal(await emailNotification(pool, n("funded")), false, "off after one click");
-
-  // same address again: back on without a new confirmation
-  assert.deepEqual((await post("/api/trade-email", { email: "trader@example.com" })).body, { ok: true, confirmed: true });
-  assert.equal((await status()).on, true);
+  // new address: the old one keeps working until the new one is confirmed
+  await post("/api/trade-email", { email: "new@example.com" });
+  assert.deepEqual(await status(), { available: true, email: "trader@example.com", pending: "new@example.com", confirmed: true, on: true });
+  await emailNotification(pool, n("funded", "Action needed: send the payment"));
+  assert.equal(mails().at(-1).to, "trader@example.com");
+  const t2 = mails().filter((x) => x.kind === "trade-conf").at(-1);
+  assert.equal(t2.to, "new@example.com");
+  await fetch(`${base}/api/trade-email/confirm?token=${t2.text.match(/token=([\w-]+)/)[1]}`, { redirect: "manual" });
+  assert.deepEqual(await status(), { available: true, email: "new@example.com", pending: null, confirmed: true, on: true });
 });

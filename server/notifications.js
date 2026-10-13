@@ -41,17 +41,28 @@ export function eventsForChange(prevState, e, d) {
   const total = d && d.price ? ` (${money(d.price * e.amount, d.fiat_currency)})` : "";
   switch (e.state) {
     case "ACCEPTED":
-      if (e.side === "SELL") add(e.creator, "accepted", "Your offer was accepted", `${short(e.buyer)} accepted your ${kda(e.amount)} sell offer. Deposit the KDA within 1 hour.`, true);
-      else add(e.creator, "accepted", "Your offer was accepted", `${short(e.buyer)} accepted your offer to buy ${kda(e.amount)}. The seller has 1 hour to deposit the KDA.`);
+      // Both sides hear the trade started; the one who must act gets "Action needed".
+      // SELL offer: creator = KDA holder, accepter = payer. BUY offer: creator = payer, accepter = KDA holder.
+      add(seller, "accepted", `Action needed: deposit ${kda(e.amount)}`,
+        e.side === "SELL"
+          ? `${short(buyer)} accepted your sell offer${total}. Deposit the ${kda(e.amount)} into escrow within 1 hour, or the trade closes.`
+          : `You accepted an offer to sell ${kda(e.amount)}${total}. Deposit the KDA into escrow within 1 hour, or the trade closes.`, true);
+      add(buyer, "started", "Trade started: don't pay yet",
+        e.side === "SELL"
+          ? `You accepted an offer to buy ${kda(e.amount)}${total}. The seller has 1 hour to lock the KDA in escrow. Pay only after the trade shows Funded.`
+          : `${short(seller)} accepted your offer to buy ${kda(e.amount)}${total}. They have 1 hour to lock the KDA in escrow. Pay only after the trade shows Funded.`);
       break;
     case "FUNDED":
-      add(buyer, "funded", "Your trade was funded", `The seller locked ${kda(e.amount)} in escrow. Send the payment${total}, then press Mark as Paid within 4 hours.`, true);
+      add(buyer, "funded", "Action needed: send the payment", `The seller locked ${kda(e.amount)} in escrow. Send the payment${total}, then press Mark as Paid within 4 hours.`, true);
+      add(seller, "locked", "KDA locked in escrow", `Your ${kda(e.amount)} is in escrow. The buyer has 4 hours to pay you${total} and mark it as paid. Don't release anything yet.`);
       break;
     case "PAID":
-      add(seller, "paid", "The buyer marked the payment as sent", `Check that you received the payment${total}, then press Release to Buyer within 1 hour.`, true);
+      add(seller, "paid", "Action needed: check the payment and release", `The buyer says they paid${total}. Check it arrived in your own account (a screenshot is not proof), then press Release to Buyer within 1 hour.`, true);
+      add(buyer, "marked", "Payment marked as sent", `The seller has 1 hour to check your payment and release the ${kda(e.amount)} to you.`);
       break;
     case "COMPLETED":
       add(buyer, "completed", "Trade complete", `${kda(e.amount)} was released to you.`);
+      add(seller, "completed", "Trade complete", `You released ${kda(e.amount)} to the buyer. Thanks for trading.`);
       break;
     case "DISPUTED":
       for (const w of [seller, buyer]) add(w, "disputed", "A dispute was opened", "The arbiter will review this trade. Add your evidence in the Dispute tab.", true);

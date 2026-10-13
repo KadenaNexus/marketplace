@@ -29,6 +29,7 @@ import { toast } from "sonner";
 import { FIAT_CURRENCIES, PAYMENT_METHODS, currencyPrefix } from "@/lib/markets";
 import { useMarket, vsMarket, vsMarketText } from "@/lib/market";
 import { formatFiat } from "@/lib/utils";
+import { TradeEmailGate, useNeedsTradeEmail } from "./TradeEmail";
 const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena network. This may take up to 60 seconds.";
 
 interface CreateOfferFormProps {
@@ -46,6 +47,8 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
   const [amount, setAmount] = useState("");
   const [paymentMethods, setPaymentMethods] = useState<string[]>([]);
   // SELL offers: where the seller is paid, per payment method (shown to the buyer once someone accepts)
+  const needsEmail = useNeedsTradeEmail();
+  const [emailGateOpen, setEmailGateOpen] = useState(false);
   const { data: market } = useMarket();
   const [payout, setPayout] = useState<Record<string, string>>({});
   const [fiatCurrency, setFiatCurrency] = useState("USD");
@@ -74,6 +77,7 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
       toast.error("Please connect your wallet first");
       return;
     }
+    if (needsEmail) { setEmailGateOpen(true); return; }
 
     if (!offerId || !price || !amount) {
       toast.error("Please fill in all required fields");
@@ -423,6 +427,7 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
               </p>
             );
           })()}
+          <TradeEmailGate open={emailGateOpen} onOpenChange={setEmailGateOpen} />
         </form>
       </CardContent>
     </Card>
