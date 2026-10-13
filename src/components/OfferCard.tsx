@@ -12,6 +12,8 @@ import { useWallet } from "@/hooks/useWallet";
 import { useState } from "react";
 import { ChatBox } from "./ChatBox";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { kdaAmount, myTradeSide } from "./MobileTrade";
 
 interface OfferCardProps {
   escrow: Escrow;
@@ -28,6 +30,7 @@ interface OfferCardProps {
 
 export function OfferCard({ escrow, profileMap, ratingSummaryMap, onSelect, onDelete, isDeletingOfferId, role, isSelected = false, hasOpenDispute = false }: OfferCardProps) {
   const { account } = useWallet();
+  const isMobile = useIsMobile();
   const [showChat, setShowChat] = useState(false);
   const isMyOffer = escrow.creator === account?.account;
   const canAccept = escrow.state === "CREATED" && !isMyOffer;
@@ -45,6 +48,70 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, onSelect, onDe
 
   const totalPrice = escrow.amount * escrow.price;
   const currencySymbol = escrow.fiatCurrency === "USD" ? "$" : escrow.fiatCurrency === "EUR" ? "€" : escrow.fiatCurrency;
+
+  if (isMobile) {
+    // Phone: the amount and price first, then how you pay, then one large button.
+    const mySide = myTradeSide(escrow, account?.account);
+    const other = mySide === "buyer" ? escrow.seller : mySide === "seller" ? escrow.buyer : escrow.creator;
+    const otherLabel = mySide === "buyer" ? "Seller" : mySide === "seller" ? "Buyer" : escrow.side === "SELL" ? "Seller" : "Buyer";
+    const otherName = other ? profileMap[other]?.username || `${other.slice(0, 6)}…${other.slice(-4)}` : null;
+    const trades = other ? ratingSummaryMap?.[other]?.completedTrades : undefined;
+    const showStatus = escrow.state !== "CREATED" || isMyOffer;
+    return (
+      <div
+        id={`offer-card-${escrow.offerId}`}
+        className={`relative scroll-mt-28 rounded-2xl border bg-card p-4 ${isSelected ? "border-primary" : "border-border"} ${isDeleting ? "pointer-events-none opacity-70" : ""}`}
+      >
+        {isDeleting && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center gap-2 rounded-2xl bg-background/80 text-sm text-muted-foreground">
+            <Loader2 className="h-5 w-5 animate-spin text-primary" />Deleting offer…
+          </div>
+        )}
+        <div className="flex items-baseline justify-between gap-3">
+          <p className="font-display text-2xl font-bold">{kdaAmount(escrow.amount)} KDA</p>
+          <p className="shrink-0 text-sm text-muted-foreground">{currencySymbol}{formatFiat(escrow.price)} / KDA</p>
+        </div>
+        {showStatus && (
+          <div className="mt-1 flex items-center justify-between gap-2">
+            <span className="text-sm text-muted-foreground">{mySide === "buyer" ? "You're buying" : mySide === "seller" ? "You're selling" : escrow.side === "SELL" ? "Sell offer" : "Buy offer"}</span>
+            <EscrowStatus state={hasOpenDispute ? "DISPUTED" : escrow.state} />
+          </div>
+        )}
+        <div className="mt-3 flex flex-wrap gap-1.5 text-xs">
+          {paymentMethods.slice(0, 2).map((m) => (
+            <span key={m} className="rounded-full bg-muted px-2.5 py-1">{m}</span>
+          ))}
+          {paymentMethods.length > 2 && <span className="rounded-full bg-muted px-2.5 py-1">+{paymentMethods.length - 2}</span>}
+          <span className="rounded-full bg-muted px-2.5 py-1">Total {currencySymbol}{formatFiat(totalPrice)}</span>
+          {otherName && !isMyOffer && (
+            <span className="rounded-full bg-muted px-2.5 py-1">
+              {otherLabel}: {trades ? `${trades} trade${trades === 1 ? "" : "s"}` : otherName}
+            </span>
+          )}
+        </div>
+        <div className="mt-3 flex gap-2">
+          <Button
+            className="h-12 flex-1 text-base"
+            variant={canAccept ? "default" : "outline"}
+            onClick={() => !isDeleting && onSelect(escrow.offerId)}
+          >
+            {canAccept ? "View and accept" : escrow.state === "CREATED" ? "View offer" : "Open trade"}
+          </Button>
+          {canDelete && !isDeleting && (
+            <Button
+              variant="outline"
+              className="h-12 w-12 shrink-0 p-0 text-muted-foreground hover:text-destructive"
+              onClick={() => { if (window.confirm("Delete this offer? It will be removed from the system.")) onDelete(escrow.offerId); }}
+              aria-label="Delete offer"
+              title="Delete offer"
+            >
+              <X className="h-5 w-5" />
+            </Button>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <Card 

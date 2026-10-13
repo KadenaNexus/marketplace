@@ -1,4 +1,4 @@
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { WalletConnect } from "@/components/WalletConnect";
 import { AppLogo } from "@/components/AppLogo";
@@ -20,6 +20,8 @@ import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { NotificationBell } from "@/components/NotificationBell";
 import { toast } from "sonner";
+import { MobileMarket, type MobileTab } from "@/components/MobileMarket";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 type UserRole = "buyer" | "seller" | null;
 
@@ -27,6 +29,8 @@ const Index = () => {
   const { account, isConnected } = useWallet();
   const [role, setRole] = useState<UserRole>(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const isMobile = useIsMobile();
+  const [mobileTab, setMobileTab] = useState<MobileTab>("offers");
 
   const { data: profile } = useQuery({
     queryKey: ["profile", account?.account],
@@ -44,19 +48,21 @@ const Index = () => {
   // Links to an offer or trade (?offer=ID) from alert emails and notifications: an open offer opens on the
   // side that can accept it; a trade you are part of opens in Active Trades on the home view.
   const linkHandled = useRef<string | null>(null);
+  const location = useLocation();
   useEffect(() => {
-    if (!linkedOffer || !isConnected || !account || linkHandled.current === linkedOffer) return;
-    linkHandled.current = linkedOffer;
+    // keyed on the navigation, so the same trade can be opened again from a later notification
+    if (!linkedOffer || !isConnected || !account || linkHandled.current === location.key) return;
+    linkHandled.current = location.key;
     const me = account.account;
     readEscrow(linkedOffer)
       .then((e) => {
         if (!e) return toast.info(ALERTS_COPY[lang].offerGone);
-        if (e.state === "CREATED" && e.creator !== me) setRole(e.side === "SELL" ? "buyer" : "seller");
-        else if (e.creator === me || e.buyer === me || e.seller === me) setRole(null);
+        if (e.state === "CREATED" && e.creator !== me) { setRole(e.side === "SELL" ? "buyer" : "seller"); setMobileTab("offers"); }
+        else if (e.creator === me || e.buyer === me || e.seller === me) { setRole(null); setMobileTab("trades"); }
         else toast.info(ALERTS_COPY[lang].offerGone);
       })
       .catch(() => {});
-  }, [linkedOffer, isConnected, account, lang]);
+  }, [linkedOffer, isConnected, account, lang, location.key]);
 
   const handleRoleSelect = (selectedRole: UserRole) => {
     setRole(selectedRole);
@@ -74,13 +80,13 @@ const Index = () => {
     <div className="min-h-screen bg-background">
       {/* Header */}
       <header className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-50">
-        <div className="container mx-auto flex flex-wrap items-center justify-between gap-y-3 px-4 py-4">
+        <div className="container mx-auto flex items-center justify-between gap-3 px-4 py-3 sm:flex-wrap sm:gap-y-3 sm:py-4">
           <AppLogo />
           <div className="ml-auto flex min-w-0 items-center gap-2 sm:gap-4">
             <span className="hidden rounded-full border border-border bg-secondary px-3 py-1 text-xs font-medium text-muted-foreground sm:inline-flex">
               {NETWORK_ID === "mainnet01" ? "Mainnet" : NETWORK_ID} · Chain {CHAIN_ID}
             </span>
-            <ThemeToggle />
+            <span className="hidden sm:inline-flex"><ThemeToggle /></span>
             <NotificationBell />
             {isArbiter && (
               <Link to="/admin" title="Admin / Arbiter panel">
@@ -93,7 +99,7 @@ const Index = () => {
             {isConnected && account && (
               <Link
                 to={`/u/${encodeURIComponent(account.account)}`}
-                className="hover:opacity-80 transition-opacity"
+                className="hidden transition-opacity hover:opacity-80 md:block"
                 title="View profile"
               >
                 <Avatar className="h-8 w-8">
@@ -104,14 +110,25 @@ const Index = () => {
                 </Avatar>
               </Link>
             )}
-            <WalletConnect />
+            <WalletConnect inHeader />
           </div>
         </div>
       </header>
 
-      <main className={isConnected ? "container mx-auto px-4 py-8" : "w-full"}>
+      <main className={isConnected ? (isMobile ? "container mx-auto px-4 py-4" : "container mx-auto px-4 py-8") : "w-full"}>
         {!isConnected ? (
           <NexusLanding walletAction={<WalletConnect />} fromAlert={!!linkedOffer} />
+        ) : isMobile ? (
+          <MobileMarket
+            tab={mobileTab}
+            onTab={setMobileTab}
+            side={role ?? "buyer"}
+            onSide={setRole}
+            refreshTrigger={refreshTrigger}
+            lang={lang}
+            alertsEnabled={!!alerts.data?.enabled}
+            avatar={profile?.avatar}
+          />
         ) : (
           <>
             {/* Top announcement — visible after sign-in (orange theme) */}
@@ -167,7 +184,7 @@ const Index = () => {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-border mt-16 py-6">
+      <footer className={`mt-16 border-t border-border py-6 ${isConnected && isMobile ? "hidden" : ""}`}>
         <div className="container mx-auto flex flex-col items-center gap-3 px-4 text-center text-sm text-muted-foreground">
           <p>Built on Kadena • Powered by Pact Smart Contracts</p>
           <nav aria-label="Kadena Nexus links" className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1">

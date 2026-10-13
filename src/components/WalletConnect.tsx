@@ -7,7 +7,8 @@ import { sendTestTransfer } from "@/lib/kadena";
 import { Wallet, LogOut, AlertCircle, Loader2, Send } from "lucide-react";
 import { toast } from "sonner";
 
-export function WalletConnect() {
+/** `inHeader`: on phones the button says just "Connect" so the header fits on one line. */
+export function WalletConnect({ inHeader = false }: { inHeader?: boolean } = {}) {
   const { account, isConnecting, isConnected, isWalletAvailable, error, connect, disconnect } = useWallet();
   const { data: chainBalance } = useAppChainBalance(isConnected ? account?.account : undefined);
   const [isSending, setIsSending] = useState(false);
@@ -49,13 +50,13 @@ export function WalletConnect() {
     return (
       <div className="flex min-w-0 items-center gap-2 sm:gap-3">
         <div className="flex min-w-0 flex-col items-end">
-          <span className="text-xs text-muted-foreground">Connected</span>
+          <span className="hidden text-xs text-muted-foreground sm:inline">Connected</span>
           <span className="font-mono text-sm text-primary whitespace-nowrap" title={account.account}>
             <span className="hidden sm:inline">{shortenAddress(account.account)}</span>
             <span className="sm:hidden">{`${account.account.slice(0, 6)}…${account.account.slice(-4)}`}</span>
           </span>
           {chainBalance !== undefined && (
-            <span className="whitespace-nowrap text-[11px] text-muted-foreground tabular-nums" title={`Only KDA on chain ${CHAIN_ID} can be used here; your wallet may show a total across all chains.`}>
+            <span className="hidden whitespace-nowrap text-[11px] text-muted-foreground tabular-nums sm:inline" title={`Only KDA on chain ${CHAIN_ID} can be used here; your wallet may show a total across all chains.`}>
               Chain {CHAIN_ID}: {chainBalance.toLocaleString("en-US", { maximumFractionDigits: 4 })} KDA
             </span>
           )}
@@ -98,7 +99,7 @@ export function WalletConnect() {
         className="gap-2"
       >
         <Wallet className="h-4 w-4" />
-        {isConnecting ? "Connecting..." : "Connect Wallet"}
+        {isConnecting ? "Connecting..." : inHeader ? <><span className="sm:hidden">Connect</span><span className="hidden sm:inline">Connect Wallet</span></> : "Connect Wallet"}
       </Button>
       {error && (
         <span className="text-xs text-destructive">{error}</span>

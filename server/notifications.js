@@ -79,12 +79,12 @@ export function deadlineEvents(e, now) {
   if (e.state === "FUNDED") {
     const l = left(e.fundedAt, T2);
     if (l != null && l > 0 && l <= SOON.FUNDED) out.push({ wallet: buyer, kind: "due-pay", title: `${mins(l)} left to pay`, body: "Send the payment and press Mark as Paid before the time runs out.", urgent: true });
-    if (l != null && l <= 0 && l > -48 * 3600e3) out.push({ wallet: seller, kind: "expired-pay", title: "Payment window ended", body: "The buyer did not mark the payment within 4 hours. You can reclaim your KDA: open the trade and press Timeout: Refund (T2)." });
+    if (l != null && l <= 0 && l > -48 * 3600e3) out.push({ wallet: seller, kind: "expired-pay", title: "Payment window ended", body: "The buyer did not mark the payment within 4 hours. You can reclaim your KDA: open the trade and press Refund." });
   }
   if (e.state === "PAID") {
     const l = left(e.paidAt, T3);
     if (l != null && l > 0 && l <= SOON.PAID) out.push({ wallet: seller, kind: "due-release", title: `${mins(l)} left to release`, body: "If the payment arrived, press Release to Buyer before the time runs out.", urgent: true });
-    if (l != null && l <= 0 && l > -48 * 3600e3) for (const w of [seller, buyer]) out.push({ wallet: w, kind: "expired-release", title: "Release deadline passed", body: "Either side can now press Timeout: Dispute (T3) so the arbiter can settle the trade." });
+    if (l != null && l <= 0 && l > -48 * 3600e3) for (const w of [seller, buyer]) out.push({ wallet: w, kind: "expired-release", title: "Release deadline passed", body: "Either side can now press Move to dispute so the arbiter can settle the trade." });
   }
   return out.filter((x) => x.wallet);
 }

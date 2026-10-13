@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useQuery, useQueries, useQueryClient } from "@tanstack/react-query";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -36,7 +37,6 @@ import {
   buildTimeoutAcceptedCloseTx,
   buildTimeoutFundedRefundTx,
   buildTimeoutPaidDisputeTx,
-  buildProfileAuthTx,
   getEscrowVaultAccount,
   getTxExplorerUrl,
   getAccountExplorerUrl,
@@ -53,6 +53,8 @@ import {
 import { getOfferDetails } from "@/lib/offerDetailsApi";
 import { formatFiat } from "@/lib/utils";
 import { TradeTimer, isStepExpired } from "./TradeTimer";
+import { TradeSteps, YourTurnCard, kdaAmount, tradeTitle } from "./MobileTrade";
+import { useIsMobile } from "@/hooks/use-mobile";
 import type { OfferFilters } from "./OfferFilters";
 import { 
   List,
@@ -70,7 +72,9 @@ import {
   Star,
   Info,
   XCircle,
+  ArrowLeft,
 } from "lucide-react";
+import { authProof } from "@/lib/session";
 import { toast } from "sonner";
 
 interface TransactionResult {
@@ -83,11 +87,12 @@ interface EscrowActionsProps {
   refreshTrigger?: number;
   filters?: OfferFilters;
   role?: "buyer" | "seller";
-  viewMode?: "all" | "my" | "myPast" | "active" | "new"; // "new" = CREATED only; "myPast" = my offers excluding CREATED
+  viewMode?: "all" | "my" | "myPast" | "active" | "new" | "mine"; // "new" = CREATED only; "myPast" = my offers excluding CREATED; "mine" = everything I created or trade in (phone "My trades")
 }
 
 export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", viewMode = "all" }: EscrowActionsProps) {
   const { account, isConnected } = useWallet();
+  const isMobile = useIsMobile();
   const { data: appChainBalance, refetch: refetchAppChainBalance } = useAppChainBalance(isConnected ? account?.account : undefined);
   const queryClient = useQueryClient();
   const [allEscrows, setAllEscrows] = useState<Escrow[]>([]);
@@ -129,6 +134,11 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
       } else {
         filtered = filtered.filter((e) => e.side === "BUY");
       }
+    } else if (viewMode === "mine") {
+      // Phone "My trades": in progress, my open offers, and finished trades
+      filtered = filtered.filter(
+        (e) => account?.account && (e.creator === account.account || e.seller === account.account || e.buyer === account.account),
+      );
     } else if (viewMode === "my") {
       // Show only offers created by the current user (creator), not just where they are the seller
       filtered = filtered.filter((e) => e.creator === account?.account);
@@ -216,9 +226,9 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
 
     // Sort: active view by state; "new" view by price (buy: lowest first, sell: highest first); else by price
     filtered.sort((a, b) => {
-      if (viewMode === "active") {
-        const order = { PAID: 0, FUNDED: 1, DISPUTED: 2, ACCEPTED: 3 };
-        return (order[a.state as keyof typeof order] ?? 4) - (order[b.state as keyof typeof order] ?? 4);
+      if (viewMode === "active" || viewMode === "mine") {
+        const order = { PAID: 0, FUNDED: 1, DISPUTED: 2, ACCEPTED: 3, CREATED: 4 };
+        return (order[a.state as keyof typeof order] ?? 5) - (order[b.state as keyof typeof order] ?? 5);
       }
       if (viewMode === "new" || role === "buyer") {
         return a.price - b.price; // Buy: lowest price first
@@ -345,17 +355,53 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
   const [searchParams, setSearchParams] = useSearchParams();
   const linkedOffer = searchParams.get("offer");
   const handledLink = useRef<string | null>(null);
+  const reloadedFor = useRef<string | null>(null);
+  const linkKey = useLocation().key;
   useEffect(() => {
-    if (!linkedOffer || handledLink.current === linkedOffer) return;
-    if (viewMode !== "new" && viewMode !== "active") return;
-    if (!displayedEscrows.some((e) => e.offerId === linkedOffer)) return;
-    handledLink.current = linkedOffer;
+    if (!linkedOffer || handledLink.current === linkKey) return;
+    if (viewMode !== "new" && viewMode !== "active" && viewMode !== "mine") return;
+    // Load the list fresh first: the link usually comes from a notification about something that just changed
+    if (reloadedFor.current !== linkKey) {
+      if (!isLoading) { reloadedFor.current = linkKey; loadAll(); }
+      return;
+    }
+    if (isLoading || !displayedEscrows.some((e) => e.offerId === linkedOffer)) return;
+    handledLink.current = linkKey;
     setSelectedOfferId(linkedOffer);
-    setTimeout(() => document.getElementById(`offer-card-${linkedOffer}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 150);
+    if (!isMobile) setTimeout(() => document.getElementById(`offer-card-${linkedOffer}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 150);
     const next = new URLSearchParams(searchParams);
     next.delete("offer");
     setSearchParams(next, { replace: true });
-  }, [linkedOffer, displayedEscrows, viewMode, searchParams, setSearchParams]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- loadAll is recreated every render
+  }, [linkedOffer, linkKey, displayedEscrows, isLoading, viewMode, searchParams, setSearchParams, isMobile]);
+
+  // Phone: a trade opens as a full screen. The phone's Back button closes it, and the page behind does not scroll.
+  const openTradeId = isMobile && selectedEscrow ? selectedEscrow.offerId : null;
+  useEffect(() => {
+    if (!openTradeId) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.history.pushState({ ...(window.history.state || {}), nxTrade: openTradeId }, "");
+    let popped = false;
+    const onPop = () => { popped = true; setSelectedOfferId(null); };
+    window.addEventListener("popstate", onPop);
+    return () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener("popstate", onPop);
+      if (!popped && window.history.state?.nxTrade === openTradeId) window.history.back();
+    };
+  }, [openTradeId]);
+
+  // Phone: once an offer you opened from Offers becomes your trade (you accepted it), carry on in My trades.
+  const navigate = useNavigate();
+  useEffect(() => {
+    if (!isMobile || viewMode !== "new" || !selectedOfferId || !account?.account) return;
+    const e = allEscrows.find((x) => x.offerId === selectedOfferId);
+    if (e && e.state !== "CREATED" && (e.buyer === account.account || e.seller === account.account)) {
+      setSelectedOfferId(null);
+      setTimeout(() => navigate(`/?offer=${encodeURIComponent(e.offerId)}`), 50);
+    }
+  }, [isMobile, viewMode, selectedOfferId, allEscrows, account?.account, navigate]);
 
   // On-chain reputation (minimal counters; score calculation off-chain)
   const { data: sellerRep } = useQuery({
@@ -466,31 +512,13 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
       addTransaction(actionName, requestKey);
       if (actionName === "Deposit" && selectedEscrow && account) {
         try {
-          const tx = buildProfileAuthTx(account.account, account.publicKey);
-          const rawSigned = await signTransaction(tx);
-          const unwrapWalletCmd = (input: unknown): Record<string, unknown> => {
-            if (input && typeof input === "object" && "signedCmd" in input) {
-              const w = input as { signedCmd?: unknown; cmd?: unknown };
-              if (w.signedCmd != null && !w.cmd) return unwrapWalletCmd(w.signedCmd);
-            }
-            return input && typeof input === "object" ? (input as Record<string, unknown>) : {};
-          };
-          const signedCmd = unwrapWalletCmd(rawSigned as unknown);
-          const sigsRaw = signedCmd.sigs;
-          const sigs = Array.isArray(sigsRaw) ? [...sigsRaw] : [];
-          if (sigs[0] && typeof sigs[0] === "object") {
-            const s0 = sigs[0] as Record<string, unknown>;
-            if (!s0.pubKey) s0.pubKey = account.publicKey;
-            const sigAlt = s0.signature;
-            if (typeof sigAlt === "string" && sigAlt && !s0.sig) s0.sig = sigAlt;
-            sigs[0] = s0;
-          }
+          const signedCmd = await authProof(account.account, account.publicKey);
           await putFundTxRequestKey({
             offerId: selectedEscrow.offerId,
             requestKey,
             wallet: account.account,
             publicKey: account.publicKey,
-            signedCmd: { ...signedCmd, sigs },
+            signedCmd,
           });
         } catch (e) {
           toast.error("Deposit saved; fund tx link could not be saved", {
@@ -662,12 +690,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
 
       // Atomically create off-chain dispute record so arbiter panel is functional
       try {
-        const authTx = buildProfileAuthTx(account.account, account.publicKey);
-        let signedCmd = await signTransaction(authTx) as any;
-        if (signedCmd?.signedCmd && !signedCmd.cmd) signedCmd = signedCmd.signedCmd;
-        const sigs = Array.isArray(signedCmd?.sigs) ? [...signedCmd.sigs] : [];
-        if (sigs[0] && !sigs[0].pubKey) sigs[0] = { ...sigs[0], pubKey: account.publicKey };
-        if (sigs[0]?.signature && !sigs[0].sig) sigs[0] = { ...sigs[0], sig: sigs[0].signature };
+        const signedCmd = await authProof(account.account, account.publicKey);
 
         await openDispute({
           offerId: selectedEscrow.offerId,
@@ -675,7 +698,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
           reason: "Seller did not release within T3 timeout",
           wallet: account.account,
           publicKey: account.publicKey,
-          signedCmd: { ...signedCmd, sigs },
+          signedCmd,
         });
 
         toast.success("Dispute opened — arbiter has been notified", {
@@ -755,22 +778,14 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
     if (!account || !selectedEscrow?.buyer) return;
     setRegisteringCompletion(true);
     try {
-      const tx = buildProfileAuthTx(account.account, account.publicKey);
-      let rawSigned = await signTransaction(tx) as unknown;
-      const signedCmd = rawSigned && typeof rawSigned === "object" && "signedCmd" in rawSigned
-        ? (rawSigned as { signedCmd: unknown }).signedCmd
-        : rawSigned;
-      const cmd = signedCmd as { sigs?: Array<{ pubKey?: string; sig?: string; signature?: string }> };
-      const sigs = Array.isArray(cmd?.sigs) ? [...cmd.sigs] : [];
-      if (sigs[0] && !sigs[0].pubKey) sigs[0] = { ...sigs[0], pubKey: account.publicKey };
-      if (sigs[0] && "signature" in sigs[0] && sigs[0].signature && !sigs[0].sig) sigs[0] = { ...sigs[0], sig: sigs[0].signature };
+      const signedCmd = await authProof(account.account, account.publicKey);
       await registerCompletion({
         offerId: selectedEscrow.offerId,
         buyerWallet: selectedEscrow.buyer,
         sellerWallet: selectedEscrow.seller,
         wallet: account.account,
         publicKey: account.publicKey,
-        signedCmd: { ...cmd, sigs },
+        signedCmd,
       });
       toast.success("Trade registered");
       refetchRatingCheck();
@@ -781,109 +796,20 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
     }
   };
 
-  return (
-    <div className="space-y-6">
-      {/* All Offers List */}
-      <Card className="escrow-card">
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="flex items-center gap-2">
-                <List className="h-5 w-5 text-primary" />
-                {viewMode === "active"
-                  ? "Active Trades"
-                  : viewMode === "new"
-                  ? "New offers - Marketplace"
-                  : viewMode === "myPast"
-                  ? "All my past offers"
-                  : viewMode === "my"
-                  ? "My Offers"
-                  : role === "buyer"
-                    ? "All Sell Offers"
-                    : "All Buy Offers"}
-              </CardTitle>
-              <CardDescription>
-                {viewMode === "active"
-                  ? "Trades in progress (accepted, funded, paid, disputed)"
-                  : viewMode === "new"
-                  ? "Only new created offers. Nothing else."
-                  : viewMode === "myPast"
-                  ? "Trades you took part in that ended as Completed, Refunded, or Closed"
-                  : viewMode === "my"
-                  ? "Manage all offers you've created"
-                  : role === "buyer"
-                    ? "Browse available sell offers to accept"
-                    : "Browse available buy offers to accept"}
-              </CardDescription>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" size="sm" onClick={loadAll} disabled={isLoading}>
-                {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                Refresh
-              </Button>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {isLoading && escrows.length === 0 ? (
-            <div className="flex justify-center py-8">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
-          ) : displayedEscrows.length === 0 ? (
-            <p className="text-center py-8 text-muted-foreground">
-              {escrows.length === 0
-                ? (viewMode === "active"
-                    ? "You have no active trades. Accept an offer as buyer or wait for a buyer as seller to see trades here."
-                    : viewMode === "new"
-                    ? "No new offers at the moment. Check back later."
-                    : viewMode === "myPast"
-                    ? "You have no past offers. Past offers are trades you participated in that ended as Completed, Refunded, or Closed."
-                    : viewMode === "my"
-                    ? "You haven't created any offers yet. Create your first offer in the Create Offer tab."
-                    : role === "buyer"
-                      ? "No sell offers found. Try adjusting your filters or create a new offer."
-                      : "No buy offers found. Try adjusting your filters or create a new offer.")
-                : "No offers match your filters (min rating or online now). Try clearing filters."}
-            </p>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {displayedEscrows.map((e) => (
-                <OfferCard
-                  key={e.offerId}
-                  escrow={e}
-                  profileMap={profileMap}
-                  ratingSummaryMap={ratingSummaryMap}
-                  onSelect={setSelectedOfferId}
-                  onDelete={handleDeleteOffer}
-                  isDeletingOfferId={deletingOfferId}
-                  role={viewMode === "active" ? (e.seller === account?.account ? "seller" : "buyer") : role}
-                  isSelected={selectedOfferId === e.offerId}
-                  hasOpenDispute={openDisputeOfferIds.has(e.offerId)}
-                />
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+  // Phone: the one step this person must take sits in a bar at the bottom of the trade screen
+  const mobilePrimary = !isMobile || !selectedEscrow || isTerminal || !isConnected ? null
+    : canAcceptFinal ? { label: "Accept Offer", busy: "Accept Offer", Icon: UserPlus, run: handleAccept }
+    : canDepositFinal ? { label: `Deposit ${kdaAmount(selectedEscrow.amount)} KDA`, busy: "Deposit", Icon: Lock, run: handleDeposit }
+    : canMarkPaidFinal ? { label: "Mark as Paid", busy: "Mark Paid", Icon: DollarSign, run: handleMarkPaid }
+    : canReleaseFinal ? { label: "Release to Buyer", busy: "Release", Icon: Unlock, run: handleRelease }
+    : null;
+  const closeTrade = () => setSelectedOfferId(null);
+  const shownState = (e: Escrow) =>
+    existingDispute && (existingDispute.status === "OPEN" || existingDispute.status === "UNDER_REVIEW") ? "DISPUTED" : e.state;
 
-      {/* Escrow Details (when one is selected) */}
-      {selectedEscrow && (
-        <Card className="escrow-card">
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle className="font-mono text-lg">{selectedEscrow.offerId}</CardTitle>
-              <EscrowStatus
-                state={
-                  existingDispute && (existingDispute.status === "OPEN" || existingDispute.status === "UNDER_REVIEW")
-                    ? "DISPUTED"
-                    : selectedEscrow.state
-                }
-              />
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-6">
+  const detailTabs = selectedEscrow ? (
             <Tabs value={disputeTab} onValueChange={setDisputeTab}>
-              <TabsList>
+              <TabsList className={isMobile ? "grid w-full grid-cols-3" : undefined}>
                 <TabsTrigger value="details">Details</TabsTrigger>
                 <TabsTrigger value="chat" className="gap-2">
                   <MessageCircle className="h-4 w-4" />
@@ -897,13 +823,13 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
 
               <TabsContent value="details" className="space-y-6 mt-4">
             {/* Timed step countdown (contract is source of truth) */}
-            {(selectedEscrow.state === "ACCEPTED" || selectedEscrow.state === "FUNDED" || selectedEscrow.state === "PAID") && (
+            {!isMobile && (selectedEscrow.state === "ACCEPTED" || selectedEscrow.state === "FUNDED" || selectedEscrow.state === "PAID") && (
               <TradeTimer escrow={selectedEscrow} me={account?.account} />
             )}
 
             {/* Details Grid */}
             <div className="grid gap-4 sm:grid-cols-2">
-              <div>
+              <div className={isMobile ? "hidden" : undefined}>
                 <Label className="text-muted-foreground">Side</Label>
                 <p className="font-semibold text-lg">
                   {selectedEscrow.side === "SELL" ? "Selling" : "Buying"} KDA
@@ -919,7 +845,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
               <div>
                 <Label className="text-muted-foreground">Available Amount</Label>
                 <p className="font-mono text-xl font-bold">
-                  {selectedEscrow.amount.toFixed(8)} <span className="text-base">KDA</span>
+                  {isMobile ? kdaAmount(selectedEscrow.amount) : selectedEscrow.amount.toFixed(8)} <span className="text-base">KDA</span>
                 </p>
               </div>
               <div className="sm:col-span-2">
@@ -934,7 +860,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                   </p>
                 </div>
               </div>
-              <div>
+              <div className={isMobile ? "hidden" : undefined}>
                 <Label className="text-muted-foreground">Amount</Label>
                 <p className="text-sm font-mono">{selectedEscrow.amount.toFixed(4)} KDA</p>
               </div>
@@ -997,7 +923,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                 )}
                 <div className="flex flex-wrap gap-3">
 
-{canAcceptFinal && (
+{canAcceptFinal && !isMobile && (
                   <Button 
                     onClick={handleAccept}
                     disabled={!!actionLoading}
@@ -1040,11 +966,11 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                     ) : (
                       <XCircle className="h-4 w-4" />
                     )}
-                    Close offer (buyer did not fund in time)
+                    Close offer (seller did not fund in time)
                   </Button>
                 )}
 
-                {canDepositFinal && (
+                {canDepositFinal && !isMobile && (
                   <Button
                     onClick={handleDeposit}
                     disabled={!!actionLoading}
@@ -1068,7 +994,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                   </p>
                 )}
 
-                {canMarkPaidFinal && (
+                {canMarkPaidFinal && !isMobile && (
                   <Button 
                     onClick={handleMarkPaid}
                     disabled={!!actionLoading}
@@ -1084,7 +1010,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                   </Button>
                 )}
 
-                {canReleaseFinal && (
+                {canReleaseFinal && !isMobile && (
                   <Button 
                     onClick={handleRelease}
                     disabled={!!actionLoading}
@@ -1248,6 +1174,173 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                 />
               </TabsContent>
             </Tabs>
+  ) : null;
+
+  const offerCard = (e: Escrow) => (
+    <OfferCard
+      key={e.offerId}
+      escrow={e}
+      profileMap={profileMap}
+      ratingSummaryMap={ratingSummaryMap}
+      onSelect={setSelectedOfferId}
+      onDelete={handleDeleteOffer}
+      isDeletingOfferId={deletingOfferId}
+      role={viewMode === "active" || viewMode === "mine" ? (e.seller === account?.account ? "seller" : "buyer") : role}
+      isSelected={selectedOfferId === e.offerId}
+      hasOpenDispute={openDisputeOfferIds.has(e.offerId)}
+    />
+  );
+  const mineGroups: [string, Escrow[]][] = viewMode === "mine"
+    ? [
+        ["In progress", displayedEscrows.filter((e) => ACTIVE_STATES.includes(e.state as (typeof ACTIVE_STATES)[number]))],
+        ["Your open offers", displayedEscrows.filter((e) => e.state === "CREATED")],
+        ["Finished", displayedEscrows.filter((e) => PAST_TERMINAL_STATES.includes(e.state as (typeof PAST_TERMINAL_STATES)[number]))],
+      ]
+    : [];
+
+  return (
+    <div className="space-y-6">
+      {/* All Offers List */}
+      <Card className={isMobile ? "border-0 bg-transparent shadow-none" : "escrow-card"}>
+        {isMobile ? (
+          <div className="flex items-center justify-between pb-2">
+            <p className="text-sm text-muted-foreground" aria-live="polite">
+              {isLoading && escrows.length === 0 ? "Loading…" : `${displayedEscrows.length} ${viewMode === "mine" ? (displayedEscrows.length === 1 ? "item" : "items") : displayedEscrows.length === 1 ? "offer" : "offers"}`}
+            </p>
+            <Button variant="ghost" size="sm" className="h-10 gap-2" onClick={loadAll} disabled={isLoading}>
+              {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              Refresh
+            </Button>
+          </div>
+        ) : (
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <List className="h-5 w-5 text-primary" />
+                {viewMode === "active"
+                  ? "Active Trades"
+                  : viewMode === "new"
+                  ? "New offers - Marketplace"
+                  : viewMode === "myPast"
+                  ? "All my past offers"
+                  : viewMode === "my"
+                  ? "My Offers"
+                  : role === "buyer"
+                    ? "All Sell Offers"
+                    : "All Buy Offers"}
+              </CardTitle>
+              <CardDescription>
+                {viewMode === "active"
+                  ? "Trades in progress (accepted, funded, paid, disputed)"
+                  : viewMode === "new"
+                  ? "Only new created offers. Nothing else."
+                  : viewMode === "myPast"
+                  ? "Trades you took part in that ended as Completed, Refunded, or Closed"
+                  : viewMode === "my"
+                  ? "Manage all offers you've created"
+                  : role === "buyer"
+                    ? "Browse available sell offers to accept"
+                    : "Browse available buy offers to accept"}
+              </CardDescription>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" size="sm" onClick={loadAll} disabled={isLoading}>
+                {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                Refresh
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        )}
+        <CardContent className={isMobile ? "p-0" : undefined}>
+          {isLoading && escrows.length === 0 ? (
+            <div className="flex justify-center py-8">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+          ) : displayedEscrows.length === 0 ? (
+            <p className="text-center py-8 text-muted-foreground">
+              {escrows.length === 0
+                ? (viewMode === "mine"
+                    ? "No trades yet. Accept an offer in Offers, or post your own in New offer."
+                    : viewMode === "active"
+                    ? "You have no active trades. Accept an offer as buyer or wait for a buyer as seller to see trades here."
+                    : viewMode === "new"
+                    ? "No new offers at the moment. Check back later."
+                    : viewMode === "myPast"
+                    ? "You have no past offers. Past offers are trades you participated in that ended as Completed, Refunded, or Closed."
+                    : viewMode === "my"
+                    ? "You haven't created any offers yet. Create your first offer in the Create Offer tab."
+                    : role === "buyer"
+                      ? "No sell offers found. Try adjusting your filters or create a new offer."
+                      : "No buy offers found. Try adjusting your filters or create a new offer.")
+                : "No offers match your filters (min rating or online now). Try clearing filters."}
+            </p>
+          ) : (
+            viewMode === "mine" ? (
+              <div className="space-y-6">
+                {mineGroups.filter(([, list]) => list.length > 0).map(([title, list]) => (
+                  <section key={title} className="space-y-3">
+                    <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">{title}</h3>
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">{list.map(offerCard)}</div>
+                  </section>
+                ))}
+              </div>
+            ) : (
+            <div className={isMobile ? "grid grid-cols-1 gap-3" : "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"}>
+              {displayedEscrows.map(offerCard)}
+            </div>
+            )
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Escrow Details (when one is selected) */}
+      {selectedEscrow && isMobile && createPortal(
+        <div className="fixed inset-0 z-[60] flex flex-col bg-background" role="dialog" aria-modal="true" aria-label={tradeTitle(selectedEscrow, account?.account)}>
+          <header className="flex items-center gap-1 border-b border-border bg-card px-2 py-2">
+            <Button variant="ghost" size="icon" className="h-11 w-11 shrink-0" onClick={closeTrade} aria-label="Back to the list">
+              <ArrowLeft className="h-5 w-5" />
+            </Button>
+            <h2 className="min-w-0 flex-1 truncate font-display text-lg font-semibold">{tradeTitle(selectedEscrow, account?.account)}</h2>
+            <span className="shrink-0 pr-2"><EscrowStatus state={shownState(selectedEscrow)} /></span>
+          </header>
+          <div className="flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-4">
+            <YourTurnCard escrow={selectedEscrow} me={account?.account} canAccept={canAcceptFinal} />
+            <TradeSteps escrow={selectedEscrow} me={account?.account} />
+            {detailTabs}
+          </div>
+          {mobilePrimary && (
+            <div className="border-t border-border bg-card px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+              <Button className="h-14 w-full gap-2 text-lg" onClick={mobilePrimary.run} disabled={!!actionLoading}>
+                {actionLoading === mobilePrimary.busy ? <Loader2 className="h-5 w-5 animate-spin" /> : <mobilePrimary.Icon className="h-5 w-5" />}
+                {mobilePrimary.label}
+              </Button>
+              <p className="mt-1.5 text-center text-xs text-muted-foreground">
+                {actionLoading ? "Confirming on Kadena. This can take up to a minute." : "You'll approve this in your wallet."}
+              </p>
+            </div>
+          )}
+        </div>,
+        document.body,
+      )}
+
+      {selectedEscrow && !isMobile && (
+        <Card className="escrow-card">
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardTitle className="font-mono text-lg">{selectedEscrow.offerId}</CardTitle>
+              <EscrowStatus
+                state={
+                  existingDispute && (existingDispute.status === "OPEN" || existingDispute.status === "UNDER_REVIEW")
+                    ? "DISPUTED"
+                    : selectedEscrow.state
+                }
+              />
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {detailTabs}
           </CardContent>
         </Card>
       )}

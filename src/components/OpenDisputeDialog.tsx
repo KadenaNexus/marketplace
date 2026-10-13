@@ -11,11 +11,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useWallet } from "@/hooks/useWallet";
-import { buildProfileAuthTx, signTransaction } from "@/lib/kadena";
 import { openDispute } from "@/lib/disputeApi";
 import { AlertTriangle, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import type { Escrow } from "@/lib/kadena";
+import { authProof } from "@/lib/session";
 
 interface OpenDisputeDialogProps {
   open: boolean;
@@ -47,12 +47,7 @@ export function OpenDisputeDialog({ open, onOpenChange, escrow, onSuccess }: Ope
 
     setIsLoading(true);
     try {
-      const tx = buildProfileAuthTx(account.account, account.publicKey);
-      let signedCmd = await signTransaction(tx);
-      if (signedCmd?.signedCmd && !signedCmd.cmd) signedCmd = signedCmd.signedCmd;
-      const sigs = Array.isArray(signedCmd?.sigs) ? signedCmd.sigs : [];
-      if (sigs[0] && !sigs[0].pubKey) sigs[0] = { ...sigs[0], pubKey: account.publicKey };
-      if (sigs[0]?.signature && !sigs[0].sig) sigs[0] = { ...sigs[0], sig: sigs[0].signature };
+      const signedCmd = await authProof(account.account, account.publicKey);
 
       await openDispute({
         offerId: escrow.offerId,
