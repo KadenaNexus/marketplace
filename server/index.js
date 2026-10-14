@@ -13,8 +13,9 @@ import { registerAlertRoutes, startAlertWatcher } from "./alerts.js";
 import { registerMarketRoutes } from "./market.js";
 import { registerTrustRoutes, recheckCompletedOffers } from "./trust.js";
 import { registerOfferModerationRoutes, startOfferExpiryWatcher, expiryDays } from "./offerModeration.js";
+import { registerCompletedFeedRoutes, completedItem } from "./completedFeed.js";
 import { registerTradeEmailRoutes, emailNotification } from "./tradeEmails.js";
-import { registerNotificationRoutes, startNotificationWatcher, notifyMessage, notifyTradeChangeSoon, notify, onNotificationCreated } from "./notifications.js";
+import { registerNotificationRoutes, startNotificationWatcher, notifyMessage, notifyTradeChangeSoon, notify, onNotificationCreated, onTradeCompleted } from "./notifications.js";
 import { registerTradeTxRoutes, startTradeTxWatcher } from "./tradeTxs.js";
 import { registerPayoutRoutes, readEscrowFromChain, sidesOf } from "./payout.js";
 import { registerProofRoutes } from "./proofs.js";
@@ -323,6 +324,13 @@ const onTradeStepSettled = ({ offerId, ok }) => {
 };
 registerTradeTxRoutes(app, () => pool, { onSettled: (x) => onTradeStepSettled(x) });
 registerMarketRoutes(app);
+registerCompletedFeedRoutes(app, () => pool);
+// live "a trade was just completed" for everyone on the Marketplace (the request key may arrive a moment later)
+onTradeCompleted(({ offerId, amount, wallets }) => {
+  setTimeout(() => completedItem(pool, offerId, amount)
+    .then((item) => io.emit("trade-completed", { ...item, wallets }))
+    .catch((e) => console.warn("[feed]", e.message)), 3000);
+});
 registerTradeEmailRoutes(app, { getPool: () => pool, requireAuth: (...a) => requireAuth(...a), sendAuthError: (...a) => sendAuthError(...a) });
 onNotificationCreated((row) => emailNotification(pool, row));
 registerTrustRoutes(app, { getPool: () => pool, requireAuth: (...a) => requireAuth(...a), sendAuthError: (...a) => sendAuthError(...a) });

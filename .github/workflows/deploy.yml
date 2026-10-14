@@ -61,6 +61,8 @@ jobs:
         run: npm run test:trust
       - name: Run offer moderation tests
         run: npm run test:moderation
+      - name: Run completed-trade feed tests
+        run: npm run test:feed
   deploy:
     name: deploy
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
