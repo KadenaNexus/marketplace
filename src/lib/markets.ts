@@ -31,3 +31,13 @@ export function currencyPrefix(code: string | null | undefined): string {
 export const OFFER_LISTING_DAYS = 7;
 /** An accepted trade nobody funded is filed under Finished after this many days (no KDA was locked). */
 export const UNFUNDED_TRADE_DAYS = 5;
+
+/**
+ * A free giveaway: a sell offer at price 0 with the payment method "Giveaway". The winner pays nothing:
+ * Mark as Paid needs no proof and the seller releases without the payment checks.
+ */
+export const GIVEAWAY_METHOD = "Giveaway";
+export function isGiveaway(e: { price: number; paymentMethod?: string | null }): boolean {
+  if (e.price !== 0 || !e.paymentMethod) return false;
+  try { const m = JSON.parse(e.paymentMethod); return Array.isArray(m) && m.includes(GIVEAWAY_METHOD); } catch { return false; }
+}

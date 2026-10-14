@@ -2,7 +2,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { MarketTag } from "./MarketTag";
 import { TradeCode } from "./TradeCode";
 import { TurnLine } from "./MobileTrade";
-import { currencyPrefix } from "@/lib/markets";
+import { currencyPrefix, isGiveaway } from "@/lib/markets";
 import { NEW_TRADER_TRADES, isNewTrader } from "@/lib/trust";
 import { OFFER_LISTING_DAYS } from "@/lib/markets";
 import { Button } from "@/components/ui/button";
@@ -69,6 +69,7 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, completedMap, 
 
   const totalPrice = escrow.amount * escrow.price;
   const currencySymbol = currencyPrefix(escrow.fiatCurrency);
+  const free = isGiveaway(escrow);
 
   if (isMobile) {
     // Phone: the amount and price first, then how you pay, then one large button.
@@ -91,7 +92,11 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, completedMap, 
         )}
         <div className="flex items-baseline justify-between gap-3">
           <p className="flex items-center gap-2 font-display text-2xl font-bold">{kdaAmount(escrow.amount)} KDA <TradeCode offerId={escrow.offerId} className="self-center" /></p>
-          <p className="shrink-0 text-right text-sm text-muted-foreground">{currencySymbol}{formatFiat(escrow.price, escrow.fiatCurrency)} / KDA<MarketTag price={escrow.price} currency={escrow.fiatCurrency} className="flex justify-end" /></p>
+          {free ? (
+            <p className="shrink-0 rounded-full bg-emerald-500/15 px-3 py-1 text-sm font-bold text-emerald-700 dark:text-emerald-300">🎁 Free</p>
+          ) : (
+            <p className="shrink-0 text-right text-sm text-muted-foreground">{currencySymbol}{formatFiat(escrow.price, escrow.fiatCurrency)} / KDA<MarketTag price={escrow.price} currency={escrow.fiatCurrency} className="flex justify-end" /></p>
+          )}
         </div>
         {showStatus && (
           <div className="mt-1 flex items-center justify-between gap-2">
@@ -137,7 +142,7 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, completedMap, 
             <span key={m} className="rounded-full bg-muted px-2.5 py-1">{m}</span>
           ))}
           {paymentMethods.length > 2 && <span className="rounded-full bg-muted px-2.5 py-1">+{paymentMethods.length - 2}</span>}
-          <span className="rounded-full bg-muted px-2.5 py-1">Total {currencySymbol}{formatFiat(totalPrice, escrow.fiatCurrency)}</span>
+          {!free && <span className="rounded-full bg-muted px-2.5 py-1">Total {currencySymbol}{formatFiat(totalPrice, escrow.fiatCurrency)}</span>}
           {otherName && !isMyOffer && (
             <span className="rounded-full bg-muted px-2.5 py-1">
               {otherLabel}: {trades ? `${trades} trade${trades === 1 ? "" : "s"}` : otherName}
@@ -231,6 +236,11 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, completedMap, 
 
           {/* Price and Amount */}
           <div className="space-y-1">
+            {free ? (
+              <div className="flex items-baseline gap-2">
+                <span className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">🎁 Free giveaway</span>
+              </div>
+            ) : (
             <div className="flex items-baseline gap-2">
               <span className="text-2xl font-bold text-primary">
                 {currencySymbol}{formatFiat(escrow.price, escrow.fiatCurrency)}
@@ -238,9 +248,10 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, completedMap, 
               <span className="text-sm text-muted-foreground">per KDA</span>
               <MarketTag price={escrow.price} currency={escrow.fiatCurrency} />
             </div>
+            )}
             <div className="flex items-center gap-4 text-sm text-muted-foreground">
               <span>Available: <span className="font-medium text-foreground">{escrow.amount.toFixed(4)} KDA</span></span>
-              <span>Total: <span className="font-medium text-foreground">{currencySymbol}{formatFiat(totalPrice, escrow.fiatCurrency)}</span></span>
+              <span>Total: <span className="font-medium text-foreground">{free ? "Free" : `${currencySymbol}${formatFiat(totalPrice, escrow.fiatCurrency)}`}</span></span>
             </div>
           </div>
 

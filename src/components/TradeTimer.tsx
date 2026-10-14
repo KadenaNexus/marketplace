@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Clock, AlertTriangle } from "lucide-react";
 import { T1_SECONDS, T2_SECONDS, T3_SECONDS, type Escrow } from "@/lib/kadena";
 import { cn } from "@/lib/utils";
+import { isGiveaway } from "@/lib/markets";
 
 const WARNING_THRESHOLD_SEC = 2 * 60; // Last 2 minutes: show warning
 
@@ -36,6 +37,21 @@ export function nextStep(escrow: Escrow, me: string | undefined, expired: boolea
   const kda = `${escrow.amount.toLocaleString("en-US", { maximumFractionDigits: 4 })} KDA`;
   const seller = !!me && me === escrow.seller;
   const buyer = !!me && me === escrow.buyer;
+  if (isGiveaway(escrow) && !expired) {
+    // free giveaway: nothing is paid; "Mark as Paid" only tells the contract the winner is ready
+    if (escrow.state === "ACCEPTED") {
+      if (seller) return `Your turn: press Deposit to lock the ${kda} giveaway in escrow.`;
+      if (buyer) return `You won this free giveaway. Waiting for the giver to lock ${kda} in escrow. There is nothing to pay.`;
+    }
+    if (escrow.state === "FUNDED") {
+      if (buyer) return `Your turn: the ${kda} is locked for you. There is nothing to pay: press Mark as Paid (no screenshot needed) before the time runs out.`;
+      if (seller) return "The giveaway is locked in escrow. Waiting for the winner to press Mark as Paid.";
+    }
+    if (escrow.state === "PAID") {
+      if (seller) return `Your turn: the winner confirmed. There is no payment to check: press Release to Buyer to send the ${kda}.`;
+      if (buyer) return `Confirmed. Waiting for the giver to release the ${kda} to you.`;
+    }
+  }
   if (escrow.state === "ACCEPTED") {
     if (expired) return "The seller did not lock the KDA in time. Nothing was paid and nothing is at risk; either side can close the trade with Close offer.";
     if (seller) return `Your turn: press Deposit to lock ${kda} in escrow. The buyer will only send payment after that.`;

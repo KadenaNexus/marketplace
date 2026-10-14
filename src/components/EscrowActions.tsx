@@ -20,7 +20,7 @@ import { repeatOffer } from "@/lib/repeatOffer";
 import { getHiddenOffers, relistOffer } from "@/lib/moderationApi";
 import { OFFER_LISTING_DAYS, UNFUNDED_TRADE_DAYS } from "@/lib/markets";
 import { getSocket } from "@/hooks/useOnlineStatus";
-import { currencyPrefix } from "@/lib/markets";
+import { currencyPrefix, isGiveaway } from "@/lib/markets";
 import { getPayout } from "@/lib/payoutApi";
 import { TradeTxList } from "./TradeTxList";
 import { DisputeView } from "./DisputeView";
@@ -122,7 +122,7 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
   const [registeringCompletion, setRegisteringCompletion] = useState(false);
 
 const ACTIVE_STATES = ["ACCEPTED", "FUNDED", "PAID", "DISPUTED"] as const;
-const tradeTotal = (e: Escrow) => `${currencyPrefix(e.fiatCurrency)}${formatFiat(e.amount * e.price, e.fiatCurrency)}`;
+const tradeTotal = (e: Escrow) => isGiveaway(e) ? "Free" : `${currencyPrefix(e.fiatCurrency)}${formatFiat(e.amount * e.price, e.fiatCurrency)}`;
 const PAST_TERMINAL_STATES = ["COMPLETED", "REFUNDED", "CLOSED"] as const;
 /** Accepted, never funded, for days: nothing is locked and it cannot go ahead, so it is filed under Finished. */
 const unfundedExpired = (e: Escrow) => e.state === "ACCEPTED" && !!e.acceptedAt && Date.now() - new Date(e.acceptedAt).getTime() > UNFUNDED_TRADE_DAYS * 86400000;
@@ -692,7 +692,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
     if (!kdaHolder) return stop("Deposit failed", "On-chain data has no KDA holder yet; accept the offer first.");
     if (account.account !== kdaHolder) return stop("Deposit failed", `Deposit must be signed by the KDA holder. On-chain: ${kdaHolder}. Your wallet: ${account.account}.`);
     // The buyer must know where to pay before the KDA is locked (details lock at deposit).
-    if (payout && payout.details.length === 0) return stop("Add where you get paid first", "Fill in \"Where you get paid\" in the trade details, so the buyer knows where to send the money. Then deposit.");
+    if (payout && payout.details.length === 0 && !isGiveaway(selectedEscrow)) return stop("Add where you get paid first", "Fill in \"Where you get paid\" in the trade details, so the buyer knows where to send the money. Then deposit.");
     if (shortfall) return stop(shortfall.title, shortfall.description, 20000);
     executeAction("Deposit", () =>
       buildDepositTx(selectedEscrow.offerId, fresh.amount, account.account, account.publicKey, vaultAccount)
@@ -947,10 +947,12 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
               <div>
                 <Label className="text-muted-foreground">Price</Label>
                 <p className="font-mono text-2xl font-bold text-primary">
+                  {isGiveaway(selectedEscrow) ? "Free" : <>
                   {currencyPrefix(selectedEscrow.fiatCurrency)}
                   {formatFiat(selectedEscrow.price, selectedEscrow.fiatCurrency)} <span className="text-base">per KDA</span>
+                  </>}
                 </p>
-                <MarketTag price={selectedEscrow.price} currency={selectedEscrow.fiatCurrency} className="text-sm" />
+                {!isGiveaway(selectedEscrow) && <MarketTag price={selectedEscrow.price} currency={selectedEscrow.fiatCurrency} className="text-sm" />}
               </div>
               <div>
                 <Label className="text-muted-foreground">Available Amount</Label>
@@ -962,20 +964,23 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                 <Label className="text-muted-foreground">Total Value</Label>
                 <div className="mt-1 rounded-lg border-2 border-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 dark:border-emerald-700 px-4 py-3">
                   <p className="font-mono text-2xl font-bold text-emerald-800 dark:text-emerald-200">
-                    {currencyPrefix(selectedEscrow.fiatCurrency)}
-                    {formatFiat(selectedEscrow.amount * selectedEscrow.price, selectedEscrow.fiatCurrency)}
+                    {tradeTotal(selectedEscrow)}
                   </p>
                   <p className="mt-3 text-sm text-muted-foreground leading-snug">
-                    Kadena buyer must send this exact amount to the seller using the selected payment method. After sending the payment, the buyer must upload a screenshot of the transaction confirmation in the chat.
+                    {isGiveaway(selectedEscrow)
+                      ? "Free giveaway: there is nothing to pay. Once the seller has locked the KDA, the receiver taps Mark as Paid (no screenshot needed) and the seller releases the KDA."
+                      : "Kadena buyer must send this exact amount to the seller using the selected payment method. After sending the payment, the buyer must upload a screenshot of the transaction confirmation in the chat."}
                   </p>
                 </div>
               </div>
               <div className="sm:col-span-2 space-y-4">
+                {!isGiveaway(selectedEscrow) && <>
                 <ProofCard escrow={selectedEscrow} />
                 <PayoutCard
                   escrow={selectedEscrow}
-                  total={`${currencyPrefix(selectedEscrow.fiatCurrency)}${formatFiat(selectedEscrow.amount * selectedEscrow.price, selectedEscrow.fiatCurrency)}`}
+                  total={tradeTotal(selectedEscrow)}
                 />
+                </>}
               </div>
               <div className={isMobile ? "hidden" : undefined}>
                 <Label className="text-muted-foreground">Amount</Label>

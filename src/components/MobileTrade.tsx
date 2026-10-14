@@ -1,4 +1,4 @@
-import { OFFER_LISTING_DAYS } from "@/lib/markets";
+import { OFFER_LISTING_DAYS, isGiveaway } from "@/lib/markets";
 import { useEffect, useState } from "react";
 import { Check, Clock } from "lucide-react";
 import { T1_SECONDS, T2_SECONDS, T3_SECONDS, type Escrow } from "@/lib/kadena";
@@ -47,8 +47,9 @@ export function turnInfo(e: Escrow, me?: string): { mine: boolean; label: string
   const remaining = iso && limit ? getRemainingSeconds(iso, limit) : null;
   if (remaining === 0) return { mine: true, label: "Time is up: open the trade to see what you can do", remaining };
   if (e.state === "ACCEPTED") return seller ? { mine: true, label: "Your turn: deposit the KDA", remaining } : { mine: false, label: "Waiting for the seller to deposit", remaining };
-  if (e.state === "FUNDED") return buyer ? { mine: true, label: "Your turn: pay and mark as paid", remaining } : { mine: false, label: "Waiting for the buyer's payment", remaining };
-  if (e.state === "PAID") return seller ? { mine: true, label: "Your turn: check the payment and release", remaining } : { mine: false, label: "Waiting for the seller to release", remaining };
+  const free = isGiveaway(e);
+  if (e.state === "FUNDED") return buyer ? { mine: true, label: free ? "Your turn: tap Mark as Paid (nothing to pay)" : "Your turn: pay and mark as paid", remaining } : { mine: false, label: free ? "Waiting for the winner to confirm" : "Waiting for the buyer's payment", remaining };
+  if (e.state === "PAID") return seller ? { mine: true, label: free ? "Your turn: release the giveaway" : "Your turn: check the payment and release", remaining } : { mine: false, label: "Waiting for the seller to release", remaining };
   return null;
 }
 
@@ -93,7 +94,9 @@ export function YourTurnCard({ escrow: e, me, canAccept }: { escrow: Escrow; me?
   if (e.state === "CREATED") {
     if (canAccept) {
       eyebrow = "Before you accept";
-      text = side === "buyer"
+      text = isGiveaway(e)
+        ? `A free giveaway: there is nothing to pay. After you accept, the giver has 1 hour to lock the ${kdaAmount(e.amount)} KDA for you; then you tap Mark as Paid (no screenshot) and they release it.`
+        : side === "buyer"
         ? `Check the price and how you pay. After you accept, the seller has 1 hour to lock the ${kdaAmount(e.amount)} KDA. You pay only after that.`
         : `Check the price and how you get paid. After you accept, you have 1 hour to lock the ${kdaAmount(e.amount)} KDA in escrow.`;
     } else if (e.creator === me) {
