@@ -161,9 +161,9 @@ const Index = () => {
                   <Megaphone className="h-5 w-5 text-white" />
                 </div>
                 <div className="space-y-1">
-                  <h2 className="text-lg font-semibold text-white">Expanding the Marketplace</h2>
+                  <h2 className="text-lg font-semibold text-white">New: sell KDA for $BRO</h2>
                   <p className="text-sm text-white/95 leading-relaxed">
-                    We are integrating additional Kadena ecosystem tokens — including $BRO, $HERON, $KISHK, $FLUX, $CHIPSKDA, $KWATT, and $KADPAD — with more tokens coming soon.
+                    Choose BRO (Kadena token) as the currency of an offer and get paid in BRO on the Kadena chain.
                   </p>
                 </div>
               </CardContent>
