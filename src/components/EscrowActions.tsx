@@ -146,7 +146,7 @@ function txLabel(action: string, e: Escrow | null | undefined): string {
   }
 }
 const CRITICAL_ACTION_LOADING = ["Accept Offer", "Deposit", "Mark Paid", "Release", "Delete Offer"] as const;
-const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena network. This may take up to 60 seconds.";
+const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena network. This may take up to 2 minutes.";
 
   // Filter escrows based on filters and role
   const escrows = useMemo(() => {
@@ -1461,7 +1461,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                 {mobilePrimary.label}
               </Button>
               <p className="mt-1.5 text-center text-xs text-muted-foreground">
-                {actionLoading ? "Confirming on Kadena. This can take up to a minute." : "You'll approve this in your wallet."}
+                {actionLoading ? "Confirming on Kadena. This can take up to 2 minutes." : "You'll approve this in your wallet."}
               </p>
             </div>
           )}

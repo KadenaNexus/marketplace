@@ -36,7 +36,7 @@ import { formatFiat } from "@/lib/utils";
 import { TradeEmailGate, useNeedsTradeEmail } from "./TradeEmail";
 import { useMyCompletedTrades, useTermsGate } from "./Trust";
 import { NEW_TRADER_MAX_KDA, NEW_TRADER_TRADES, isNewTrader, newTraderProblem } from "@/lib/trust";
-const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena network. This may take up to 60 seconds.";
+const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena network. This may take up to 2 minutes.";
 
 interface CreateOfferFormProps {
   onSuccess?: (offerId: string, txHash: string) => void;
