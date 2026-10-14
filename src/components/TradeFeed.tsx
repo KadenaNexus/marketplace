@@ -13,7 +13,8 @@ export interface CompletedTrade { offerId: string; code: string; amount: number 
 interface Feed { recent: CompletedTrade[]; week: number }
 
 const kda = (n: number | null) => (n == null ? "" : `${n.toLocaleString("en-US", { maximumFractionDigits: 4 })} KDA`);
-const forTotal = (t: CompletedTrade) => (t.total != null && t.currency ? ` for ${currencyPrefix(t.currency)}${formatFiat(t.total, t.currency)}` : "");
+// price 0 is only allowed for a free giveaway
+const forTotal = (t: CompletedTrade) => (t.total === 0 ? " (free giveaway)" : t.total != null && t.currency ? ` for ${currencyPrefix(t.currency)}${formatFiat(t.total, t.currency)}` : "");
 function ago(iso: string) {
   const s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
   if (s < 60) return "just now";
