@@ -42,7 +42,7 @@ const SECTIONS: [string, ReactNode][] = [
     and your own payment accounts.
   </>],
   ["Payments happen between the two traders", <>
-    The buyer pays the seller directly with USDT, USDC, Wise or Revolut. The Marketplace does not move or check that
+    The buyer pays the seller directly with USDT, USDC, Wise, Revolut or the Kadena token BRO. The Marketplace does not move or check that
     money. Pay only the exact amount, only to the details shown in the trade, and from an account in your own name.
     Never pay to other details sent in chat, and never pay outside a trade. Bank transfers are not accepted. A payment
     service can delay, freeze or reverse a payment; that risk stays between the traders.

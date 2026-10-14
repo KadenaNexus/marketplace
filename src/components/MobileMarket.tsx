@@ -27,7 +27,7 @@ const emptyFilters = (): OfferFilters => ({
 const activeFilterCount = (f: OfferFilters) =>
   [f.minAmount, f.maxAmount, f.minPrice, f.maxPrice, f.paymentMethod, f.seller, f.buyer, f.minStars].filter(Boolean).length + (f.onlineNow ? 1 : 0);
 
-const NOTICE_KEY = "nx-tokens-notice-hidden";
+const NOTICE_KEY = "nx-bro-notice-hidden"; // new key: the BRO news shows again to people who closed the older notice
 
 /** Buy KDA / Sell KDA switch. "Buy" lists sell offers; "Sell" lists buy offers. */
 function SideSwitch({ side, onSide, label }: { side: Side; onSide: (s: Side) => void; label: string }) {
@@ -89,7 +89,7 @@ export function MobileMarket({
           {!noticeHidden && (
             <div className="flex items-start gap-3 rounded-xl bg-gradient-to-r from-orange-600 to-orange-500 p-3 text-white">
               <Megaphone className="mt-0.5 h-4 w-4 shrink-0" />
-              <p className="flex-1 text-sm leading-snug">More Kadena tokens are coming to the Marketplace: $BRO, $HERON, $KISHK, $FLUX and others.</p>
+              <p className="flex-1 text-sm leading-snug">New: sell KDA for $BRO, paid on the Kadena chain. Coming next: $HERON, $KISHK, $FLUX and others.</p>
               <button type="button" onClick={hideNotice} aria-label="Hide this notice" className="-m-1 rounded p-1 hover:bg-white/20"><X className="h-4 w-4" /></button>
             </div>
           )}

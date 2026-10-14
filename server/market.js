@@ -4,8 +4,11 @@
  * directly, so there is no browser CORS or rate-limit trouble). If CoinGecko is down, the last price is kept
  * for up to 30 minutes, then the site simply shows no comparison.
  *
- *   GET /api/market/kda -> { prices: { USD, EUR, SAR, AED }, change24h: {...}, updatedAt, source }
+ *   GET /api/market/kda -> { prices: { USD, EUR, SAR, AED, BRO }, change24h: {...}, updatedAt, source }
+ *
+ * Kadena tokens (BRO) are priced from their KDA pool on Mercatus (server/tokens.js): tokens per KDA.
  */
+import { tokenPricesPerKda } from "./tokens.js";
 const env = (k, d) => (process.env[k] ?? d);
 export const MARKET_CURRENCIES = ["USD", "EUR", "SAR", "AED"];
 const url = () => env("MARKET_PRICE_URL", `https://api.coingecko.com/api/v3/simple/price?ids=kadena&vs_currencies=${MARKET_CURRENCIES.join(",").toLowerCase()}&include_24hr_change=true&include_last_updated_at=true`);
@@ -26,17 +29,18 @@ export function parseCoinGecko(j) {
   return { prices, change24h, updatedAt: new Date(Number.isFinite(t) && t > 0 ? t * 1000 : Date.now()).toISOString(), source: "CoinGecko" };
 }
 
-export function createMarket({ fetcher = (u) => fetch(u, { signal: AbortSignal.timeout(8000), headers: { accept: "application/json" } }), freshMs = 60 * 1000, keepMs = 30 * 60 * 1000, now = () => Date.now() } = {}) {
-  let last = null, lastAt = 0, inflight = null;
+export function createMarket({ fetcher = (u) => fetch(u, { signal: AbortSignal.timeout(8000), headers: { accept: "application/json" } }), tokenPrices = tokenPricesPerKda, freshMs = 60 * 1000, keepMs = 30 * 60 * 1000, now = () => Date.now() } = {}) {
+  let last = null, lastAt = 0, inflight = null, tokens = {};
   return async function getMarket() {
     if (last && now() - lastAt < freshMs) return last;
     if (!inflight) {
       inflight = (async () => {
         try {
-          const r = await fetcher(url());
+          const [r, t] = await Promise.all([fetcher(url()), tokenPrices().catch(() => ({}))]);
+          tokens = { ...tokens, ...t }; // a token whose pool read failed keeps its last price
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
           const m = parseCoinGecko(await r.json());
-          if (m) { last = m; lastAt = now(); }
+          if (m) { last = { ...m, prices: { ...m.prices, ...tokens } }; lastAt = now(); }
         } catch (e) {
           console.warn("[market] price fetch failed:", e.message);
         } finally { inflight = null; }

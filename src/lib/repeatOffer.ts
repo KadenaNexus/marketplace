@@ -3,7 +3,7 @@
  * currency, payment methods and, for a sell offer, where you get paid). Kept in memory until the form takes it.
  */
 import type { Escrow } from "@/lib/kadena";
-import { FIAT_CURRENCIES, PAYMENT_METHODS } from "@/lib/markets";
+import { PAY_CURRENCIES, methodsFor } from "@/lib/markets";
 
 export interface OfferDraft { from: string; side: "BUY" | "SELL"; amount: number; price: number; fiatCurrency: string; paymentMethods: string[] }
 export const REPEAT_OFFER_EVENT = "nx-repeat-offer";
@@ -18,8 +18,8 @@ export function repeatOffer(e: Escrow) {
     amount: e.amount,
     price: e.price,
     // offers made before the market was narrowed may use a method or currency that is no longer offered
-    fiatCurrency: (FIAT_CURRENCIES as readonly string[]).includes(e.fiatCurrency) ? e.fiatCurrency : "USD",
-    paymentMethods: methods.filter((m) => (PAYMENT_METHODS as readonly string[]).includes(m)),
+    fiatCurrency: (PAY_CURRENCIES as readonly string[]).includes(e.fiatCurrency) ? e.fiatCurrency : "USD",
+    paymentMethods: methods.filter((m) => methodsFor((PAY_CURRENCIES as readonly string[]).includes(e.fiatCurrency) ? e.fiatCurrency : "USD").includes(m)),
   };
   window.dispatchEvent(new CustomEvent(REPEAT_OFFER_EVENT, { detail: draft }));
 }

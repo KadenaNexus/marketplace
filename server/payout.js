@@ -10,6 +10,7 @@
  *   GET /api/offers/:offerId/payout   (wallet, publicKey, signedCmd in the query)
  *   PUT /api/offers/:offerId/payout   { wallet, publicKey, signedCmd, details: [{ method, value }] }
  */
+import { isToken, KADENA_ACCOUNT, TOKENS } from "./tokens.js";
 import { hash as blakeHash } from "@kadena/cryptography-utils";
 
 const env = (k, d) => (process.env[k] ?? d);
@@ -68,6 +69,14 @@ export function cleanDetails(raw) {
       if (!re) return { error: `${method}: choose the network` };
       if (!re.test(value)) return { error: `${method}: that address does not fit the ${network} network` };
       out.push({ method, value, network });
+      continue;
+    }
+    if (isToken(method)) {
+      // a Kadena token: paid to a Kadena account on one chain
+      const t = TOKENS[method.toUpperCase()], network = String(it?.network ?? "");
+      if (!t.chains.includes(network)) return { error: `${method}: choose the chain (${t.chains.map((c) => `chain ${c}`).join(" or ")})` };
+      if (!KADENA_ACCOUNT.test(value)) return { error: `${method}: that doesn't look like a Kadena account (k:…)` };
+      out.push({ method: method.toUpperCase(), value, network });
       continue;
     }
     out.push({ method, value });

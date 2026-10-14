@@ -89,7 +89,7 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, completedMap, 
         )}
         <div className="flex items-baseline justify-between gap-3">
           <p className="flex items-center gap-2 font-display text-2xl font-bold">{kdaAmount(escrow.amount)} KDA <TradeCode offerId={escrow.offerId} className="self-center" /></p>
-          <p className="shrink-0 text-right text-sm text-muted-foreground">{currencySymbol}{formatFiat(escrow.price)} / KDA<MarketTag price={escrow.price} currency={escrow.fiatCurrency} className="flex justify-end" /></p>
+          <p className="shrink-0 text-right text-sm text-muted-foreground">{currencySymbol}{formatFiat(escrow.price, escrow.fiatCurrency)} / KDA<MarketTag price={escrow.price} currency={escrow.fiatCurrency} className="flex justify-end" /></p>
         </div>
         {showStatus && (
           <div className="mt-1 flex items-center justify-between gap-2">
@@ -125,7 +125,7 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, completedMap, 
             <span key={m} className="rounded-full bg-muted px-2.5 py-1">{m}</span>
           ))}
           {paymentMethods.length > 2 && <span className="rounded-full bg-muted px-2.5 py-1">+{paymentMethods.length - 2}</span>}
-          <span className="rounded-full bg-muted px-2.5 py-1">Total {currencySymbol}{formatFiat(totalPrice)}</span>
+          <span className="rounded-full bg-muted px-2.5 py-1">Total {currencySymbol}{formatFiat(totalPrice, escrow.fiatCurrency)}</span>
           {otherName && !isMyOffer && (
             <span className="rounded-full bg-muted px-2.5 py-1">
               {otherLabel}: {trades ? `${trades} trade${trades === 1 ? "" : "s"}` : otherName}
@@ -221,14 +221,14 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, completedMap, 
           <div className="space-y-1">
             <div className="flex items-baseline gap-2">
               <span className="text-2xl font-bold text-primary">
-                {currencySymbol}{formatFiat(escrow.price)}
+                {currencySymbol}{formatFiat(escrow.price, escrow.fiatCurrency)}
               </span>
               <span className="text-sm text-muted-foreground">per KDA</span>
               <MarketTag price={escrow.price} currency={escrow.fiatCurrency} />
             </div>
             <div className="flex items-center gap-4 text-sm text-muted-foreground">
               <span>Available: <span className="font-medium text-foreground">{escrow.amount.toFixed(4)} KDA</span></span>
-              <span>Total: <span className="font-medium text-foreground">{currencySymbol}{formatFiat(totalPrice)}</span></span>
+              <span>Total: <span className="font-medium text-foreground">{currencySymbol}{formatFiat(totalPrice, escrow.fiatCurrency)}</span></span>
             </div>
           </div>
 

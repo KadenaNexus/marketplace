@@ -37,6 +37,11 @@ test("details are cleaned and limited", () => {
   assert.ok(cleanDetails([]).error);
   assert.ok(cleanDetails([{ method: "Bank", value: "x".repeat(301) }]).error);
   assert.deepEqual(sidesOf({ side: "BUY", creator: BUYER, buyer: SELLER }), { holder: SELLER, payer: BUYER });
+  // BRO (a Kadena token): paid to a Kadena account on chain 2 or 1
+  assert.deepEqual(cleanDetails([{ method: "bro", value: SELLER, network: "2" }]).details[0], { method: "BRO", value: SELLER, network: "2" });
+  assert.match(cleanDetails([{ method: "BRO", value: SELLER, network: "5" }]).error, /choose the chain/);
+  assert.match(cleanDetails([{ method: "BRO", value: "TQn9Y2khEsLJW1ChVWFMSMeRDow5KcbLSE", network: "2" }]).error, /Kadena account/, "a TRON address is not");
+  assert.match(cleanDetails([{ method: "BRO", value: "0x5290 8400", network: "2" }]).error, /Kadena account/);
 });
 
 test("sell offer: the creator sets details; the buyer sees them only after accepting; locked once funded", async () => {

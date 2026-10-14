@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { useWallet } from "@/hooks/useWallet";
 import { authProof } from "@/lib/session";
 import type { Escrow } from "@/lib/kadena";
-import { getPayout, isStable, networkLabel, putPayout, stableProblem, type PayoutItem } from "@/lib/payoutApi";
+import { getPayout, hasNetwork, isTokenMethod, networkLabel, putPayout, stableProblem, type PayoutItem } from "@/lib/payoutApi";
 import { PayoutInput, type PayoutDraft } from "./PayoutInput";
 
 export const offerMethods = (e: Escrow): string[] => {
@@ -92,7 +92,7 @@ export function PayoutCard({ escrow, total }: { escrow: Escrow; total: string })
     const save = async () => {
       if (!account) return;
       const items: PayoutItem[] = (methods.length ? methods : Object.keys(values))
-        .map((m) => ({ method: m, value: (values[m]?.value ?? "").trim(), ...(isStable(m) ? { network: values[m]?.network } : {}) }))
+        .map((m) => ({ method: m, value: (values[m]?.value ?? "").trim(), ...(hasNetwork(m) ? { network: values[m]?.network } : {}) }))
         .filter((x) => x.value);
       if (!items.length) return toast.error("Add where you want to be paid for at least one payment method.");
       const problem = items.map(stableProblem).find(Boolean);
@@ -186,7 +186,9 @@ export function PayoutCard({ escrow, total }: { escrow: Escrow; total: string })
                 <span className="block text-xs text-muted-foreground">{d.method}</span>
                 {d.network && (
                   <span className="my-1 block rounded-md bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-950 dark:bg-amber-950 dark:text-amber-100">
-                    Network: {networkLabel(d.network)} only. Sending on another network loses the money.
+                    {isTokenMethod(d.method)
+                      ? <>Send {d.method} on {networkLabel(d.network)} only, to this Kadena account.</>
+                      : <>Network: {networkLabel(d.network)} only. Sending on another network loses the money.</>}
                   </span>
                 )}
                 <span className="block break-all font-mono text-sm">{d.value}</span>
@@ -196,11 +198,18 @@ export function PayoutCard({ escrow, total }: { escrow: Escrow; total: string })
           ))}
         </ul>
       )}
-      <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">
-        <li>Pay from an account in <b className="text-foreground">your own name</b>.</li>
-        <li>Don't write crypto words (KDA, crypto, Kadena) in the transfer note or reference.</li>
-        <li>Send the exact amount, then upload a screenshot of the payment in the chat.</li>
-      </ul>
+      {details.length > 0 && details.every((d) => isTokenMethod(d.method)) ? (
+        <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">
+          <li>Send from <b className="text-foreground">your own</b> Kadena wallet (Linx), on the chain shown.</li>
+          <li>Send the exact amount, then add the transfer's request key and a screenshot when you mark it paid.</li>
+        </ul>
+      ) : (
+        <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">
+          <li>Pay from an account in <b className="text-foreground">your own name</b>.</li>
+          <li>Don't write crypto words (KDA, crypto, Kadena) in the transfer note or reference.</li>
+          <li>Send the exact amount, then upload a screenshot of the payment in the chat.</li>
+        </ul>
+      )}
     </section>
   );
 }

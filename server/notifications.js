@@ -14,6 +14,7 @@
  * feed shows no message text. Web Push uses VAPID keys generated on first start (stored in alert_state)
  * unless VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY are set. NOTIFICATIONS_ENABLED=false switches it off.
  */
+import { isToken } from "./tokens.js";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { z } from "zod";
 import webpush from "web-push";
@@ -26,7 +27,7 @@ const DETAILS_WAIT_MS = 3 * 60 * 1000;
 const enabled = () => (process.env.NOTIFICATIONS_ENABLED || "true").toLowerCase() !== "false";
 const short = (w) => (w && w.length > 14 ? `${w.slice(0, 6)}…${w.slice(-4)}` : w || "someone");
 const kda = (n) => `${Number(n).toLocaleString("en-US", { maximumFractionDigits: 4 })} KDA`;
-const money = (n, cur) => `${Math.abs(Number(n)) >= 1 || Number(n) === 0 ? Number(n).toLocaleString("en-US", { maximumFractionDigits: 2 }) : Number(n).toLocaleString("en-US", { maximumSignificantDigits: 3 })} ${cur || ""}`.trim();
+const money = (n, cur) => isToken(cur) ? `${Number(Number(n).toFixed(12)).toLocaleString("en-US", { maximumFractionDigits: 12 })} ${String(cur).toUpperCase()}` : `${Math.abs(Number(n)) >= 1 || Number(n) === 0 ? Number(n).toLocaleString("en-US", { maximumFractionDigits: 2 }) : Number(n).toLocaleString("en-US", { maximumSignificantDigits: 3 })} ${cur || ""}`.trim();
 const parties = (e) => ({
   seller: e.side === "SELL" ? e.creator : e.buyer,
   buyer: e.side === "SELL" ? e.buyer : e.creator,
