@@ -21,8 +21,10 @@ import {
   isInsufficientFunds,
 } from "@/lib/kadena";
 import { putOfferDetails } from "@/lib/offerDetailsApi";
-import { isStable, putPayout, stableProblem } from "@/lib/payoutApi";
+import { getPayout, isStable, putPayout, stableProblem } from "@/lib/payoutApi";
+import { takeOfferDraft } from "@/lib/repeatOffer";
 import { PayoutInput, type PayoutDraft } from "./PayoutInput";
+import { TradeCode } from "./TradeCode";
 import { authProof } from "@/lib/session";
 import { Plus, Loader2, ShoppingCart, Store, Info } from "lucide-react";
 import { toast } from "sonner";
@@ -68,6 +70,29 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
   useEffect(() => {
     if (compact) setOfferId((v) => v || `offer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
   }, [compact]);
+
+  // "Post again" from a finished offer: fill in the same terms (and, for a sell offer, where you get paid)
+  const [repeatedFrom, setRepeatedFrom] = useState<string | null>(null);
+  useEffect(() => {
+    const d = takeOfferDraft(side);
+    if (!d) return;
+    setRepeatedFrom(d.from);
+    setAmount(String(d.amount));
+    setPrice(String(d.price));
+    setFiatCurrency(d.fiatCurrency);
+    setPaymentMethods(d.paymentMethods);
+    if (d.side !== "SELL" || !account) return;
+    (async () => {
+      try {
+        const signedCmd = await authProof(account.account, account.publicKey);
+        const p = await getPayout(d.from, { wallet: account.account, publicKey: account.publicKey, signedCmd });
+        if (!p?.isMine) return;
+        setPayout(Object.fromEntries(p.details.filter((x) => d.paymentMethods.includes(x.method)).map((x) => [x.method, { value: x.value, network: x.network }])));
+      } catch { /* the details can be typed again */ }
+    })();
+    // once, when the form opens
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handlePaymentMethodToggle = (method: string, checked: boolean) => {
     if (checked) {
@@ -260,6 +285,11 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
       )}
       <CardContent className={compact ? "p-0" : undefined}>
         <form ref={formRef} onSubmit={handleSubmit} className="space-y-4">
+          {repeatedFrom && (
+            <p role="status" className="rounded-xl border border-primary/40 bg-primary/5 p-3 text-sm leading-7">
+              Filled in from <TradeCode offerId={repeatedFrom} className="mx-1 align-middle" />. Check the price and amount, then post.
+            </p>
+          )}
           {isLoading && (
             <Alert className="border-primary/50 bg-primary/5">
               <Info className="h-4 w-4" />

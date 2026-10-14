@@ -244,6 +244,8 @@ const uploadChatFile = multer({
   },
 });
 
+// Wallets without a profile get a row too, so "last active" works for every trader
+const TOUCH_LAST_SEEN = "INSERT INTO profiles (wallet, last_seen) VALUES ($1, CURRENT_TIMESTAMP) ON CONFLICT (wallet) DO UPDATE SET last_seen = CURRENT_TIMESTAMP";
 const app = express();
 app.use(cors({
   origin: CORS_ALLOWED_ORIGINS?.length ? CORS_ALLOWED_ORIGINS : true,
@@ -446,7 +448,7 @@ io.on("connection", (socket) => {
     try {
       if (pool) {
         await pool.query(
-          "UPDATE profiles SET last_seen = CURRENT_TIMESTAMP WHERE wallet = $1",
+          TOUCH_LAST_SEEN,
           [wallet]
         );
       }
@@ -476,7 +478,7 @@ io.on("connection", (socket) => {
         // Update database last_seen periodically (every 5 heartbeats ~ 5 minutes)
         if (Math.random() < 0.2 && pool) {
           pool.query(
-            "UPDATE profiles SET last_seen = CURRENT_TIMESTAMP WHERE wallet = $1",
+            TOUCH_LAST_SEEN,
             [wallet]
           ).catch((err) => {
             // Ignore if column doesn't exist yet
@@ -932,18 +934,23 @@ app.put("/api/offers/:offerId/fund-tx", validateParams(offerIdParamSchema), vali
 app.post("/api/profiles/bulk", validateBody(profilesBulkBodySchema), async (req, res) => {
   const list = req.body.wallets;
   try {
+    // lastActive: the later of the last time the wallet was connected and its newest offer
     const result = await pool.query(
-      "SELECT wallet, username, avatar FROM profiles WHERE wallet = ANY($1)",
+      `SELECT w AS wallet, p.username, p.avatar,
+              GREATEST(p.last_seen, (SELECT max(created_at) FROM offer_details WHERE creator = w)) AS last_active
+         FROM unnest($1::text[]) AS w LEFT JOIN profiles p ON p.wallet = w`,
       [list]
     );
     const out = {};
     for (const p of result.rows) {
       const isOnline = onlineUsers.has(p.wallet);
-      out[p.wallet] = { 
-        username: p.username, 
-        avatar: p.avatar, 
+      if (p.username == null && p.avatar == null && !p.last_active && !isOnline) continue;
+      out[p.wallet] = {
+        username: p.username ?? null,
+        avatar: p.avatar ?? null,
         wallet: p.wallet,
-        isOnline 
+        isOnline,
+        lastActive: isOnline ? new Date().toISOString() : p.last_active ? new Date(p.last_active).toISOString() : null,
       };
     }
     // Also include online status for wallets not in profiles

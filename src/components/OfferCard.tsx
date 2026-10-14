@@ -12,7 +12,7 @@ import { RatingDisplay } from "./RatingDisplay";
 import type { Escrow } from "@/lib/kadena";
 import type { RatingSummary } from "@/lib/ratingApi";
 import { formatFiat } from "@/lib/utils";
-import { ShoppingCart, Store, ArrowRight, CreditCard, MessageCircle, X, Loader2 } from "lucide-react";
+import { ShoppingCart, Store, ArrowRight, CreditCard, MessageCircle, X, Loader2, RotateCcw } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { useState } from "react";
 import { ChatBox } from "./ChatBox";
@@ -33,9 +33,13 @@ interface OfferCardProps {
   isSelected?: boolean;
   /** When true, show "Disputed" instead of chain state (offer has an open/active dispute) */
   hasOpenDispute?: boolean;
+  /** Days since the creator of this open offer was last active, when it is long enough to mention */
+  inactiveDays?: number | null;
+  /** "Post again" for a finished offer you created */
+  onRepeat?: (escrow: Escrow) => void;
 }
 
-export function OfferCard({ escrow, profileMap, ratingSummaryMap, completedMap, onSelect, onDelete, isDeletingOfferId, role, isSelected = false, hasOpenDispute = false }: OfferCardProps) {
+export function OfferCard({ escrow, profileMap, ratingSummaryMap, completedMap, onSelect, onDelete, isDeletingOfferId, role, isSelected = false, hasOpenDispute = false, inactiveDays = null, onRepeat }: OfferCardProps) {
   const { account } = useWallet();
   const isMobile = useIsMobile();
   const [showChat, setShowChat] = useState(false);
@@ -44,6 +48,7 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, completedMap, 
   const canChat = account && isMyOffer ? !!escrow.buyer : !isMyOffer;
   const canDelete = isMyOffer && escrow.state === "CREATED" && !!onDelete;
   const isDeleting = isDeletingOfferId === escrow.offerId;
+  const canRepeat = isMyOffer && !!onRepeat && ["COMPLETED", "REFUNDED", "CLOSED"].includes(escrow.state);
 
   // Parse payment methods
   let paymentMethods: string[] = [];
@@ -68,7 +73,7 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, completedMap, 
     return (
       <div
         id={`offer-card-${escrow.offerId}`}
-        className={`relative scroll-mt-28 rounded-2xl border bg-card p-4 ${isSelected ? "border-primary" : "border-border"} ${isDeleting ? "pointer-events-none opacity-70" : ""}`}
+        className={`relative scroll-mt-28 rounded-2xl border bg-card p-4 ${isSelected ? "border-primary" : "border-border"} ${isDeleting ? "pointer-events-none opacity-70" : ""} ${inactiveDays ? "opacity-60" : ""}`}
       >
         {isDeleting && (
           <div className="absolute inset-0 z-10 flex items-center justify-center gap-2 rounded-2xl bg-background/80 text-sm text-muted-foreground">
@@ -86,6 +91,9 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, completedMap, 
           </div>
         )}
         <TurnLine escrow={hasOpenDispute ? { ...escrow, state: "DISPUTED" } : escrow} me={account?.account} />
+        {inactiveDays ? (
+          <p className="mt-1 text-sm text-muted-foreground">{otherLabel} last active {inactiveDays} days ago. They may be slow to answer.</p>
+        ) : null}
         <div className="mt-3 flex flex-wrap gap-1.5 text-xs">
           {paymentMethods.slice(0, 2).map((m) => (
             <span key={m} className="rounded-full bg-muted px-2.5 py-1">{m}</span>
@@ -109,6 +117,11 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, completedMap, 
           >
             {canAccept ? "View and accept" : escrow.state === "CREATED" ? "View offer" : "Open trade"}
           </Button>
+          {canRepeat && (
+            <Button variant="secondary" className="h-12 shrink-0 gap-2 text-base" onClick={() => onRepeat(escrow)}>
+              <RotateCcw className="h-4 w-4" />Post again
+            </Button>
+          )}
           {canDelete && !isDeleting && (
             <Button
               variant="outline"
