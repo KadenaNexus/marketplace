@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { MarketLine } from "@/components/MarketTag";
+import { TradeFeed, TradeFeedToasts } from "@/components/TradeFeed";
 import { PushPrompt } from "@/components/PushPrompt";
 import { Link } from "react-router-dom";
 import { Bell, Clock, List, Megaphone, Plus, SlidersHorizontal, X } from "lucide-react";
@@ -84,6 +85,7 @@ export function MobileMarket({
 
   return (
     <div className="pb-24">
+      <TradeFeedToasts />
       {tab === "offers" && (
         <div className="space-y-4">
           {!noticeHidden && (
@@ -101,6 +103,7 @@ export function MobileMarket({
           </div>
           <SideSwitch side={side} onSide={onSide} label="What do you want to do" />
           <MarketLine />
+          <TradeFeed />
           <div>
             <Button variant="outline" className="h-10 gap-2 rounded-full" aria-expanded={showFilters} onClick={() => setShowFilters((v) => !v)}>
               <SlidersHorizontal className="h-4 w-4" />

@@ -162,6 +162,9 @@ async function pushTo(pool, subs, n, send) {
 let createdHook = null;
 /** Run `fn(row)` for every new notification for a wallet (used to email trade notifications). */
 export function onNotificationCreated(fn) { createdHook = fn; }
+/** Run `fn({ offerId, amount, wallets })` when a trade becomes COMPLETED (the live "trade completed" feed). */
+let completedHook = null;
+export function onTradeCompleted(fn) { completedHook = fn; }
 
 export async function notify(pool, n, { send = webPushSend, now = Date.now() } = {}) {
   const r = await pool.query(
@@ -206,6 +209,9 @@ export async function runNotificationsOnce(pool, { chain, now = Date.now(), send
       if (!before && e.state === "CREATED") {
         const r = await notify(pool, { wallet: "*", offer_id: e.id, kind: "new_offer", title: "New offer", body: "", data: { side: e.side, amount: e.amount, creator: e.creator } }, { send, now });
         if (r.created) created++;
+      }
+      if (before && e.state === "COMPLETED" && completedHook) {
+        try { completedHook({ offerId: e.id, amount: e.amount, wallets: [e.creator, e.buyer].filter(Boolean) }); } catch (err) { console.warn("[notifications] completed hook:", err.message); }
       }
       for (const n of eventsForChange(before, e, d.get(e.id))) { if ((await notify(pool, { ...n, offer_id: e.id }, { send, now })).created) created++; }
     }
