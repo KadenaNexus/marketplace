@@ -4,11 +4,11 @@ import { AlertTriangle, ExternalLink } from "lucide-react";
 import { useTxInProgress } from "@/lib/txProgress";
 import { getTxExplorerUrl } from "@/lib/kadena";
 
-const EXPECTED_S = 60;
+const EXPECTED_S = 120;
 const R = 44, C = 2 * Math.PI * R;
 
 /**
- * While a transaction is being confirmed on Kadena (usually under a minute): a 60-second countdown and a clear
+ * While a transaction is being confirmed on Kadena (usually about a minute): a 2-minute countdown and a clear
  * "keep this page open". People otherwise think the app froze and refresh, which loses the result on screen
  * (and, for a deposit, the saved link to it). Closing the page is also asked to be confirmed.
  */
@@ -55,7 +55,7 @@ export function TxProgressOverlay() {
             ? "Confirmed on Kadena. Almost done: saving the details…"
             : over
             ? "Taking a little longer than usual. It was sent and Kadena is still confirming it. Nothing is lost."
-            : "Confirming on the Kadena network. This usually takes under a minute."}
+            : "Confirming on the Kadena network. This usually takes about a minute, and can take up to 2."}
         </p>
         <p id="tx-progress-keep" className="mt-4 flex items-start gap-2 rounded-xl border-2 border-amber-400 bg-amber-50 p-3 text-left text-sm font-medium text-amber-950 dark:bg-amber-950 dark:text-amber-50">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
