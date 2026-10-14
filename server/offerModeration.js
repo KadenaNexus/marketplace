@@ -40,9 +40,22 @@ export async function expireOldOffers(pool, { offers, now = Date.now(), days = e
        LEFT JOIN alert_offers_seen s ON s.offer_id = o.id
       WHERE NOT EXISTS (SELECT 1 FROM hidden_offers h WHERE h.offer_id = o.id)`, [ids]);
   const byId = new Map(open.map((o) => [o.id, o]));
-  const hidden = [];
+  const hidden = [], warned = [];
   for (const row of r.rows) {
-    if (!row.since || now - new Date(row.since).getTime() < days * DAY) continue;
+    if (!row.since) continue;
+    const age = now - new Date(row.since).getTime();
+    // a day before: tell the creator, once per listing period (listing again starts a new one)
+    if (age >= (days - 1) * DAY && age < days * DAY) {
+      const o = byId.get(row.id), code = tradeCode(row.id), hours = Math.max(1, Math.round((days * DAY - age) / 3600000));
+      const sent = await notifyFn(pool, {
+        wallet: o.creator, offer_id: row.id, kind: `expiring-offer-${new Date(row.since).toISOString().slice(0, 16)}`,
+        title: "Your offer expires tomorrow",
+        body: `${code ? `#${code} ` : ""}has been listed ${days - 1} days without a buyer and leaves the market in about ${hours} hour${hours === 1 ? "" : "s"}. Open My trades and tap "Keep listed" to keep it for ${days} more days.`,
+      }).catch((e) => { console.warn("[expiry] warn:", e.message); return null; });
+      if (sent?.created !== false) warned.push(row.id);
+      continue;
+    }
+    if (age < days * DAY) continue;
     const ins = await pool.query("INSERT INTO hidden_offers (offer_id, hidden_by, reason) VALUES ($1, 'auto', 'expired') ON CONFLICT DO NOTHING RETURNING offer_id", [row.id]);
     if (!ins.rows.length) continue;
     hidden.push(row.id);
@@ -53,12 +66,12 @@ export async function expireOldOffers(pool, { offers, now = Date.now(), days = e
       body: `${code ? `#${code} ` : ""}was listed for ${days} days without a buyer, so it is no longer shown in the market. Nothing was locked. Open My trades to list it again for ${days} more days, or delete it.`,
     }).catch((e) => console.warn("[expiry] notify:", e.message));
   }
-  return { hidden };
+  return { hidden, warned };
 }
 
 export function startOfferExpiryWatcher(getPool, everyMs = 30 * 60 * 1000) {
   const tick = () => expireOldOffers(getPool())
-    .then((r) => { if (r.hidden.length) console.log("[expiry] hid expired offers:", r.hidden.length); })
+    .then((r) => { if (r.hidden.length || r.warned?.length) console.log("[expiry] warned:", r.warned?.length || 0, "hid:", r.hidden.length); })
     .catch((e) => console.warn("[expiry]", e.message));
   setTimeout(tick, 60 * 1000);
   return setInterval(tick, everyMs);

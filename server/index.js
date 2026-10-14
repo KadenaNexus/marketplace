@@ -12,7 +12,7 @@ import "dotenv/config";
 import { registerAlertRoutes, startAlertWatcher } from "./alerts.js";
 import { registerMarketRoutes } from "./market.js";
 import { registerTrustRoutes, recheckCompletedOffers } from "./trust.js";
-import { registerOfferModerationRoutes, startOfferExpiryWatcher } from "./offerModeration.js";
+import { registerOfferModerationRoutes, startOfferExpiryWatcher, expiryDays } from "./offerModeration.js";
 import { registerTradeEmailRoutes, emailNotification } from "./tradeEmails.js";
 import { registerNotificationRoutes, startNotificationWatcher, notifyMessage, notifyTradeChangeSoon, notify, onNotificationCreated } from "./notifications.js";
 import { registerTradeTxRoutes, startTradeTxWatcher } from "./tradeTxs.js";
@@ -866,7 +866,9 @@ app.get("/api/offers/:offerId", validateParams(offerIdParamSchema), async (req, 
   const offerId = req.params.offerId;
   try {
     const result = await pool.query(
-      "SELECT offer_id, creator, amount, side, price, min_amount, max_amount, payment_method, fiat_currency, created_at FROM offer_details WHERE offer_id = $1",
+      `SELECT d.offer_id, d.creator, d.amount, d.side, d.price, d.min_amount, d.max_amount, d.payment_method, d.fiat_currency, d.created_at,
+              GREATEST(d.created_at, x.relisted_at) AS listed_since
+         FROM offer_details d LEFT JOIN offer_relists x ON x.offer_id = d.offer_id WHERE d.offer_id = $1`,
       [offerId]
     );
     const row = result.rows[0];
@@ -880,6 +882,9 @@ app.get("/api/offers/:offerId", validateParams(offerIdParamSchema), async (req, 
       paymentMethod: row.payment_method,
       fiatCurrency: row.fiat_currency,
       createdAt: row.created_at,
+      // open offers leave the market OFFER_EXPIRY_DAYS after this (server/offerModeration.js)
+      listedSince: row.listed_since,
+      expiryDays: expiryDays(),
     });
   } catch (err) {
     console.error("GET /api/offers/:offerId", err);

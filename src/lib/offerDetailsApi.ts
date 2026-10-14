@@ -14,6 +14,9 @@ export interface OfferDetails {
   paymentMethod: string;
   fiatCurrency: string;
   createdAt?: string;
+  /** When the current listing period started (posted, or listed again); open offers leave the market expiryDays later */
+  listedSince?: string;
+  expiryDays?: number;
 }
 
 export async function getOfferDetails(offerId: string): Promise<OfferDetails | null> {

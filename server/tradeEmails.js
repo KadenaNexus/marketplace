@@ -20,7 +20,7 @@ const newToken = () => crypto.randomBytes(24).toString("base64url");
 
 /** Which notifications are emailed: trade steps, deadlines, proofs and disputes. Not chat, not new offers. */
 export function emailable(kind) {
-  return /^(accepted|started|funded|locked|paid|marked|completed|refunded|closed|disputed|due-|expired-|proof:|hidden$)/.test(String(kind || ""));
+  return /^(accepted|started|funded|locked|paid|marked|completed|refunded|closed|disputed|due-|expired-|proof:|hidden$|expiring-)/.test(String(kind || ""));
 }
 
 const T = {
