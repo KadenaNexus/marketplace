@@ -21,6 +21,7 @@ import {
   isInsufficientFunds,
 } from "@/lib/kadena";
 import { putOfferDetails } from "@/lib/offerDetailsApi";
+import { setTxLabel, txFinished } from "@/lib/txProgress";
 import { getPayout, hasNetwork, putPayout, stableProblem } from "@/lib/payoutApi";
 import { takeOfferDraft } from "@/lib/repeatOffer";
 import { PayoutInput, type PayoutDraft } from "./PayoutInput";
@@ -201,6 +202,8 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
         side
       );
 
+      // the price and payment details are saved after the chain answers: keep the page covered until then
+      setTxLabel(free ? "Creating your giveaway" : "Creating your offer", { hold: true });
       const signedTx = await signTransaction(tx);
 
       console.debug("[CreateOffer] Sending create-offer tx — API:", getChainwebDebugInfo());
@@ -281,6 +284,7 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
       }
       toast.error("Failed to create offer", { description: hint });
     } finally {
+      txFinished();
       setIsLoading(false);
     }
   };

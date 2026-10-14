@@ -18,6 +18,7 @@ import { useCompletedCounts, useTermsGate } from "./Trust";
 import { NEW_TRADER_MAX_KDA, newTraderProblem } from "@/lib/trust";
 import { repeatOffer } from "@/lib/repeatOffer";
 import { getHiddenOffers, relistOffer } from "@/lib/moderationApi";
+import { setTxLabel, txFinished } from "@/lib/txProgress";
 import { OFFER_LISTING_DAYS, UNFUNDED_TRADE_DAYS } from "@/lib/markets";
 import { getSocket } from "@/hooks/useOnlineStatus";
 import { currencyPrefix, isGiveaway } from "@/lib/markets";
@@ -128,6 +129,22 @@ const PAST_TERMINAL_STATES = ["COMPLETED", "REFUNDED", "CLOSED"] as const;
 const unfundedExpired = (e: Escrow) => e.state === "ACCEPTED" && !!e.acceptedAt && Date.now() - new Date(e.acceptedAt).getTime() > UNFUNDED_TRADE_DAYS * 86400000;
 /** Open offers whose creator has not been active for this many days are faded and listed last. */
 const INACTIVE_DAYS = 3;
+/** Title of the "keep this page open" countdown for each step. */
+function txLabel(action: string, e: Escrow | null | undefined): string {
+  const kda = e ? `${e.amount.toLocaleString("en-US", { maximumFractionDigits: 4 })} KDA` : "the KDA";
+  switch (action) {
+    case "Accept Offer": return "Accepting the offer";
+    case "Deposit": return `Locking ${kda} in escrow`;
+    case "Mark Paid": return "Marking the trade as paid";
+    case "Release": return `Releasing ${kda}`;
+    case "Refund": case "Timeout: Refund (T2)": return `Returning ${kda} to the seller`;
+    case "Delete Offer": return "Deleting the offer";
+    case "Cancel Offer": return "Cancelling the offer";
+    case "Close (T1 Expired)": return "Closing the trade";
+    case "Timeout: Dispute (T3)": return "Moving the trade to dispute";
+    default: return "Confirming your transaction";
+  }
+}
 const CRITICAL_ACTION_LOADING = ["Accept Offer", "Deposit", "Mark Paid", "Release", "Delete Offer"] as const;
 const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena network. This may take up to 60 seconds.";
 
@@ -567,6 +584,8 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
     }
 
     setActionLoading(actionName);
+    // a deposit still saves its link after the chain answers: keep the page covered until then
+    setTxLabel(txLabel(actionName, selectedEscrow), { hold: actionName === "Deposit" });
     // Yield so React paints the "Transaction in progress..." message before wallet/signing
     await new Promise((r) => setTimeout(r, 0));
 
@@ -640,6 +659,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
       }
       toast.error(`${actionName} failed`, { description: desc });
     } finally {
+      txFinished();
       setActionLoading(null);
     }
   };
@@ -773,6 +793,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
     if (!account || !selectedEscrow) return;
 
     setActionLoading("Timeout: Dispute (T3)");
+    setTxLabel(txLabel("Timeout: Dispute (T3)", selectedEscrow));
     await new Promise((r) => setTimeout(r, 0));
 
     try {

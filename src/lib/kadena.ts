@@ -1,3 +1,4 @@
+import { txSettled, txSubmitted } from "./txProgress";
 import {
   type ChainId,
   IUnsignedCommand,
@@ -373,6 +374,7 @@ export async function submitTransaction(signedCmd: any): Promise<string> {
   const keys = data?.requestKeys;
   if (!keys?.length) throw new Error("No requestKeys in send response");
   if (!Array.isArray(cmd)) recordTradeTx(cmd, keys[0]);
+  txSubmitted(keys[0]); // the "keep this page open" countdown, until pollTransaction() has the result
   return keys[0];
 }
 
@@ -415,10 +417,14 @@ export async function fetchTradeTxs(offerId: string): Promise<TradeTx[]> {
  * default is 5 s) shows the result a few seconds sooner on average.
  */
 export async function pollTransaction(requestKey: string) {
-  return kadenaClient.pollOne(
-    { requestKey, chainId: CHAIN_ID, networkId: NETWORK_ID },
-    { interval: 1500, timeout: 4 * 60 * 1000 },
-  );
+  try {
+    return await kadenaClient.pollOne(
+      { requestKey, chainId: CHAIN_ID, networkId: NETWORK_ID },
+      { interval: 1500, timeout: 4 * 60 * 1000 },
+    );
+  } finally {
+    txSettled(requestKey);
+  }
 }
 
 /** Recipient for the "Test transfer 10 KDA" flow. */
