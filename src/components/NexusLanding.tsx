@@ -512,6 +512,7 @@ const COPY: Record<Lang, Copy> = {
 };
 
 const LANG_KEY = "nx-lang";
+const LANG_EVENT = "nx-lang-change";
 
 export function useLang(): [Lang, (l: Lang) => void] {
   const [lang, setLangState] = useState<Lang>(() => {
@@ -523,6 +524,12 @@ export function useLang(): [Lang, (l: Lang) => void] {
     }
     return typeof navigator !== "undefined" && navigator.language.toLowerCase().startsWith("ar") ? "ar" : "en";
   });
+  // every part of the page that reads the language follows a switch (header, landing, buttons)
+  useEffect(() => {
+    const on = (e: Event) => setLangState((e as CustomEvent<Lang>).detail);
+    window.addEventListener(LANG_EVENT, on);
+    return () => window.removeEventListener(LANG_EVENT, on);
+  }, []);
   const setLang = (l: Lang) => {
     setLangState(l);
     try {
@@ -530,6 +537,7 @@ export function useLang(): [Lang, (l: Lang) => void] {
     } catch {
       /* ignore */
     }
+    window.dispatchEvent(new CustomEvent(LANG_EVENT, { detail: l }));
   };
   return [lang, setLang];
 }
