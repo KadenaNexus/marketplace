@@ -12,3 +12,8 @@ export function currencyPrefix(code: string | null | undefined): string {
   if (code === "EUR") return "€";
   return code ? `${code} ` : "";
 }
+
+/** An open offer leaves the market after this many days without a buyer (server: OFFER_EXPIRY_DAYS). */
+export const OFFER_LISTING_DAYS = 7;
+/** An accepted trade nobody funded is filed under Finished after this many days (no KDA was locked). */
+export const UNFUNDED_TRADE_DAYS = 5;

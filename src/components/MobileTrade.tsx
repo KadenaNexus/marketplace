@@ -1,3 +1,4 @@
+import { OFFER_LISTING_DAYS } from "@/lib/markets";
 import { useEffect, useState } from "react";
 import { Check, Clock } from "lucide-react";
 import { T1_SECONDS, T2_SECONDS, T3_SECONDS, type Escrow } from "@/lib/kadena";
@@ -97,7 +98,7 @@ export function YourTurnCard({ escrow: e, me, canAccept }: { escrow: Escrow; me?
         : `Check the price and how you get paid. After you accept, you have 1 hour to lock the ${kdaAmount(e.amount)} KDA in escrow.`;
     } else if (e.creator === me) {
       eyebrow = "Your offer is live";
-      text = "You'll get a notification when someone accepts it.";
+      text = `You'll get a notification when someone accepts it. It stays in the market for ${OFFER_LISTING_DAYS} days.`;
     } else {
       text = "This offer is open.";
     }

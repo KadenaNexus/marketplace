@@ -81,7 +81,7 @@ const COPY: Record<Lang, Copy> = {
         [
           "CREATED",
           "Created",
-          "Seller posted the offer. Nothing is held and no clock is running yet; it stays listed until the seller removes it"
+          "Seller posted the offer. Nothing is held and no trade clock is running yet; it stays listed for 7 days"
         ],
         [
           "ACCEPTED",
@@ -254,8 +254,8 @@ const COPY: Record<Lang, Copy> = {
           "No KDA or money moves when you create or browse offers. The escrow only takes the seller's KDA once a trade is accepted and the seller chooses to fund it."
         ],
         [
-          "An open offer stays listed until you remove it.",
-          "Nothing expires while an offer is waiting for a buyer. The time limits only start once someone accepts: 1 hour to fund, 4 hours to mark the payment, 1 hour to release. If a deadline passes, the contract allows a close, refund or dispute transition depending on the trade stage. These timeout actions require an on-chain transaction."
+          "An open offer stays listed for 7 days.",
+          "If nobody accepts it by then, it leaves the market and you get a notification: list it again with one tap, or delete it. The trade time limits only start once someone accepts: 1 hour to fund, 4 hours to mark the payment, 1 hour to release. If a deadline passes, the contract allows a close, refund or dispute transition depending on the trade stage. These timeout actions require an on-chain transaction."
         ],
         [
           "Ask questions in the chat, but pay only to the trade's details.",
@@ -310,7 +310,7 @@ const COPY: Record<Lang, Copy> = {
         [
           "CREATED",
           "تم الإنشاء",
-          "نشر البائع العرض. لا شيء محجوز ولا عدّاد يعمل بعد؛ يبقى العرض معروضاً حتى يحذفه البائع"
+          "نشر البائع العرض. لا شيء محجوز ولا عدّاد صفقة يعمل بعد؛ يبقى العرض معروضاً 7 أيام"
         ],
         [
           "ACCEPTED",
@@ -483,8 +483,8 @@ const COPY: Record<Lang, Copy> = {
           "لا تتحرك أي عملات KDA أو أموال عند إنشاء العروض أو تصفحها. لا يأخذ الضمان عملات البائع إلا بعد قبول الصفقة واختيار البائع تمويلها."
         ],
         [
-          "يبقى العرض المفتوح معروضاً حتى تحذفه.",
-          "لا شيء ينتهي بينما ينتظر العرض مشترياً. تبدأ المهل الزمنية فقط عندما يقبل أحدهم: ساعة واحدة للتمويل، و4 ساعات لتأشير الدفع، وساعة واحدة للتحرير. عند انتهاء المهلة، يسمح العقد بالإغلاق أو الاسترداد أو نقل الصفقة إلى نزاع، بحسب مرحلتها. وتتطلب هذه الإجراءات إرسال معاملة على السلسلة."
+          "يبقى العرض المفتوح معروضاً 7 أيام.",
+          "إذا لم يقبله أحد خلالها، يُرفع من السوق ويصلك إشعار: أعد عرضه بلمسة واحدة أو احذفه. تبدأ مهل الصفقة فقط عندما يقبل أحدهم: ساعة واحدة للتمويل، و4 ساعات لتأشير الدفع، وساعة واحدة للتحرير. عند انتهاء المهلة، يسمح العقد بالإغلاق أو الاسترداد أو نقل الصفقة إلى نزاع، بحسب مرحلتها. وتتطلب هذه الإجراءات إرسال معاملة على السلسلة."
         ],
         [
           "اسأل في المحادثة، لكن ادفع فقط إلى بيانات الصفقة.",

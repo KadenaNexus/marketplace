@@ -12,7 +12,7 @@ import "dotenv/config";
 import { registerAlertRoutes, startAlertWatcher } from "./alerts.js";
 import { registerMarketRoutes } from "./market.js";
 import { registerTrustRoutes, recheckCompletedOffers } from "./trust.js";
-import { registerOfferModerationRoutes } from "./offerModeration.js";
+import { registerOfferModerationRoutes, startOfferExpiryWatcher } from "./offerModeration.js";
 import { registerTradeEmailRoutes, emailNotification } from "./tradeEmails.js";
 import { registerNotificationRoutes, startNotificationWatcher, notifyMessage, notifyTradeChangeSoon, notify, onNotificationCreated } from "./notifications.js";
 import { registerTradeTxRoutes, startTradeTxWatcher } from "./tradeTxs.js";
@@ -2547,6 +2547,7 @@ async function start() {
     startAlertWatcher(() => pool);
     startNotificationWatcher(() => pool);
     startTradeTxWatcher(() => pool, 15000, (x) => onTradeStepSettled(x));
+    startOfferExpiryWatcher(() => pool);
     // once: drop rating registrations from before they were checked against the chain (kept in *_removed)
     setTimeout(() => recheckCompletedOffers(pool)
       .then((r) => { if (!r.skipped) console.log("[trust] rating registrations re-checked:", JSON.stringify(r)); })

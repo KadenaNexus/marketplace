@@ -17,7 +17,8 @@ import { TradeEmailGate, useNeedsTradeEmail } from "./TradeEmail";
 import { useCompletedCounts, useTermsGate } from "./Trust";
 import { NEW_TRADER_MAX_KDA, newTraderProblem } from "@/lib/trust";
 import { repeatOffer } from "@/lib/repeatOffer";
-import { getHiddenOffers } from "@/lib/moderationApi";
+import { getHiddenOffers, relistOffer } from "@/lib/moderationApi";
+import { OFFER_LISTING_DAYS, UNFUNDED_TRADE_DAYS } from "@/lib/markets";
 import { getSocket } from "@/hooks/useOnlineStatus";
 import { currencyPrefix } from "@/lib/markets";
 import { getPayout } from "@/lib/payoutApi";
@@ -123,6 +124,8 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
 const ACTIVE_STATES = ["ACCEPTED", "FUNDED", "PAID", "DISPUTED"] as const;
 const tradeTotal = (e: Escrow) => `${currencyPrefix(e.fiatCurrency)}${formatFiat(e.amount * e.price)}`;
 const PAST_TERMINAL_STATES = ["COMPLETED", "REFUNDED", "CLOSED"] as const;
+/** Accepted, never funded, for days: nothing is locked and it cannot go ahead, so it is filed under Finished. */
+const unfundedExpired = (e: Escrow) => e.state === "ACCEPTED" && !!e.acceptedAt && Date.now() - new Date(e.acceptedAt).getTime() > UNFUNDED_TRADE_DAYS * 86400000;
 /** Open offers whose creator has not been active for this many days are faded and listed last. */
 const INACTIVE_DAYS = 3;
 const CRITICAL_ACTION_LOADING = ["Accept Offer", "Deposit", "Mark Paid", "Release", "Delete Offer"] as const;
@@ -329,6 +332,17 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
   // Open offers the arbiter hid from the market (forgotten ones): not listed for others; the creator sees a note
   const { data: hiddenList = [] } = useQuery({ queryKey: ["hidden-offers"], queryFn: getHiddenOffers, staleTime: 30 * 1000 });
   const hiddenIds = useMemo(() => new Set(hiddenList.map((h) => h.offerId)), [hiddenList]);
+  const hiddenReasons = useMemo(() => new Map(hiddenList.map((h) => [h.offerId, h.reason as string])), [hiddenList]);
+  const handleRelist = async (e: Escrow) => {
+    if (!account) return;
+    try {
+      await relistOffer(e.offerId, account);
+      queryClient.invalidateQueries({ queryKey: ["hidden-offers"] });
+      toast.success("Back in the market", { description: `Listed for another ${OFFER_LISTING_DAYS} days.` });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not list it again");
+    }
+  };
 
   // Completed trades on the chain: "New trader" on cards, and the new-trader limit when accepting
   const { data: completedMap } = useCompletedCounts(
@@ -1268,19 +1282,22 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
       isSelected={selectedOfferId === e.offerId}
       hasOpenDispute={openDisputeOfferIds.has(e.offerId)}
       inactiveDays={inactiveDaysOf(e)}
-      hiddenByAdmin={e.state === "CREATED" && hiddenIds.has(e.offerId) && e.creator === account?.account}
+      hiddenReason={e.state === "CREATED" && e.creator === account?.account ? hiddenReasons.get(e.offerId) ?? null : null}
+      onRelist={handleRelist}
+      unfundedExpired={unfundedExpired(e)}
       onRepeat={repeatOffer}
     />
   );
+  const live = (e: Escrow) => ACTIVE_STATES.includes(e.state as (typeof ACTIVE_STATES)[number]) && !unfundedExpired(e);
   const mineGroups: [string, Escrow[]][] = viewMode === "mine"
     ? [
         // trades waiting for you first, the most urgent at the top
         ["Your turn", displayedEscrows
-          .filter((e) => ACTIVE_STATES.includes(e.state as (typeof ACTIVE_STATES)[number]) && !openDisputeOfferIds.has(e.offerId) && turnInfo(e, account?.account)?.mine)
+          .filter((e) => live(e) && !openDisputeOfferIds.has(e.offerId) && turnInfo(e, account?.account)?.mine)
           .sort((a, b) => (turnInfo(a, account?.account)?.remaining ?? 1e9) - (turnInfo(b, account?.account)?.remaining ?? 1e9))],
-        ["Waiting for the other side", displayedEscrows.filter((e) => ACTIVE_STATES.includes(e.state as (typeof ACTIVE_STATES)[number]) && (openDisputeOfferIds.has(e.offerId) || !turnInfo(e, account?.account)?.mine))],
+        ["Waiting for the other side", displayedEscrows.filter((e) => live(e) && (openDisputeOfferIds.has(e.offerId) || !turnInfo(e, account?.account)?.mine))],
         ["Your open offers", displayedEscrows.filter((e) => e.state === "CREATED")],
-        ["Finished", displayedEscrows.filter((e) => PAST_TERMINAL_STATES.includes(e.state as (typeof PAST_TERMINAL_STATES)[number]))],
+        ["Finished", displayedEscrows.filter((e) => PAST_TERMINAL_STATES.includes(e.state as (typeof PAST_TERMINAL_STATES)[number]) || unfundedExpired(e))],
       ]
     : [];
 
