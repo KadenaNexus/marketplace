@@ -59,6 +59,8 @@ jobs:
         run: npm run test:proofs
       - name: Run trust and safety tests
         run: npm run test:trust
+      - name: Run offer moderation tests
+        run: npm run test:moderation
   deploy:
     name: deploy
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

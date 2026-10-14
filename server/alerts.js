@@ -76,7 +76,7 @@ export async function fetchChainOffers() {
       if (d.result?.status !== "success") throw new Error(`Pact error: ${d.result?.error?.message || "unknown"}`);
       return (d.result.data || []).map((e) => ({
         id: String(e.id), state: String(e.state || "").toUpperCase(), side: String(e.side || "").toUpperCase() === "BUY" ? "BUY" : "SELL",
-        amount: num(e.amount), creator: String(e.creator || ""), buyer: String(e.buyer || ""),
+        amount: num(e.amount), creator: String(e.creator || ""), buyer: String(e.buyer || ""), arbiter: String(e.arbiter || ""),
         acceptedAt: chainTime(e.acceptedAt), fundedAt: chainTime(e.fundedAt), paidAt: chainTime(e.paidAt),
       }));
     } catch (e) { last = e; if (String(e.message).startsWith("Pact error")) throw e; }
@@ -274,7 +274,9 @@ async function withDetails(pool, chainOffers) {
 export async function runAlertsOnce(pool, { now = Date.now(), chain } = {}) {
   const c = cfg();
   const offers = chain || await fetchChainOffers();
-  const open = offers.filter((o) => o.state === "CREATED");
+  // offers the arbiter hid from the market (server/offerModeration.js) are not announced either
+  const hidden = new Set((await pool.query("SELECT offer_id FROM hidden_offers").catch(() => ({ rows: [] }))).rows.map((r) => r.offer_id));
+  const open = offers.filter((o) => o.state === "CREATED" && !hidden.has(o.id));
 
   // First run: remember what is already open so subscribers are not flooded with old offers.
   if (!(await getState(pool, "initialized"))) {

@@ -4,6 +4,7 @@ import { useWallet } from "@/hooks/useWallet";
 import { listAllEscrows, PLATFORM_ARBITER } from "@/lib/kadena";
 import { listDisputes } from "@/lib/disputeApi";
 import { NeedsAttention } from "@/components/NeedsAttention";
+import { OpenOffersAdmin } from "@/components/OpenOffersAdmin";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -92,6 +93,7 @@ export default function Admin() {
         ) : (
           <NeedsAttention escrows={escrows} account={account} onDone={() => refetchEscrows()} />
         )}
+        <OpenOffersAdmin account={account} />
         <Card>
           <CardHeader>
             <CardTitle>Dispute inbox</CardTitle>

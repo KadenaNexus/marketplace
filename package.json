@@ -19,7 +19,8 @@
     "test:trade-emails": "node --test server/tradeEmails.test.js",
     "test:market": "node --test server/market.test.js",
     "test:proofs": "node --test server/proofs.test.js",
-    "test:trust": "node --test server/trust.test.js"
+    "test:trust": "node --test server/trust.test.js",
+    "test:moderation": "node --test server/offerModeration.test.js"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

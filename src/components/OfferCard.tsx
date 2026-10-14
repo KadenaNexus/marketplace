@@ -37,9 +37,11 @@ interface OfferCardProps {
   inactiveDays?: number | null;
   /** "Post again" for a finished offer you created */
   onRepeat?: (escrow: Escrow) => void;
+  /** Your open offer was hidden from the market by the Marketplace (it looked forgotten) */
+  hiddenByAdmin?: boolean;
 }
 
-export function OfferCard({ escrow, profileMap, ratingSummaryMap, completedMap, onSelect, onDelete, isDeletingOfferId, role, isSelected = false, hasOpenDispute = false, inactiveDays = null, onRepeat }: OfferCardProps) {
+export function OfferCard({ escrow, profileMap, ratingSummaryMap, completedMap, onSelect, onDelete, isDeletingOfferId, role, isSelected = false, hasOpenDispute = false, inactiveDays = null, onRepeat, hiddenByAdmin = false }: OfferCardProps) {
   const { account } = useWallet();
   const isMobile = useIsMobile();
   const [showChat, setShowChat] = useState(false);
@@ -91,6 +93,11 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, completedMap, 
           </div>
         )}
         <TurnLine escrow={hasOpenDispute ? { ...escrow, state: "DISPUTED" } : escrow} me={account?.account} />
+        {hiddenByAdmin && (
+          <p className="mt-2 rounded-lg border border-amber-500/50 bg-amber-500/10 p-2.5 text-sm">
+            Hidden from the market by the Marketplace because it looked forgotten. Nothing is locked. Delete it with ✕, or delete it and post a new one if you still want to trade.
+          </p>
+        )}
         {inactiveDays ? (
           <p className="mt-1 text-sm text-muted-foreground">{otherLabel} last active {inactiveDays} days ago. They may be slow to answer.</p>
         ) : null}

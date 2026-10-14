@@ -12,6 +12,7 @@ import "dotenv/config";
 import { registerAlertRoutes, startAlertWatcher } from "./alerts.js";
 import { registerMarketRoutes } from "./market.js";
 import { registerTrustRoutes, recheckCompletedOffers } from "./trust.js";
+import { registerOfferModerationRoutes } from "./offerModeration.js";
 import { registerTradeEmailRoutes, emailNotification } from "./tradeEmails.js";
 import { registerNotificationRoutes, startNotificationWatcher, notifyMessage, notifyTradeChangeSoon, notify, onNotificationCreated } from "./notifications.js";
 import { registerTradeTxRoutes, startTradeTxWatcher } from "./tradeTxs.js";
@@ -325,6 +326,7 @@ registerMarketRoutes(app);
 registerTradeEmailRoutes(app, { getPool: () => pool, requireAuth: (...a) => requireAuth(...a), sendAuthError: (...a) => sendAuthError(...a) });
 onNotificationCreated((row) => emailNotification(pool, row));
 registerTrustRoutes(app, { getPool: () => pool, requireAuth: (...a) => requireAuth(...a), sendAuthError: (...a) => sendAuthError(...a) });
+registerOfferModerationRoutes(app, { getPool: () => pool, requireAuth: (...a) => requireAuth(...a), sendAuthError: (...a) => sendAuthError(...a) });
 registerPayoutRoutes(app, { getPool: () => pool, requireAuth: (...a) => requireAuth(...a), sendAuthError: (...a) => sendAuthError(...a) });
 registerProofRoutes(app, {
   getPool: () => pool,
