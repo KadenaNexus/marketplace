@@ -5,7 +5,7 @@
 //
 // This plugin reads the English landing copy straight from NexusLanding.tsx (the COPY
 // object) and writes a plain-HTML version of the hero, "How a trade works", "What you
-// need" and the FAQ inside #root. React replaces it on first render, so visitors see the
+// need", the FAQ and "Before your first trade" inside #root. React replaces it on first render, so visitors see the
 // normal app; crawlers and no-JS readers see the same words the app shows. Because it is
 // generated from COPY at every build, it can never drift from the live copy.
 import fs from "node:fs";
@@ -60,7 +60,7 @@ function renderLanding(t: ReturnType<typeof readEnglishCopy>) {
     `<h3>${esc(t.how.deadlineH)}</h3><p>${esc(t.how.deadlineP)}</p>`,
     `<h3>${esc(t.how.wrongH)}</h3><p>${esc(t.how.wrongP)}</p>`,
     `<h2>${esc(t.need.h2)}</h2><p>${esc(t.need.p)}</p><ul>${list(t.need.items)}</ul>`,
-    `<h2>${esc(t.practice.h2)}</h2><p>${esc(t.practice.p)}</p>`,
+    `<h2>${esc(t.rules.h2)}</h2><ul>${list(t.rules.items)}</ul>`,
     `<h2>${esc(t.faq.h2)}</h2>${faq(t.faq.items)}`,
     `<p>${esc(t.start.questionsPre)}<a href="https://t.me/KadenaNexus">${esc(t.start.tg)}</a>${esc(t.start.questionsPost)}</p>`,
     `<p><a href="https://kadena.ws/">Part of Kadena Nexus</a></p>`,

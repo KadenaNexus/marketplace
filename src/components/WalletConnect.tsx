@@ -6,6 +6,7 @@ import { CHAIN_ID } from "@/lib/kadena";
 import { sendTestTransfer } from "@/lib/kadena";
 import { Wallet, LogOut, AlertCircle, Loader2, Send } from "lucide-react";
 import { toast } from "sonner";
+import { LINX_APP_STORE } from "./WalletPicker";
 
 /** `inHeader`: on phones the button says just "Connect" so the header fits on one line. */
 export function WalletConnect({ inHeader = false }: { inHeader?: boolean } = {}) {
@@ -35,12 +36,12 @@ export function WalletConnect({ inHeader = false }: { inHeader?: boolean } = {})
       <div className="flex items-center gap-2 text-warning">
         <AlertCircle className="h-4 w-4" />
         <a 
-          href="https://www.ecko.finance/wallet" 
+          href={LINX_APP_STORE}
           target="_blank" 
           rel="noopener noreferrer"
           className="underline hover:no-underline"
         >
-          Install Ecko Wallet
+          Install Linx Wallet
         </a>
       </div>
     );
