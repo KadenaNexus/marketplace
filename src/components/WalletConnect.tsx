@@ -7,11 +7,16 @@ import { sendTestTransfer } from "@/lib/kadena";
 import { Wallet, LogOut, AlertCircle, Loader2, Send } from "lucide-react";
 import { toast } from "sonner";
 import { LINX_APP_STORE } from "./WalletPicker";
+import { useLang } from "./NexusLanding";
 
 /** `inHeader`: on phones the button says just "Connect" so the header fits on one line. */
 export function WalletConnect({ inHeader = false }: { inHeader?: boolean } = {}) {
   const { account, isConnecting, isConnected, isWalletAvailable, error, connect, disconnect } = useWallet();
   const { data: chainBalance } = useAppChainBalance(isConnected ? account?.account : undefined);
+  const [lang] = useLang();
+  const t = lang === "ar"
+    ? { short: "ربط", full: "اربط المحفظة", connecting: "جارٍ الربط..." }
+    : { short: "Connect", full: "Connect Wallet", connecting: "Connecting..." };
   const [isSending, setIsSending] = useState(false);
 
   const handleTestTransfer = async () => {
@@ -100,7 +105,7 @@ export function WalletConnect({ inHeader = false }: { inHeader?: boolean } = {})
         className="gap-2"
       >
         <Wallet className="h-4 w-4" />
-        {isConnecting ? "Connecting..." : inHeader ? <><span className="sm:hidden">Connect</span><span className="hidden sm:inline">Connect Wallet</span></> : "Connect Wallet"}
+        {isConnecting ? t.connecting : inHeader ? <><span className="sm:hidden">{t.short}</span><span className="hidden sm:inline">{t.full}</span></> : t.full}
       </Button>
       {error && (
         <span className="text-xs text-destructive">{error}</span>
