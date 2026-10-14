@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { txFinished } from "@/lib/txProgress";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
@@ -62,6 +63,7 @@ export function NeedsAttention({ escrows, account, onDone }: { escrows: Escrow[]
     } catch (err) {
       toast.error(err instanceof Error ? err.message : failed);
     } finally {
+      txFinished();
       setBusy(null);
     }
   }
