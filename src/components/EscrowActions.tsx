@@ -122,7 +122,7 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
   const [registeringCompletion, setRegisteringCompletion] = useState(false);
 
 const ACTIVE_STATES = ["ACCEPTED", "FUNDED", "PAID", "DISPUTED"] as const;
-const tradeTotal = (e: Escrow) => `${currencyPrefix(e.fiatCurrency)}${formatFiat(e.amount * e.price)}`;
+const tradeTotal = (e: Escrow) => `${currencyPrefix(e.fiatCurrency)}${formatFiat(e.amount * e.price, e.fiatCurrency)}`;
 const PAST_TERMINAL_STATES = ["COMPLETED", "REFUNDED", "CLOSED"] as const;
 /** Accepted, never funded, for days: nothing is locked and it cannot go ahead, so it is filed under Finished. */
 const unfundedExpired = (e: Escrow) => e.state === "ACCEPTED" && !!e.acceptedAt && Date.now() - new Date(e.acceptedAt).getTime() > UNFUNDED_TRADE_DAYS * 86400000;
@@ -946,7 +946,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                 <Label className="text-muted-foreground">Price</Label>
                 <p className="font-mono text-2xl font-bold text-primary">
                   {currencyPrefix(selectedEscrow.fiatCurrency)}
-                  {formatFiat(selectedEscrow.price)} <span className="text-base">per KDA</span>
+                  {formatFiat(selectedEscrow.price, selectedEscrow.fiatCurrency)} <span className="text-base">per KDA</span>
                 </p>
                 <MarketTag price={selectedEscrow.price} currency={selectedEscrow.fiatCurrency} className="text-sm" />
               </div>
@@ -961,7 +961,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                 <div className="mt-1 rounded-lg border-2 border-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 dark:border-emerald-700 px-4 py-3">
                   <p className="font-mono text-2xl font-bold text-emerald-800 dark:text-emerald-200">
                     {currencyPrefix(selectedEscrow.fiatCurrency)}
-                    {formatFiat(selectedEscrow.amount * selectedEscrow.price)}
+                    {formatFiat(selectedEscrow.amount * selectedEscrow.price, selectedEscrow.fiatCurrency)}
                   </p>
                   <p className="mt-3 text-sm text-muted-foreground leading-snug">
                     Kadena buyer must send this exact amount to the seller using the selected payment method. After sending the payment, the buyer must upload a screenshot of the transaction confirmation in the chat.
@@ -972,7 +972,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                 <ProofCard escrow={selectedEscrow} />
                 <PayoutCard
                   escrow={selectedEscrow}
-                  total={`${currencyPrefix(selectedEscrow.fiatCurrency)}${formatFiat(selectedEscrow.amount * selectedEscrow.price)}`}
+                  total={`${currencyPrefix(selectedEscrow.fiatCurrency)}${formatFiat(selectedEscrow.amount * selectedEscrow.price, selectedEscrow.fiatCurrency)}`}
                 />
               </div>
               <div className={isMobile ? "hidden" : undefined}>

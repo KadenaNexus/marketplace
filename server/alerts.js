@@ -21,13 +21,14 @@
  *   ALERTS_MAIL_LOG       write emails to this JSONL file instead of sending (testing)
  *   ALERTS_CHAIN_API      comma-separated Chainweb base URLs (default: community, chaddex, kadena)
  */
+import { isToken } from "./tokens.js";
 import crypto from "crypto";
 import fs from "fs";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { z } from "zod";
 import { hash as blakeHash } from "@kadena/cryptography-utils";
 
-export const ALERT_CURRENCIES = ["USD", "EUR", "SAR", "AED"];
+export const ALERT_CURRENCIES = ["USD", "EUR", "SAR", "AED", "BRO"];
 
 const env = (k, d) => (process.env[k] && process.env[k].trim() !== "" ? process.env[k].trim() : d);
 const cfg = () => ({
@@ -102,7 +103,7 @@ const T = {
     dir: "ltr",
     selling: (a) => `Selling ${a} KDA`, buying: (a) => `Buying ${a} KDA`,
     price: "Price per KDA", total: "Total", pay: "Payment", posted: "Posted", view: "View offer", isNew: "New",
-    subjOne: (o) => `New offer: ${o.side === "SELL" ? `${fmtNum(o.amount)} KDA for sale` : `buying ${fmtNum(o.amount)} KDA`}${o.price ? ` at ${fmtNum(o.price, 6)} ${o.currency}` : ""}`,
+    subjOne: (o) => `New offer: ${o.side === "SELL" ? `${fmtNum(o.amount)} KDA for sale` : `buying ${fmtNum(o.amount)} KDA`}${o.price ? ` at ${fmtNum(o.price, isToken(o.currency) ? 12 : 6)} ${o.currency}` : ""}`,
     subjMany: (n) => `${n} new KDA offers on Kadena P2P Marketplace`,
     subjDigest: (n) => `Today's KDA offers: ${n} open on Kadena P2P Marketplace`,
     introOne: "A new offer matching your alerts was just posted.",
@@ -127,7 +128,7 @@ const T = {
     dir: "rtl",
     selling: (a) => `بيع ${a} KDA`, buying: (a) => `شراء ${a} KDA`,
     price: "السعر لكل KDA", total: "الإجمالي", pay: "طريقة الدفع", posted: "نُشر", view: "عرض العرض", isNew: "جديد",
-    subjOne: (o) => `عرض جديد: ${o.side === "SELL" ? `${fmtNum(o.amount)} KDA للبيع` : `شراء ${fmtNum(o.amount)} KDA`}${o.price ? ` بسعر ${fmtNum(o.price, 6)} ${o.currency}` : ""}`,
+    subjOne: (o) => `عرض جديد: ${o.side === "SELL" ? `${fmtNum(o.amount)} KDA للبيع` : `شراء ${fmtNum(o.amount)} KDA`}${o.price ? ` بسعر ${fmtNum(o.price, isToken(o.currency) ? 12 : 6)} ${o.currency}` : ""}`,
     subjMany: (n) => `${n} عروض KDA جديدة في سوق Kadena P2P`,
     subjDigest: (n) => `عروض KDA اليوم: ${n} عرض مفتوح في سوق Kadena P2P`,
     introOne: "نُشر للتو عرض جديد يطابق تنبيهاتك.",
@@ -183,7 +184,7 @@ function offerCard(o, lang, markNew) {
   const t = T[lang] || T.en;
   const head = o.side === "SELL" ? t.selling(fmtNum(o.amount)) : t.buying(fmtNum(o.amount));
   const rows = [];
-  if (o.price) rows.push([t.price, `${fmtNum(o.price, 6)} ${o.currency}`], [t.total, `${fmtMoney(o.price * o.amount)} ${o.currency}`]);
+  if (o.price) rows.push([t.price, `${fmtNum(o.price, isToken(o.currency) ? 12 : 6)} ${o.currency}`], [t.total, `${(isToken(o.currency) ? fmtNum(o.price * o.amount, 12) : fmtMoney(o.price * o.amount))} ${o.currency}`]);
   if (o.methods?.length) rows.push([t.pay, o.methods.join(", ")]);
   const tag = markNew ? ` <span style="background:${ORANGE};color:#fff;font-size:11px;border-radius:4px;padding:1px 6px">${esc(t.isNew)}</span>` : "";
   return `<div style="border:1px solid ${LINE};border-radius:10px;padding:14px;margin:12px 0">
@@ -194,7 +195,7 @@ ${button(`${cfg().url}/?offer=${encodeURIComponent(o.id)}`, t.view)}</div>`;
 function offerText(o, lang) {
   const t = T[lang] || T.en;
   const head = o.side === "SELL" ? t.selling(fmtNum(o.amount)) : t.buying(fmtNum(o.amount));
-  return [head, o.price ? `${t.price}: ${fmtNum(o.price, 6)} ${o.currency} · ${t.total}: ${fmtMoney(o.price * o.amount)} ${o.currency}` : "", o.methods?.length ? `${t.pay}: ${o.methods.join(", ")}` : "", `${cfg().url}/?offer=${encodeURIComponent(o.id)}`].filter(Boolean).join("\n");
+  return [head, o.price ? `${t.price}: ${fmtNum(o.price, isToken(o.currency) ? 12 : 6)} ${o.currency} · ${t.total}: ${(isToken(o.currency) ? fmtNum(o.price * o.amount, 12) : fmtMoney(o.price * o.amount))} ${o.currency}` : "", o.methods?.length ? `${t.pay}: ${o.methods.join(", ")}` : "", `${cfg().url}/?offer=${encodeURIComponent(o.id)}`].filter(Boolean).join("\n");
 }
 
 const MAX_IN_EMAIL = 10;

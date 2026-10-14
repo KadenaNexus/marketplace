@@ -42,6 +42,7 @@ export const PAYOUT_HINTS: Record<string, string> = {
   Wise: "Wise email or account details",
   Revolut: "Revtag (@name) or phone",
   "Cash App": "$Cashtag",
+  BRO: "Your Kadena account (k:…)",
 };
 export const payoutHint = (method: string) => PAYOUT_HINTS[method] ?? `Your ${method} details`;
 
@@ -56,13 +57,26 @@ export const STABLE_NETWORKS = [
   { id: "Solana", label: "Solana", hint: "32–44 letters and digits", re: /^[1-9A-HJ-NP-Za-km-z]{32,44}$/ },
 ] as const;
 export const isStable = (method: string) => /^(USDT|USDC)$/i.test(method);
-export const networkLabel = (id?: string) => STABLE_NETWORKS.find((n) => n.id === id)?.label ?? id ?? "";
 
-/** Problem with a USDT/USDC payout line, or null when it looks right (or is not a stablecoin). */
+/* ---------- Kadena tokens (BRO): paid to a Kadena account on one chain ---------- */
+const KADENA_ACCOUNT = /^(k:[0-9a-f]{64}|[wrcu]:[A-Za-z0-9_\-.:]{3,256})$/;
+const TOKEN_CHAINS: Record<string, string[]> = { BRO: ["2", "1"] };
+export const isTokenMethod = (method: string) => method.toUpperCase() in TOKEN_CHAINS;
+/** USDT/USDC need a network, Kadena tokens a chain: both are kept in `network`. */
+export const hasNetwork = (method: string) => isStable(method) || isTokenMethod(method);
+type Net = { id: string; label: string; hint: string; re: RegExp };
+export function networksFor(method: string): readonly Net[] {
+  if (isTokenMethod(method)) return TOKEN_CHAINS[method.toUpperCase()].map((c) => ({ id: c, label: `Kadena chain ${c}`, hint: "k:… (your Kadena account)", re: KADENA_ACCOUNT }));
+  return STABLE_NETWORKS;
+}
+export const networkLabel = (id?: string) => STABLE_NETWORKS.find((n) => n.id === id)?.label ?? (id && /^\d+$/.test(id) ? `Kadena chain ${id}` : id ?? "");
+
+/** Problem with a USDT/USDC/BRO payout line, or null when it looks right (or needs no network). */
 export function stableProblem(item: { method: string; value: string; network?: string }): string | null {
-  if (!isStable(item.method) || !item.value.trim()) return null;
-  const n = STABLE_NETWORKS.find((x) => x.id === item.network);
-  if (!n) return `${item.method}: choose the network`;
-  if (!n.re.test(item.value.trim())) return `${item.method}: that doesn't look like a valid ${n.label} address (${n.hint})`;
+  if (!hasNetwork(item.method) || !item.value.trim()) return null;
+  const token = isTokenMethod(item.method);
+  const n = networksFor(item.method).find((x) => x.id === item.network);
+  if (!n) return `${item.method}: choose the ${token ? "chain" : "network"}`;
+  if (!n.re.test(item.value.trim())) return token ? `${item.method}: that doesn't look like a Kadena account (k:…)` : `${item.method}: that doesn't look like a valid ${n.label} address (${n.hint})`;
   return null;
 }

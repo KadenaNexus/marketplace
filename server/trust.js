@@ -10,7 +10,7 @@
  */
 import { fetchChainOffers } from "./alerts.js";
 
-export const TERMS_VERSION = "2026-10-13";
+export const TERMS_VERSION = "2026-10-14"; // BRO added as a way to pay
 
 /** Completed trades per wallet from all escrows (either side counts). */
 export function completedCounts(offers) {

@@ -14,7 +14,7 @@ export default function Terms() {
       </header>
       <main className="container mx-auto max-w-2xl px-4 py-10">
         <h1 className="font-display text-3xl font-bold">Terms and risks</h1>
-        <p className="mt-2 text-sm text-muted-foreground">Version of 13 October 2026. Every trader accepts these once, before the first trade.</p>
+        <p className="mt-2 text-sm text-muted-foreground">Version of 14 October 2026. Every trader accepts these once, before the first trade.</p>
         <TermsText className="mt-8" />
       </main>
     </div>

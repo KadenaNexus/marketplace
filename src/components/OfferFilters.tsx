@@ -1,5 +1,5 @@
 import { Input } from "@/components/ui/input";
-import { PAYMENT_METHODS } from "@/lib/markets";
+import { PAYMENT_METHODS, TOKEN_CURRENCIES } from "@/lib/markets";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -173,7 +173,7 @@ export function OfferFiltersComponent({ filters, onFiltersChange, role }: OfferF
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="ALL">All Payment</SelectItem>
-              {PAYMENT_METHODS.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
+              {[...PAYMENT_METHODS, ...Object.keys(TOKEN_CURRENCIES)].map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
             </SelectContent>
           </Select>
         </div>

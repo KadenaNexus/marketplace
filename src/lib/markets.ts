@@ -6,7 +6,21 @@
 export const PAYMENT_METHODS = ["USDT", "USDC", "Wise", "Revolut"] as const;
 export const FIAT_CURRENCIES = ["USD", "EUR", "SAR", "AED"] as const;
 
-/** "$12.50", "€12.50", "SAR 12.50", "AED 12.50" */
+/**
+ * Kadena tokens a seller can be paid in. Each is its own pricing currency (a BRO offer is priced in BRO per KDA),
+ * paid by a token transfer on the Kadena chain to the seller's account. See server/tokens.js.
+ */
+export const TOKEN_CURRENCIES = {
+  BRO: { name: "BRO", note: "Kadena token", chains: ["2", "1"] },
+} as const;
+export type TokenCode = keyof typeof TOKEN_CURRENCIES;
+export const isTokenCurrency = (code: string | null | undefined): code is TokenCode => !!code && code in TOKEN_CURRENCIES;
+/** Currencies an offer can be priced in: fiat (paid by USDT, USDC, Wise or Revolut) and Kadena tokens (paid in that token). */
+export const PAY_CURRENCIES = [...FIAT_CURRENCIES, ...(Object.keys(TOKEN_CURRENCIES) as TokenCode[])];
+/** Payment methods that fit a currency: a token offer is paid in that token only. */
+export const methodsFor = (currency: string): readonly string[] => (isTokenCurrency(currency) ? [currency] : PAYMENT_METHODS);
+
+/** "$12.50", "€12.50", "SAR 12.50", "AED 12.50", "BRO 0.00000200" */
 export function currencyPrefix(code: string | null | undefined): string {
   if (code === "USD") return "$";
   if (code === "EUR") return "€";

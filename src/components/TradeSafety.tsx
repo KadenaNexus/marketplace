@@ -14,6 +14,7 @@ import { offerMethods } from "./PayoutCard";
 const methodsText = (e: Escrow) => offerMethods(e).join(" or ") || "the payment method you agreed on";
 const refHint = (e: Escrow) => {
   const m = offerMethods(e);
+  if (m.some((x) => /^bro$/i.test(x))) return "Request key of the BRO transfer (from Linx or the Kadena explorer)";
   if (m.some((x) => /usdt|usdc/i.test(x))) return "Transaction ID (hash) of the USDT/USDC transfer";
   return "Transfer reference from Wise or Revolut";
 };

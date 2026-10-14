@@ -57,7 +57,7 @@ const COPY: Record<Lang, Copy> = {
     "switchAria": "Switch to Arabic",
     "hero": {
       "h1": "Trade KDA person to person, with the coins held in escrow",
-      "p": "Made for your phone with Linx Wallet. Pick an offer, pay by USDT, USDC, Wise or Revolut, and the seller's KDA stays locked in a Pact contract on Chain 1 until they confirm your payment. An arbiter settles it if something goes wrong.",
+      "p": "Made for your phone with Linx Wallet. Pick an offer, pay by USDT, USDC, Wise, Revolut or BRO, and the seller's KDA stays locked in a Pact contract on Chain 1 until they confirm your payment. An arbiter settles it if something goes wrong.",
       "try": "Watch a trade (2 min)",
       "note": "No account, no ID check and no platform fee. You confirm an email for trade notices and pay only Kadena network gas."
     },
@@ -136,7 +136,7 @@ const COPY: Record<Lang, Copy> = {
         ],
         [
           "The buyer pays and marks it paid",
-          "The exact amount, to the payment details shown in the trade, by USDT, USDC, Wise or Revolut. Then a screenshot of the transfer as proof."
+          "The exact amount, to the payment details shown in the trade, by USDT, USDC, Wise, Revolut or BRO. Then a screenshot of the transfer as proof."
         ],
         [
           "The seller releases the KDA",
@@ -185,7 +185,7 @@ const COPY: Record<Lang, Copy> = {
           "Kept by the platform"
         ]
       ],
-      "note": "Payments by USDT, USDC, Wise or Revolut happen between you and the other trader, outside the contract. Check the money has arrived before you release, and follow the rules that apply where you live."
+      "note": "Payments by USDT, USDC, Wise, Revolut or BRO happen between you and the other trader, outside the contract. Check the money has arrived before you release, and follow the rules that apply where you live."
     },
     "need": {
       "h2": "What you need before you start",
@@ -201,7 +201,7 @@ const COPY: Record<Lang, Copy> = {
         ],
         [
           "A payment method the other side accepts",
-          "USDT, USDC, Wise or Revolut, whichever the offer lists. Bank transfers are not used. The payment happens between the two of you, outside the contract."
+          "USDT, USDC, Wise, Revolut or BRO, whichever the offer lists. Bank transfers are not used. The payment happens between the two of you, outside the contract."
         ],
         [
           "An email for trade notices",
@@ -286,7 +286,7 @@ const COPY: Record<Lang, Copy> = {
     "switchAria": "التبديل إلى الإنجليزية",
     "hero": {
       "h1": "تداول KDA من شخص إلى شخص، والعملات محفوظة في الضمان",
-      "p": "مصمم لجوالك مع محفظة Linx. اختر عرضاً وادفع عبر USDT أو USDC أو Wise أو Revolut، وتبقى عملات KDA الخاصة بالبائع مقفلة في عقد Pact على السلسلة 1 حتى يؤكد استلام دفعتك. ويتدخل المحكّم لتسوية الأمر إذا حدث خطأ.",
+      "p": "مصمم لجوالك مع محفظة Linx. اختر عرضاً وادفع عبر USDT أو USDC أو Wise أو Revolut أو BRO، وتبقى عملات KDA الخاصة بالبائع مقفلة في عقد Pact على السلسلة 1 حتى يؤكد استلام دفعتك. ويتدخل المحكّم لتسوية الأمر إذا حدث خطأ.",
       "try": "شاهد صفقة (دقيقتان)",
       "note": "لا حساب ولا تحقق من الهوية ولا رسوم منصة. تؤكد بريداً إلكترونياً لإشعارات الصفقات، وتدفع فقط رسوم شبكة Kadena."
     },
@@ -365,7 +365,7 @@ const COPY: Record<Lang, Copy> = {
         ],
         [
           "يدفع المشتري ويؤشّر على الدفع",
-          "المبلغ الدقيق، إلى بيانات الدفع الظاهرة في الصفقة، عبر USDT أو USDC أو Wise أو Revolut. ثم يرفع لقطة شاشة للتحويل كإثبات."
+          "المبلغ الدقيق، إلى بيانات الدفع الظاهرة في الصفقة، عبر USDT أو USDC أو Wise أو Revolut أو BRO. ثم يرفع لقطة شاشة للتحويل كإثبات."
         ],
         [
           "يحرّر البائع عملات KDA",
@@ -414,7 +414,7 @@ const COPY: Record<Lang, Copy> = {
           "تحتفظ به المنصة"
         ]
       ],
-      "note": "تتم المدفوعات عبر USDT أو USDC أو Wise أو Revolut بينك وبين المتداول الآخر، خارج العقد. تأكد من وصول المبلغ قبل التحرير، والتزم بالأنظمة المعمول بها في بلدك."
+      "note": "تتم المدفوعات عبر USDT أو USDC أو Wise أو Revolut أو BRO بينك وبين المتداول الآخر، خارج العقد. تأكد من وصول المبلغ قبل التحرير، والتزم بالأنظمة المعمول بها في بلدك."
     },
     "need": {
       "h2": "ما تحتاجه قبل البدء",
@@ -430,7 +430,7 @@ const COPY: Record<Lang, Copy> = {
         ],
         [
           "طريقة دفع يقبلها الطرف الآخر",
-          "USDT أو USDC أو Wise أو Revolut، حسب ما يدرجه العرض. لا نستخدم التحويلات البنكية. يتم الدفع بينكما خارج العقد."
+          "USDT أو USDC أو Wise أو Revolut أو BRO، حسب ما يدرجه العرض. لا نستخدم التحويلات البنكية. يتم الدفع بينكما خارج العقد."
         ],
         [
           "بريد إلكتروني لإشعارات الصفقات",

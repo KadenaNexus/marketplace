@@ -21,7 +21,7 @@ import {
   isInsufficientFunds,
 } from "@/lib/kadena";
 import { putOfferDetails } from "@/lib/offerDetailsApi";
-import { getPayout, isStable, putPayout, stableProblem } from "@/lib/payoutApi";
+import { getPayout, hasNetwork, putPayout, stableProblem } from "@/lib/payoutApi";
 import { takeOfferDraft } from "@/lib/repeatOffer";
 import { PayoutInput, type PayoutDraft } from "./PayoutInput";
 import { TradeCode } from "./TradeCode";
@@ -29,7 +29,7 @@ import { authProof } from "@/lib/session";
 import { Plus, Loader2, ShoppingCart, Store, Info } from "lucide-react";
 import { toast } from "sonner";
 
-import { FIAT_CURRENCIES, PAYMENT_METHODS, currencyPrefix } from "@/lib/markets";
+import { PAY_CURRENCIES, PAYMENT_METHODS, TOKEN_CURRENCIES, currencyPrefix, isTokenCurrency, methodsFor } from "@/lib/markets";
 import { useMarket, vsMarket, vsMarketText } from "@/lib/market";
 import { formatFiat } from "@/lib/utils";
 import { TradeEmailGate, useNeedsTradeEmail } from "./TradeEmail";
@@ -94,6 +94,20 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Currency: fiat (paid by USDT, USDC, Wise, Revolut) or a Kadena token (paid in that token on the chain).
+  // Prices in a token are a different unit altogether, so switching between the two clears the price.
+  const changeCurrency = (c: string) => {
+    const wasToken = isTokenCurrency(fiatCurrency), token = isTokenCurrency(c);
+    setFiatCurrency(c);
+    if (wasToken !== token) setPrice("");
+    if (token) {
+      setPaymentMethods([c]);
+      if (account) setPayout((p) => (p[c]?.value ? p : { ...p, [c]: { value: account.account, network: TOKEN_CURRENCIES[c].chains[0] } }));
+    } else if (wasToken) {
+      setPaymentMethods((ms) => ms.filter((m) => (PAYMENT_METHODS as readonly string[]).includes(m)));
+    }
+  };
+
   const handlePaymentMethodToggle = (method: string, checked: boolean) => {
     if (checked) {
       setPaymentMethods([...paymentMethods, method]);
@@ -122,7 +136,7 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
     }
 
     const payoutItems = paymentMethods
-      .map((m) => ({ method: m, value: (payout[m]?.value ?? "").trim(), ...(isStable(m) ? { network: payout[m]?.network } : {}) }))
+      .map((m) => ({ method: m, value: (payout[m]?.value ?? "").trim(), ...(hasNetwork(m) ? { network: payout[m]?.network } : {}) }))
       .filter((x) => x.value);
     const payoutProblem = payoutItems.map(stableProblem).find(Boolean);
     if (side === "SELL" && payoutProblem) {
@@ -363,7 +377,7 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
               return (
                 <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
                   <span className="text-muted-foreground">
-                    Market: <b className="text-foreground">{currencyPrefix(fiatCurrency)}{formatFiat(ref)}</b>
+                    Market: <b className="text-foreground">{currencyPrefix(fiatCurrency)}{formatFiat(ref, fiatCurrency)}</b>
                     {pct !== null && <> · <span className={Math.abs(pct) >= 15 ? "font-medium text-amber-700 dark:text-amber-300" : ""}>yours is {vsMarketText(pct)}</span></>}
                   </span>
                   <Button type="button" variant="outline" size="sm" className="h-8" onClick={() => setPrice(String(Number(ref.toPrecision(4))))}>Use market price</Button>
@@ -395,14 +409,14 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
 
           {/* Fiat Currency */}
           <div className="space-y-2">
-            <Label htmlFor="fiatCurrency">Fiat Currency</Label>
-            <Select value={fiatCurrency} onValueChange={setFiatCurrency}>
+            <Label htmlFor="fiatCurrency">Currency</Label>
+            <Select value={fiatCurrency} onValueChange={changeCurrency}>
               <SelectTrigger id="fiatCurrency">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {FIAT_CURRENCIES.map((curr) => (
-                  <SelectItem key={curr} value={curr}>{curr}</SelectItem>
+                {PAY_CURRENCIES.map((curr) => (
+                  <SelectItem key={curr} value={curr}>{isTokenCurrency(curr) ? `${curr} (${TOKEN_CURRENCIES[curr].note})` : curr}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -411,8 +425,13 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
           {/* Payment Methods */}
           <div className="space-y-2">
             <Label>Payment Methods</Label>
+            {isTokenCurrency(fiatCurrency) ? (
+              <p className="rounded-lg border p-4 text-sm">
+                Paid in <b>{fiatCurrency}</b>: the buyer sends {fiatCurrency} on the Kadena chain to {side === "SELL" ? "your" : "the seller's"} Kadena account. Price and total are in {fiatCurrency}.
+              </p>
+            ) : (
             <div className="grid grid-cols-2 gap-3 p-4 border rounded-lg">
-              {PAYMENT_METHODS.map((method) => (
+              {methodsFor(fiatCurrency).map((method) => (
                 <div key={method} className="flex items-center space-x-2">
                   <Checkbox
                     id={`payment-${method}`}
@@ -428,6 +447,7 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
                 </div>
               ))}
             </div>
+            )}
             {paymentMethods.length === 0 && (
               <p className="text-xs text-destructive">Select at least one payment method</p>
             )}
