@@ -283,7 +283,8 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
       escrows.map((e) => {
         const details = offerDetailsMap[e.offerId];
         return details
-          ? { ...e, price: details.price, paymentMethod: details.paymentMethod, fiatCurrency: details.fiatCurrency }
+          ? { ...e, price: details.price, paymentMethod: details.paymentMethod, fiatCurrency: details.fiatCurrency,
+              listedUntil: details.listedSince && details.expiryDays ? new Date(new Date(details.listedSince).getTime() + details.expiryDays * 86400000).toISOString() : undefined }
           : e;
       }),
     [escrows, offerDetailsMap]
@@ -338,7 +339,8 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
     try {
       await relistOffer(e.offerId, account);
       queryClient.invalidateQueries({ queryKey: ["hidden-offers"] });
-      toast.success("Back in the market", { description: `Listed for another ${OFFER_LISTING_DAYS} days.` });
+      queryClient.invalidateQueries({ queryKey: ["offer-details"] });
+      toast.success(hiddenReasons.has(e.offerId) ? "Back in the market" : "Kept listed", { description: `Listed for another ${OFFER_LISTING_DAYS} days.` });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not list it again");
     }
@@ -1268,6 +1270,12 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
     ...displayedEscrows.filter((e) => inactiveDaysOf(e) === null),
     ...displayedEscrows.filter((e) => inactiveDaysOf(e) !== null),
   ];
+  // Your own open offer in its last day on the market: say so, with "Keep listed"
+  const expiresInHours = (e: Escrow): number | null => {
+    if (e.state !== "CREATED" || e.creator !== account?.account || hiddenIds.has(e.offerId) || !e.listedUntil) return null;
+    const left = new Date(e.listedUntil).getTime() - Date.now();
+    return left > 0 && left <= 86400000 ? Math.max(1, Math.round(left / 3600000)) : null;
+  };
   const offerCard = (e: Escrow) => (
     <OfferCard
       key={e.offerId}
@@ -1285,6 +1293,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
       hiddenReason={e.state === "CREATED" && e.creator === account?.account ? hiddenReasons.get(e.offerId) ?? null : null}
       onRelist={handleRelist}
       unfundedExpired={unfundedExpired(e)}
+      expiresInHours={expiresInHours(e)}
       onRepeat={repeatOffer}
     />
   );

@@ -44,9 +44,11 @@ interface OfferCardProps {
   onRelist?: (escrow: Escrow) => void;
   /** Accepted but never funded for days: filed under Finished */
   unfundedExpired?: boolean;
+  /** Your open offer leaves the market within a day: hours left */
+  expiresInHours?: number | null;
 }
 
-export function OfferCard({ escrow, profileMap, ratingSummaryMap, completedMap, onSelect, onDelete, isDeletingOfferId, role, isSelected = false, hasOpenDispute = false, inactiveDays = null, onRepeat, hiddenReason = null, onRelist, unfundedExpired = false }: OfferCardProps) {
+export function OfferCard({ escrow, profileMap, ratingSummaryMap, completedMap, onSelect, onDelete, isDeletingOfferId, role, isSelected = false, hasOpenDispute = false, inactiveDays = null, onRepeat, hiddenReason = null, onRelist, unfundedExpired = false, expiresInHours = null }: OfferCardProps) {
   const { account } = useWallet();
   const isMobile = useIsMobile();
   const [showChat, setShowChat] = useState(false);
@@ -112,6 +114,16 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, completedMap, 
             Hidden from the market by the Marketplace because it looked forgotten. Nothing is locked. Delete it with ✕, or delete it and post a new one if you still want to trade.
           </p>
         ) : null}
+        {expiresInHours !== null && (
+          <div className="mt-2 rounded-lg border border-amber-500/50 bg-amber-500/10 p-2.5 text-sm">
+            <p>Leaves the market in about {expiresInHours} hour{expiresInHours === 1 ? "" : "s"} unless you keep it listed.</p>
+            {onRelist && (
+              <Button size="sm" variant="outline" className="mt-2 h-10 w-full gap-2" onClick={() => onRelist(escrow)}>
+                <RotateCcw className="h-4 w-4" />Keep listed for {OFFER_LISTING_DAYS} more days
+              </Button>
+            )}
+          </div>
+        )}
         {unfundedExpired && (
           <p className="mt-2 rounded-lg bg-muted p-2.5 text-sm text-muted-foreground">
             Never funded: no KDA was locked, and this trade can no longer go ahead.

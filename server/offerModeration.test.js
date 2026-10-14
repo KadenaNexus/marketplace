@@ -111,3 +111,30 @@ test("open offers listed longer than the limit expire; the creator can list them
   await pool.query("DELETE FROM offer_details WHERE offer_id LIKE 'mod-test-%'");
   await pool.query("DELETE FROM offer_relists WHERE offer_id LIKE 'mod-test-%'");
 });
+
+test("a day before expiry the creator is told once; keeping it listed restarts the clock", async () => {
+  await pool.query("DELETE FROM offer_details WHERE offer_id LIKE 'mod-test-%'");
+  await pool.query("DELETE FROM offer_relists WHERE offer_id LIKE 'mod-test-%'");
+  await pool.query("DELETE FROM hidden_offers WHERE offer_id LIKE 'mod-test-%'");
+  const DAY = 86400000, now = Date.now();
+  const offers = [{ id: "mod-test-soon", state: "CREATED", side: "SELL", amount: 9, creator: MAKER, buyer: "", arbiter: ARB }];
+  await pool.query(`INSERT INTO offer_details (offer_id, creator, amount, side, price, min_amount, max_amount, created_at) VALUES ('mod-test-soon', $1, 9, 'SELL', 0.01, 9, 9, to_timestamp($2 / 1000.0))`, [MAKER, now - 6.5 * DAY]);
+  const sent = [];
+  const notifyFn = async (_p, n) => { const dup = sent.some((x) => x.kind === n.kind); if (!dup) sent.push(n); return { created: !dup }; };
+  let r = await expireOldOffers(pool, { offers, now, days: 7, notifyFn });
+  assert.deepEqual([r.hidden, r.warned], [[], ["mod-test-soon"]], "warned, not hidden");
+  assert.match(sent[0].kind, /^expiring-offer-/);
+  assert.match(sent[0].body, /in about 12 hours/);
+  r = await expireOldOffers(pool, { offers, now: now + 3600000, days: 7, notifyFn });
+  assert.deepEqual(r.warned, [], "only once");
+  assert.equal(sent.length, 1);
+  // keep listed: the creator relists before it expires
+  chain.set("mod-test-soon", offers[0]);
+  assert.equal((await fetch(`${base}/api/offers/mod-test-soon/relist`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ wallet: MAKER, publicKey: "x", signedCmd: "x" }) })).status, 200);
+  r = await expireOldOffers(pool, { offers, now: Date.now() + 2 * DAY, days: 7, notifyFn });
+  assert.deepEqual([r.hidden, r.warned], [[], []], "a fresh listing period");
+  r = await expireOldOffers(pool, { offers, now: Date.now() + 6.5 * DAY, days: 7, notifyFn });
+  assert.deepEqual(r.warned, ["mod-test-soon"], "warned again at the end of the new period");
+  await pool.query("DELETE FROM offer_details WHERE offer_id LIKE 'mod-test-%'");
+  await pool.query("DELETE FROM offer_relists WHERE offer_id LIKE 'mod-test-%'");
+});

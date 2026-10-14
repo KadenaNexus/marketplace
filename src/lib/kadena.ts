@@ -116,6 +116,8 @@ export interface Escrow {
   price: number;
   paymentMethod: string; // JSON string array
   fiatCurrency: string;
+  /** Open offers: when this listing period ends (from the server, see OFFER_LISTING_DAYS) */
+  listedUntil?: string;
 }
 
 export interface WalletAccount {
