@@ -9,7 +9,6 @@
 //
 //   <NexusLanding
 //     walletAction={<ExistingWalletButton />}
-//     practiceVideoUrl="https://www.youtube.com/embed/XXXX"  // optional, see README
 //     contractUrl="https://github.com/.../p2p-escrow-v10.pact" // optional, see README
 //   />
 //
@@ -42,14 +41,13 @@ type Copy = {
   how: {
     h2: string; p: string; steps: Pair[]; deadlineH: string; deadlineP: string; wrongH: string; wrongP: string;
     personH: string; personPre: string; personLink: string; personPost: string;
-    watch: string; watchCaption: string;
+    watchCaption: string;
   };
   compare: { h2: string; p: string; ours: string; theirs: string; rows: Triple[]; note: string };
   need: { h2: string; p: string; items: Pair[] };
-  practice: { h2: string; p: string; steps: Pair[]; videoCaption: string; videoPlaceholder: string };
   faq: { h2: string; items: Pair[] };
   rules: { h2: string; items: Pair[] };
-  start: { lead: string; getEcko: string; connect: string; questionsPre: string; tg: string; questionsPost: string };
+  start: { lead: string; getWallet: string; connect: string; questionsPre: string; tg: string; questionsPost: string };
 };
 
 const COPY: Record<Lang, Copy> = {
@@ -59,9 +57,9 @@ const COPY: Record<Lang, Copy> = {
     "switchAria": "Switch to Arabic",
     "hero": {
       "h1": "Trade KDA person to person, with the coins held in escrow",
-      "p": "Agree a price with another trader and pay the way you both choose. The seller's KDA stays locked in a Pact contract on Chain 1 until they confirm your payment, and an arbiter settles it if something goes wrong.",
-      "try": "Try it with 1 KDA first",
-      "note": "No sign-up and no platform fee. You pay only Kadena network gas."
+      "p": "Made for your phone with Linx Wallet. Pick an offer, pay by USDT, USDC, Wise or Revolut, and the seller's KDA stays locked in a Pact contract on Chain 1 until they confirm your payment. An arbiter settles it if something goes wrong.",
+      "try": "Watch a trade (2 min)",
+      "note": "No account, no ID check and no platform fee. You confirm an email for trade notices and pay only Kadena network gas."
     },
     "stats": {
       "openOffers": "open offers right now",
@@ -88,17 +86,17 @@ const COPY: Record<Lang, Copy> = {
         [
           "ACCEPTED",
           "Accepted",
-          "A buyer took it and opened the chat"
+          "A buyer accepted it. The seller now has 1 hour to fund"
         ],
         [
           "FUNDED",
           "Funded",
-          "2,500 KDA locked in the escrow contract"
+          "500 KDA locked in the escrow contract"
         ],
         [
           "PAID",
           "Paid",
-          "Buyer sent $24.00 by Wise and marked it paid"
+          "Buyer sent $4.80 by Wise and marked it paid, with a screenshot as proof"
         ],
         [
           "COMPLETED",
@@ -113,9 +111,9 @@ const COPY: Record<Lang, Copy> = {
       "view": "View the contract source",
       "review": "Escrow deadlines",
       "reviewSub": "fund · mark paid · release",
-      "bounty": "Contract behavior",
-      "bountyValue": "On-chain",
-      "bountySub": "timeouts follow Pact rules",
+      "bounty": "New traders",
+      "bountyValue": "500 KDA",
+      "bountySub": "per trade, until 3 completed trades",
       "fee": "Platform fee",
       "feeValue": "None",
       "feeSub": "only network gas, under 0.0001 KDA per transaction"
@@ -126,35 +124,34 @@ const COPY: Record<Lang, Copy> = {
       "steps": [
         [
           "The seller posts an offer",
-          "Amount, price per KDA, and the payment methods they accept."
+          "Amount, price per KDA, the payment methods they accept and where they want to be paid."
         ],
         [
           "A buyer accepts it",
-          "Both sides agree the details in the trade chat."
+          "Anyone can chat with the seller about an offer before accepting. Accepting is one approval in Linx."
         ],
         [
           "The seller funds the escrow",
-          "Their KDA is now locked in the contract. Neither side can move it alone."
+          "Their KDA is now locked in the contract. Neither side can move it alone. The buyer gets an email and a notification."
         ],
         [
           "The buyer pays and marks it paid",
-          "Off-chain, by USDT, USDC, Wise or Revolut, whichever the seller listed."
+          "The exact amount, to the payment details shown in the trade, by USDT, USDC, Wise or Revolut. Then a screenshot of the transfer as proof."
         ],
         [
           "The seller releases the KDA",
-          "Once the money has arrived, the contract sends the KDA to the buyer."
+          "After checking the money really arrived in their own account, the seller releases and the contract sends the KDA to the buyer."
         ]
       ],
       "deadlineH": "If a deadline passes",
       "deadlineP": "After acceptance, the seller can close an unfunded trade if 1 hour passes. After funding, the seller can refund if the buyer does not mark payment within 4 hours. If the seller does not release within 1 hour after payment is marked, the trade can move to a dispute for arbiter review. These timeout actions require an on-chain transaction.",
       "wrongH": "If something goes wrong",
-      "wrongP": "When a trade is disputed, the arbiter named in the contract reviews the evidence and records a decision on-chain, sending escrow to the buyer or back to the seller.",
+      "wrongP": "Either side can open a dispute from the trade. The arbiter named in the contract reviews the evidence both sides upload and records a decision on-chain, sending the KDA to the buyer or back to the seller.",
       "personH": "If you need a person",
       "personPre": "The Kadena Nexus team is in the ",
       "personLink": "Telegram group",
       "personPost": ". Ask there before, during, or after a trade, and we'll help you through it.",
-      "watch": "Watch a trade (2 min)",
-      "watchCaption": "A full trade between two phones with Linx wallet, from posting the offer to the KDA arriving. Demo with sample accounts."
+      "watchCaption": "A full trade between two phones with Linx Wallet, from posting the offer to the KDA arriving. Demo with sample accounts."
     },
     "compare": {
       "h2": "Escrow on Kadena or a centralized P2P desk",
@@ -169,7 +166,7 @@ const COPY: Record<Lang, Copy> = {
         ],
         [
           "What you need to start",
-          "A Kadena wallet",
+          "Linx Wallet on your phone and an email",
           "An exchange account, usually with ID checks"
         ],
         [
@@ -192,11 +189,11 @@ const COPY: Record<Lang, Copy> = {
     },
     "need": {
       "h2": "What you need before you start",
-      "p": "Three things. No account and no identity check.",
+      "p": "Four things. No account and no identity check.",
       "items": [
         [
-          "A Kadena wallet",
-          "The Linx Wallet app on your phone. Your wallet is your account; there is no separate sign-up."
+          "Linx Wallet on your phone",
+          "The Marketplace is made for phones: open marketplace.kadena.ws in your phone's browser and connect Linx. Your wallet is your account. Each step of a trade is one approval in Linx, and connecting the first time takes two (the connection and a sign-in)."
         ],
         [
           "A little KDA on Chain 1 for gas",
@@ -204,33 +201,13 @@ const COPY: Record<Lang, Copy> = {
         ],
         [
           "A payment method the other side accepts",
-          "USDT, USDC, Wise or Revolut, whichever the offer lists. The payment happens between the two of you, outside the contract."
+          "USDT, USDC, Wise or Revolut, whichever the offer lists. Bank transfers are not used. The payment happens between the two of you, outside the contract."
+        ],
+        [
+          "An email for trade notices",
+          "Confirmed once with a link. Every step of your trades comes by email (when to fund, pay or release, and before time runs out), like an exchange. Only you and the Marketplace see it."
         ]
       ]
-    },
-    "practice": {
-      "h2": "Not sure yet? Do a practice trade with yourself",
-      "p": "You don't have to trust a stranger to learn how the escrow works. Use two of your own wallets, a small amount such as 1 KDA, and walk through every step. The only cost is Kadena network gas.",
-      "steps": [
-        [
-          "Connect wallet A and post a sell offer",
-          "1 KDA, any price, any payment method. It's only you on both sides."
-        ],
-        [
-          "Open a private window, connect wallet B, accept the offer",
-          "Now you're the buyer. Open the trade chat and see what the other side sees."
-        ],
-        [
-          "Fund from A, mark paid from B, release from A",
-          "Watch the 1 KDA go into the contract and come out to wallet B. Every step shows up on Chainweb."
-        ],
-        [
-          "Then trade for real, still starting small",
-          "Pick a seller with completed trades and a good rating, and keep the first few trades modest while you get comfortable."
-        ]
-      ],
-      "videoCaption": "30 seconds: a 1 KDA practice trade from start to finish",
-      "videoPlaceholder": "Your screen recording goes here"
     },
     "faq": {
       "h2": "Questions people ask before their first trade",
@@ -258,6 +235,14 @@ const COPY: Record<Lang, Copy> = {
         [
           "Can I cancel?",
           "Before anyone accepts, delete your offer at any time; it holds nothing. After acceptance, cancellation follows the trade rules: a seller who has not funded yet can cancel, and once funded the KDA only leaves escrow by release, refund, or the arbiter's decision."
+        ],
+        [
+          "Why is there a 500 KDA limit?",
+          "To keep first trades small. Until a wallet has 3 completed trades, each offer it creates or accepts is limited to 500 KDA. After that there is no limit, and offer cards stop showing \"New trader\"."
+        ],
+        [
+          "Can I use it on a computer?",
+          "The Marketplace works on phones. On a computer you'll see a QR code that opens it on your phone."
         ]
       ]
     },
@@ -273,23 +258,23 @@ const COPY: Record<Lang, Copy> = {
           "Nothing expires while an offer is waiting for a buyer. The time limits only start once someone accepts: 1 hour to fund, 4 hours to mark the payment, 1 hour to release. If a deadline passes, the contract allows a close, refund or dispute transition depending on the trade stage. These timeout actions require an on-chain transaction."
         ],
         [
-          "Agree the details in the trade chat first.",
-          "Once an offer is accepted, a private chat opens between you and the other party. Settle the payment method, account name and timing there before anyone funds or pays."
+          "Ask questions in the chat, but pay only to the trade's details.",
+          "You can message the creator of any offer before accepting. Where to pay is set by the seller and shown in the trade; never pay to other details sent in chat."
         ],
         [
           "Act when it's your turn.",
-          "Fund, mark as paid, or release without delay."
+          "You'll get an email and a notification. Fund, mark as paid, or release without delay."
         ],
         [
           "Finished transactions can't be reversed.",
-          "Check the payment has arrived before you release. If anything looks wrong, open a dispute instead of releasing."
+          "Check the payment has arrived in your own account before you release; a screenshot can be faked. If anything looks wrong, open a dispute instead of releasing."
         ]
       ]
     },
     "start": {
-      "lead": "Connect your wallet to see open offers and post your own.",
-      "getEcko": "Get Linx Wallet",
-      "connect": "Connect wallet",
+      "lead": "Connect Linx Wallet on your phone to see open offers and post your own.",
+      "getWallet": "Get Linx Wallet",
+      "connect": "Connect Linx",
       "questionsPre": "Questions first? Ask in the ",
       "tg": "Kadena Nexus Telegram group",
       "questionsPost": "."
@@ -301,9 +286,9 @@ const COPY: Record<Lang, Copy> = {
     "switchAria": "التبديل إلى الإنجليزية",
     "hero": {
       "h1": "تداول KDA من شخص إلى شخص، والعملات محفوظة في الضمان",
-      "p": "اتفق على السعر مع متداول آخر وادفع بالطريقة التي تختارانها. تبقى عملات KDA الخاصة بالبائع مقفلة في عقد Pact على السلسلة 1 حتى يؤكد استلام دفعتك، ويتدخل المحكّم لتسوية الأمر إذا حدث خطأ.",
-      "try": "جرّبه أولاً بـ 1 KDA",
-      "note": "لا تسجيل ولا رسوم منصة. تدفع فقط رسوم شبكة Kadena."
+      "p": "مصمم لجوالك مع محفظة Linx. اختر عرضاً وادفع عبر USDT أو USDC أو Wise أو Revolut، وتبقى عملات KDA الخاصة بالبائع مقفلة في عقد Pact على السلسلة 1 حتى يؤكد استلام دفعتك. ويتدخل المحكّم لتسوية الأمر إذا حدث خطأ.",
+      "try": "شاهد صفقة (دقيقتان)",
+      "note": "لا حساب ولا تحقق من الهوية ولا رسوم منصة. تؤكد بريداً إلكترونياً لإشعارات الصفقات، وتدفع فقط رسوم شبكة Kadena."
     },
     "stats": {
       "openOffers": "عرضاً مفتوحاً الآن",
@@ -330,17 +315,17 @@ const COPY: Record<Lang, Copy> = {
         [
           "ACCEPTED",
           "تم القبول",
-          "قبِل مشترٍ العرض وفُتحت المحادثة"
+          "قبِل مشترٍ العرض. أمام البائع الآن ساعة واحدة للتمويل"
         ],
         [
           "FUNDED",
           "تم التمويل",
-          "2,500 KDA مقفلة في عقد الضمان"
+          "500 KDA مقفلة في عقد الضمان"
         ],
         [
           "PAID",
           "تم الدفع",
-          "أرسل المشتري 24.00$ عبر Wise وأشّر على الدفع"
+          "أرسل المشتري 4.80$ عبر Wise وأشّر على الدفع مع لقطة شاشة كإثبات"
         ],
         [
           "COMPLETED",
@@ -355,9 +340,9 @@ const COPY: Record<Lang, Copy> = {
       "view": "اطّلع على كود العقد",
       "review": "مهل الضمان",
       "reviewSub": "التمويل · تأشير الدفع · التحرير",
-      "bounty": "قواعد العقد",
-      "bountyValue": "على السلسلة",
-      "bountySub": "تتبع المهل قواعد Pact",
+      "bounty": "المتداولون الجدد",
+      "bountyValue": "500 KDA",
+      "bountySub": "لكل صفقة، حتى إكمال 3 صفقات",
       "fee": "رسوم المنصة",
       "feeValue": "لا توجد",
       "feeSub": "فقط رسوم الشبكة، أقل من 0.0001 KDA لكل معاملة"
@@ -368,34 +353,33 @@ const COPY: Record<Lang, Copy> = {
       "steps": [
         [
           "ينشر البائع عرضاً",
-          "الكمية، والسعر لكل KDA، وطرق الدفع التي يقبلها."
+          "الكمية، والسعر لكل KDA، وطرق الدفع التي يقبلها، وأين يريد استلام المبلغ."
         ],
         [
           "يقبل مشترٍ العرض",
-          "يتفق الطرفان على التفاصيل في محادثة الصفقة."
+          "يمكن لأي شخص محادثة البائع حول العرض قبل قبوله. والقبول موافقة واحدة في Linx."
         ],
         [
           "يموّل البائع الضمان",
-          "تصبح عملات KDA مقفلة في العقد. لا يستطيع أي طرف تحريكها بمفرده."
+          "تصبح عملات KDA مقفلة في العقد. لا يستطيع أي طرف تحريكها بمفرده. ويصل المشتري بريد وإشعار."
         ],
         [
           "يدفع المشتري ويؤشّر على الدفع",
-          "خارج السلسلة، عبر USDT أو USDC أو Wise أو Revolut، حسب ما أدرجه البائع."
+          "المبلغ الدقيق، إلى بيانات الدفع الظاهرة في الصفقة، عبر USDT أو USDC أو Wise أو Revolut. ثم يرفع لقطة شاشة للتحويل كإثبات."
         ],
         [
           "يحرّر البائع عملات KDA",
-          "بعد وصول المبلغ، يرسل العقد عملات KDA إلى المشتري."
+          "بعد أن يتأكد البائع من وصول المبلغ فعلاً إلى حسابه، يحرّر العملات ويرسلها العقد إلى المشتري."
         ]
       ],
       "deadlineH": "إذا انتهت المهلة",
       "deadlineP": "بعد القبول، يستطيع البائع إغلاق الصفقة غير الممولة إذا مرت ساعة. وبعد التمويل، يستطيع استرداد العملات إذا لم يؤشّر المشتري على الدفع خلال 4 ساعات. وإذا لم يحرّر البائع العملات خلال ساعة من تأشير الدفع، يمكن نقل الصفقة إلى نزاع لمراجعة المحكّم. تتطلب هذه الإجراءات إرسال معاملة على السلسلة.",
       "wrongH": "إذا حدث خطأ",
-      "wrongP": "عندما تصبح الصفقة محل نزاع، يراجع المحكّم المذكور في العقد الأدلة ويسجّل قراراً على السلسلة بإرسال عملات الضمان إلى المشتري أو إعادتها إلى البائع.",
+      "wrongP": "يستطيع أي طرف فتح نزاع من داخل الصفقة. يراجع المحكّم المذكور في العقد الأدلة التي يرفعها الطرفان ويسجّل قراراً على السلسلة بإرسال عملات KDA إلى المشتري أو إعادتها إلى البائع.",
       "personH": "إذا احتجت إلى شخص",
       "personPre": "فريق Kadena Nexus موجود في ",
       "personLink": "مجموعة تيليجرام",
       "personPost": ". اسأل هناك قبل الصفقة أو أثناءها أو بعدها، وسنساعدك خطوة بخطوة.",
-      "watch": "شاهد صفقة (دقيقتان)",
       "watchCaption": "صفقة كاملة بين هاتفين بمحفظة Linx، من نشر العرض حتى وصول KDA. عرض توضيحي بحسابات تجريبية (الشرح في الفيديو بالإنجليزية)."
     },
     "compare": {
@@ -411,7 +395,7 @@ const COPY: Record<Lang, Copy> = {
         ],
         [
           "ما تحتاجه للبدء",
-          "محفظة Kadena",
+          "محفظة Linx على جوالك وبريد إلكتروني",
           "حساب في منصة تداول، غالباً مع التحقق من الهوية"
         ],
         [
@@ -434,11 +418,11 @@ const COPY: Record<Lang, Copy> = {
     },
     "need": {
       "h2": "ما تحتاجه قبل البدء",
-      "p": "ثلاثة أشياء فقط. لا حساب ولا تحقق من الهوية.",
+      "p": "أربعة أشياء. لا حساب ولا تحقق من الهوية.",
       "items": [
         [
-          "محفظة Kadena",
-          "تطبيق محفظة Linx على جوالك. المحفظة هي حسابك؛ لا يوجد تسجيل منفصل."
+          "محفظة Linx على جوالك",
+          "السوق مصمم للجوال: افتح marketplace.kadena.ws في متصفح جوالك واربط Linx. المحفظة هي حسابك. كل خطوة في الصفقة موافقة واحدة في Linx، وأول ربط يحتاج موافقتين (الربط وتسجيل الدخول)."
         ],
         [
           "قليل من KDA على السلسلة 1 لرسوم الشبكة",
@@ -446,33 +430,13 @@ const COPY: Record<Lang, Copy> = {
         ],
         [
           "طريقة دفع يقبلها الطرف الآخر",
-          "USDT أو USDC أو Wise أو Revolut، حسب ما يدرجه العرض. يتم الدفع بينكما خارج العقد."
+          "USDT أو USDC أو Wise أو Revolut، حسب ما يدرجه العرض. لا نستخدم التحويلات البنكية. يتم الدفع بينكما خارج العقد."
+        ],
+        [
+          "بريد إلكتروني لإشعارات الصفقات",
+          "تؤكده مرة واحدة برابط. تصلك كل خطوة من صفقاتك بالبريد (متى تموّل أو تدفع أو تحرّر، وقبل انتهاء المهلة)، كما في منصات التداول. لا يراه غيرك وغير السوق."
         ]
       ]
-    },
-    "practice": {
-      "h2": "لست متأكداً بعد؟ جرّب صفقة مع نفسك",
-      "p": "لا تحتاج إلى الثقة بشخص غريب لتتعلم كيف يعمل الضمان. استخدم محفظتين من محافظك، ومبلغاً صغيراً مثل 1 KDA، وامشِ عبر كل خطوة. التكلفة الوحيدة هي رسوم شبكة Kadena.",
-      "steps": [
-        [
-          "اربط المحفظة A وانشر عرض بيع",
-          "1 KDA، بأي سعر، وبأي طريقة دفع. أنت وحدك على الطرفين."
-        ],
-        [
-          "افتح نافذة خاصة، اربط المحفظة B، واقبل العرض",
-          "الآن أنت المشتري. افتح محادثة الصفقة وشاهد ما يراه الطرف الآخر."
-        ],
-        [
-          "موّل من A، أشّر على الدفع من B، وحرّر من A",
-          "شاهد 1 KDA تدخل العقد وتخرج إلى المحفظة B. كل خطوة تظهر على Chainweb."
-        ],
-        [
-          "ثم تداول فعلياً، مع البدء بمبالغ صغيرة",
-          "اختر بائعاً لديه صفقات مكتملة وتقييم جيد، وأبقِ صفقاتك الأولى متواضعة حتى تشعر بالراحة."
-        ]
-      ],
-      "videoCaption": "30 ثانية: صفقة تدريبية بـ 1 KDA من البداية إلى النهاية",
-      "videoPlaceholder": "تسجيل الشاشة يوضع هنا"
     },
     "faq": {
       "h2": "أسئلة يطرحها الناس قبل صفقتهم الأولى",
@@ -500,6 +464,14 @@ const COPY: Record<Lang, Copy> = {
         [
           "هل يمكنني الإلغاء؟",
           "قبل أن يقبل أحد، احذف عرضك في أي وقت؛ فهو لا يحجز شيئاً. بعد القبول، يتبع الإلغاء قواعد الصفقة: البائع الذي لم يموّل بعد يمكنه الإلغاء، وبعد التمويل لا تخرج عملات KDA من الضمان إلا بالتحرير أو الاسترداد أو قرار المحكّم."
+        ],
+        [
+          "لماذا يوجد حد 500 KDA؟",
+          "لتبقى الصفقات الأولى صغيرة. إلى أن تكمل المحفظة 3 صفقات، يكون كل عرض تنشئه أو تقبله بحد أقصى 500 KDA. بعد ذلك لا يوجد حد، ولا تظهر عبارة \"متداول جديد\" على عروضها."
+        ],
+        [
+          "هل يمكنني استخدامه على الكمبيوتر؟",
+          "السوق يعمل على الجوال. على الكمبيوتر سترى رمز QR يفتحه على جوالك."
         ]
       ]
     },
@@ -515,23 +487,23 @@ const COPY: Record<Lang, Copy> = {
           "لا شيء ينتهي بينما ينتظر العرض مشترياً. تبدأ المهل الزمنية فقط عندما يقبل أحدهم: ساعة واحدة للتمويل، و4 ساعات لتأشير الدفع، وساعة واحدة للتحرير. عند انتهاء المهلة، يسمح العقد بالإغلاق أو الاسترداد أو نقل الصفقة إلى نزاع، بحسب مرحلتها. وتتطلب هذه الإجراءات إرسال معاملة على السلسلة."
         ],
         [
-          "اتفقا على التفاصيل في محادثة الصفقة أولاً.",
-          "بعد قبول العرض، تُفتح محادثة خاصة بينك وبين الطرف الآخر. حددا فيها طريقة الدفع واسم الحساب والتوقيت قبل أن يموّل أو يدفع أي طرف."
+          "اسأل في المحادثة، لكن ادفع فقط إلى بيانات الصفقة.",
+          "يمكنك مراسلة صاحب أي عرض قبل قبوله. مكان الدفع يحدده البائع ويظهر داخل الصفقة؛ لا تدفع أبداً إلى بيانات أخرى تُرسل في المحادثة."
         ],
         [
           "تصرّف عندما يأتي دورك.",
-          "موّل، أو أشّر على الدفع، أو حرّر دون تأخير."
+          "سيصلك بريد وإشعار. موّل، أو أشّر على الدفع، أو حرّر دون تأخير."
         ],
         [
           "الصفقات المكتملة لا يمكن عكسها.",
-          "تأكد من وصول الدفعة قبل التحرير. إذا بدا أي شيء خاطئاً، افتح نزاعاً بدلاً من التحرير."
+          "تأكد من وصول الدفعة إلى حسابك قبل التحرير؛ فلقطة الشاشة يمكن تزويرها. إذا بدا أي شيء خاطئاً، افتح نزاعاً بدلاً من التحرير."
         ]
       ]
     },
     "start": {
-      "lead": "اربط محفظتك لترى العروض المفتوحة وتنشر عرضك.",
-      "getEcko": "احصل على محفظة Linx",
-      "connect": "اربط المحفظة",
+      "lead": "اربط محفظة Linx على جوالك لترى العروض المفتوحة وتنشر عرضك.",
+      "getWallet": "احصل على محفظة Linx",
+      "connect": "اربط Linx",
       "questionsPre": "لديك أسئلة أولاً؟ اسأل في ",
       "tg": "مجموعة Kadena Nexus على تيليجرام",
       "questionsPost": "."
@@ -603,7 +575,7 @@ function ExampleTrade({ t }: { t: Copy["example"] }) {
       <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 border-b border-border pb-5 text-sm">
         <div>
           <dt className="text-muted-foreground">{t.amount}</dt>
-          <dd dir="ltr" className="font-display text-lg font-semibold tabular-nums">2,500 KDA</dd>
+          <dd dir="ltr" className="font-display text-lg font-semibold tabular-nums">500 KDA</dd>
         </div>
         <div>
           <dt className="text-muted-foreground">{t.price}</dt>
@@ -613,7 +585,7 @@ function ExampleTrade({ t }: { t: Copy["example"] }) {
         </div>
         <div>
           <dt className="text-muted-foreground">{t.buyerPays}</dt>
-          <dd dir="ltr" className="font-display text-lg font-semibold tabular-nums">$24.00</dd>
+          <dd dir="ltr" className="font-display text-lg font-semibold tabular-nums">$4.80</dd>
         </div>
         <div>
           <dt className="text-muted-foreground">{t.payWith}</dt>
@@ -653,21 +625,18 @@ const WALKTHROUGH_POSTER = "/marketplace-walkthrough.jpg";
 
 export type NexusLandingProps = {
   walletAction: ReactNode;
-  /** Embed URL (YouTube/Vimeo) or a direct .mp4/.webm link to the 30-second practice-trade recording. */
-  practiceVideoUrl?: string;
   /** Link to the contract source (GitHub file or explorer page). The "View the contract source" link hides when empty. */
   contractUrl?: string;
   /** Arrived from an offer alert email while not connected: say why to connect. */
   fromAlert?: boolean;
 };
 
-export default function NexusLanding({ walletAction, practiceVideoUrl, contractUrl, fromAlert }: NexusLandingProps) {
+export default function NexusLanding({ walletAction, contractUrl, fromAlert }: NexusLandingProps) {
   const [lang, setLang] = useLang();
   const t = COPY[lang];
   const rtl = lang === "ar";
   const h2 = "font-display text-[clamp(1.8rem,3vw,2.5rem)] font-semibold leading-tight";
   const link = "font-semibold text-primary hover:underline";
-  const isFile = !!practiceVideoUrl && /\.(mp4|webm|mov)(\?|$)/i.test(practiceVideoUrl);
 
   return (
     <div className="font-sans text-foreground" dir={rtl ? "rtl" : "ltr"} lang={lang}>
@@ -692,15 +661,12 @@ export default function NexusLanding({ walletAction, practiceVideoUrl, contractU
           <p className="mt-5 max-w-[36rem] text-lg leading-relaxed text-muted-foreground">{t.hero.p}</p>
           <div className="mt-8 flex flex-wrap items-center gap-3">
             {walletAction}
-            <a href="#practice" className="inline-flex h-11 items-center rounded-full border border-border px-5 font-semibold text-foreground hover:border-primary">
-              {t.hero.try}
+            <a href="#watch" className="inline-flex h-11 items-center gap-2 rounded-full border border-border px-5 font-semibold text-foreground hover:border-primary">
+              <span aria-hidden="true" className="text-xs text-primary">▶</span>{t.hero.try}
             </a>
           </div>
           <OfferAlertsButton lang={lang} variant="secondary" className="mt-3 h-11 rounded-full px-5" />
           <p className="mt-5 text-sm text-muted-foreground">{t.hero.note}</p>
-          <a href="#watch" className={`mt-3 inline-flex items-center gap-2 text-sm ${link}`}>
-            <span aria-hidden="true">▶</span>{t.how.watch}
-          </a>
         </div>
         <ExampleTrade t={t.example} />
       </section>
@@ -797,7 +763,23 @@ export default function NexusLanding({ walletAction, practiceVideoUrl, contractU
             <h2 className={h2}>{t.compare.h2}</h2>
             <p className="max-w-[38rem] text-muted-foreground">{t.compare.p}</p>
           </div>
-          <div className="mt-10 overflow-x-auto">
+          {/* phones: one card per question, both answers stacked */}
+          <dl className="mt-8 grid gap-3 sm:hidden">
+            {t.compare.rows.map(([row, ours, theirs]) => (
+              <div key={row} className="rounded-lg border border-border p-4">
+                <dt className="text-sm font-medium text-muted-foreground">{row}</dt>
+                <dd className="mt-2 border-s-2 border-primary ps-3">
+                  <span className="block text-xs font-semibold text-primary">{t.compare.ours}</span>
+                  <span className="font-medium">{ours}</span>
+                </dd>
+                <dd className="mt-2 border-s-2 border-border ps-3 text-muted-foreground">
+                  <span className="block text-xs font-semibold">{t.compare.theirs}</span>
+                  {theirs}
+                </dd>
+              </div>
+            ))}
+          </dl>
+          <div className="mt-10 hidden overflow-x-auto sm:block">
             <table className="w-full min-w-[40rem] border-collapse text-start">
               <thead>
                 <tr className="border-b border-border text-sm text-muted-foreground">
@@ -831,45 +813,6 @@ export default function NexusLanding({ walletAction, practiceVideoUrl, contractU
           <ol className="grid gap-4">
             {t.need.items.map(([title, d], k) => (
               <li key={title} className="grid grid-cols-[2.5rem_1fr] gap-x-3 rounded-lg border border-border bg-card p-5">
-                <span className="font-display text-xl font-bold text-primary">{k + 1}</span>
-                <span>
-                  <b className="font-semibold">{title}</b>
-                  <span className="mt-1 block text-muted-foreground">{d}</span>
-                </span>
-              </li>
-            ))}
-          </ol>
-        </div>
-      </section>
-
-      {/* Practice trade */}
-      <section id="practice" className="border-t border-border">
-        <div className="mx-auto grid max-w-6xl gap-10 px-5 py-16 lg:grid-cols-[5fr_7fr] lg:gap-16 lg:py-20">
-          <div className="min-w-0">
-            <h2 className={h2}>{t.practice.h2}</h2>
-            <p className="mt-4 max-w-[36rem] text-muted-foreground">{t.practice.p}</p>
-            {practiceVideoUrl && (
-              <figure className="mt-8">
-                <div className="aspect-video overflow-hidden rounded-lg border border-border bg-card">
-                  {isFile ? (
-                    <video src={practiceVideoUrl} controls playsInline className="h-full w-full" />
-                  ) : (
-                    <iframe
-                      src={practiceVideoUrl}
-                      title={t.practice.videoCaption}
-                      className="h-full w-full"
-                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                      allowFullScreen
-                    />
-                  )}
-                </div>
-                <figcaption className="mt-2 text-sm text-muted-foreground">{t.practice.videoCaption}</figcaption>
-              </figure>
-            )}
-          </div>
-          <ol className="grid gap-0 border-t border-border">
-            {t.practice.steps.map(([title, d], k) => (
-              <li key={title} className="grid grid-cols-[2.5rem_1fr] gap-x-3 border-b border-border py-4">
                 <span className="font-display text-xl font-bold text-primary">{k + 1}</span>
                 <span>
                   <b className="font-semibold">{title}</b>
@@ -925,7 +868,7 @@ export default function NexusLanding({ walletAction, practiceVideoUrl, contractU
                 rel="noreferrer"
                 className="inline-flex h-11 items-center rounded-full border border-border px-5 font-semibold text-foreground hover:border-primary"
               >
-                {t.start.getEcko}
+                {t.start.getWallet}
               </a>
             </div>
             <p className="mt-4 text-sm text-muted-foreground">
