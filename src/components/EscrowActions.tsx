@@ -505,11 +505,15 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
       const { selectedOfferId: open, refreshOne: one, loadAll: all } = liveRef.current;
       if (msg?.offerId && msg.offerId === open) void one(open);
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => { void all(); }, 800);
+      timer = setTimeout(() => {
+        void all();
+        // a release, refund or deposit changes KDA balances: show the new one now, not at the next 30 s check
+        queryClient.invalidateQueries({ queryKey: ["app-chain-balance"] });
+      }, 800);
     };
     socket?.on("trade-changed", onChange);
     return () => { socket?.off("trade-changed", onChange); if (timer) clearTimeout(timer); };
-  }, []);
+  }, [queryClient]);
   useEffect(() => {
     if (!selectedOfferId) return;
     const t = setInterval(async () => {
@@ -529,6 +533,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
       ...prev,
     ]);
     if (offerId) setTimeout(() => queryClient.invalidateQueries({ queryKey: ["trade-txs", offerId] }), 1500);
+    queryClient.invalidateQueries({ queryKey: ["app-chain-balance"] });
   };
 
   const executeAction = async (

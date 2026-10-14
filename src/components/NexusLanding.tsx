@@ -42,6 +42,7 @@ type Copy = {
   how: {
     h2: string; p: string; steps: Pair[]; deadlineH: string; deadlineP: string; wrongH: string; wrongP: string;
     personH: string; personPre: string; personLink: string; personPost: string;
+    watch: string; watchCaption: string;
   };
   compare: { h2: string; p: string; ours: string; theirs: string; rows: Triple[]; note: string };
   need: { h2: string; p: string; items: Pair[] };
@@ -151,7 +152,9 @@ const COPY: Record<Lang, Copy> = {
       "personH": "If you need a person",
       "personPre": "The Kadena Nexus team is in the ",
       "personLink": "Telegram group",
-      "personPost": ". Ask there before, during, or after a trade, and we'll help you through it."
+      "personPost": ". Ask there before, during, or after a trade, and we'll help you through it.",
+      "watch": "Watch a trade (2 min)",
+      "watchCaption": "A full trade between two phones with Linx wallet, from posting the offer to the KDA arriving. Demo with sample accounts."
     },
     "compare": {
       "h2": "Escrow on Kadena or a centralized P2P desk",
@@ -193,7 +196,7 @@ const COPY: Record<Lang, Copy> = {
       "items": [
         [
           "A Kadena wallet",
-          "The Linx Wallet app on your phone (on a computer, the Ecko Wallet browser extension also works). Your wallet is your account; there is no separate sign-up."
+          "The Linx Wallet app on your phone. Your wallet is your account; there is no separate sign-up."
         ],
         [
           "A little KDA on Chain 1 for gas",
@@ -391,7 +394,9 @@ const COPY: Record<Lang, Copy> = {
       "personH": "إذا احتجت إلى شخص",
       "personPre": "فريق Kadena Nexus موجود في ",
       "personLink": "مجموعة تيليجرام",
-      "personPost": ". اسأل هناك قبل الصفقة أو أثناءها أو بعدها، وسنساعدك خطوة بخطوة."
+      "personPost": ". اسأل هناك قبل الصفقة أو أثناءها أو بعدها، وسنساعدك خطوة بخطوة.",
+      "watch": "شاهد صفقة (دقيقتان)",
+      "watchCaption": "صفقة كاملة بين هاتفين بمحفظة Linx، من نشر العرض حتى وصول KDA. عرض توضيحي بحسابات تجريبية (الشرح في الفيديو بالإنجليزية)."
     },
     "compare": {
       "h2": "ضمان على Kadena أم منصة P2P مركزية",
@@ -433,7 +438,7 @@ const COPY: Record<Lang, Copy> = {
       "items": [
         [
           "محفظة Kadena",
-          "تطبيق محفظة Linx على جوالك (وعلى الكمبيوتر تعمل أيضًا إضافة Ecko Wallet للمتصفح). المحفظة هي حسابك؛ لا يوجد تسجيل منفصل."
+          "تطبيق محفظة Linx على جوالك. المحفظة هي حسابك؛ لا يوجد تسجيل منفصل."
         ],
         [
           "قليل من KDA على السلسلة 1 لرسوم الشبكة",
@@ -642,6 +647,10 @@ function ExampleTrade({ t }: { t: Copy["example"] }) {
   );
 }
 
+/** Phone walkthrough: a full trade between two phones (recorded in the demo with sample accounts). */
+const WALKTHROUGH_VIDEO = "/marketplace-walkthrough.mp4";
+const WALKTHROUGH_POSTER = "/marketplace-walkthrough.jpg";
+
 export type NexusLandingProps = {
   walletAction: ReactNode;
   /** Embed URL (YouTube/Vimeo) or a direct .mp4/.webm link to the 30-second practice-trade recording. */
@@ -689,6 +698,9 @@ export default function NexusLanding({ walletAction, practiceVideoUrl, contractU
           </div>
           <OfferAlertsButton lang={lang} variant="secondary" className="mt-3 h-11 rounded-full px-5" />
           <p className="mt-5 text-sm text-muted-foreground">{t.hero.note}</p>
+          <a href="#watch" className={`mt-3 inline-flex items-center gap-2 text-sm ${link}`}>
+            <span aria-hidden="true">▶</span>{t.how.watch}
+          </a>
         </div>
         <ExampleTrade t={t.example} />
       </section>
@@ -732,6 +744,17 @@ export default function NexusLanding({ walletAction, practiceVideoUrl, contractU
           <h2 className={h2}>{t.how.h2}</h2>
           <p className="max-w-[38rem] text-muted-foreground">{t.how.p}</p>
         </div>
+        <figure id="watch" className="mx-auto mt-10 w-full max-w-[340px] scroll-mt-24">
+          <video
+            src={WALKTHROUGH_VIDEO}
+            poster={WALKTHROUGH_POSTER}
+            controls
+            playsInline
+            preload="none"
+            className="aspect-[9/16] w-full rounded-2xl border border-border bg-[#123A48] shadow-sm"
+          />
+          <figcaption className="mt-3 text-center text-sm text-muted-foreground">{t.how.watchCaption}</figcaption>
+        </figure>
         <div className="mt-10 grid gap-10 lg:grid-cols-[7fr_5fr] lg:gap-16">
           <ol className="grid border-t border-border">
             {t.how.steps.map(([title, d], k) => (
