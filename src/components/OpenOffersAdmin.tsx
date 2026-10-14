@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { getAdminOpenOffers, hideOffer, unhideOffer, type AdminOpenOffer } from "@/lib/moderationApi";
-import { currencyPrefix } from "@/lib/markets";
+import { currencyPrefix, OFFER_LISTING_DAYS } from "@/lib/markets";
 
 const DAY = 86400000;
 const days = (iso: string | null) => (iso ? Math.floor((Date.now() - new Date(iso).getTime()) / DAY) : null);
@@ -66,6 +66,7 @@ export function OpenOffersAdmin({ account }: { account: { account: string; publi
         <CardDescription>
           Offers nobody has accepted yet. Hide the forgotten ones from the market: nothing is locked in them, and
           only the creator can delete them on-chain, so the creator is told and can delete or post again. You can show an offer again at any time.
+          Offers listed {OFFER_LISTING_DAYS} days without a buyer expire by themselves (shown as Expired); their creator can list them again.
         </CardDescription>
         <div className="flex flex-wrap items-center gap-3 pt-2">
           <label className="flex items-center gap-2 text-sm">
@@ -107,7 +108,7 @@ export function OpenOffersAdmin({ account }: { account: { account: string; publi
                     <td className="py-2 font-mono text-xs" title={o.creator}>{short(o.creator)}</td>
                     <td className="py-2 text-xs">{ago(o.createdAt)}</td>
                     <td className="py-2 text-xs">{isStale(o) ? <Badge variant="secondary">{ago(o.creatorLastActive)}</Badge> : ago(o.creatorLastActive)}</td>
-                    <td className="py-2 text-xs">{o.hidden ? <Badge variant="outline">Hidden {ago(o.hidden.hiddenAt)}</Badge> : "Listed"}</td>
+                    <td className="py-2 text-xs">{o.hidden ? <Badge variant="outline">{o.hidden.reason === "expired" ? "Expired" : "Hidden"} {ago(o.hidden.hiddenAt)}</Badge> : "Listed"}</td>
                     <td className="py-2 text-right">
                       <Button size="sm" variant={o.hidden ? "ghost" : "outline"} className="gap-1.5" disabled={busy !== null} onClick={() => toggle(o)}>
                         {busy === o.offerId ? <Loader2 className="h-4 w-4 animate-spin" /> : o.hidden ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}

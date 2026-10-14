@@ -2,7 +2,7 @@
 import { authProof } from "@/lib/session";
 
 type Who = { account: string; publicKey: string };
-export type HideReason = "inactive" | "stale" | "other";
+export type HideReason = "expired" | "inactive" | "stale" | "other";
 export interface HiddenOffer { offerId: string; reason: HideReason; hiddenAt: string }
 export interface AdminOpenOffer {
   offerId: string; code: string; side: "BUY" | "SELL"; amount: number; creator: string;
@@ -35,3 +35,13 @@ async function send(method: "POST" | "DELETE", offerId: string, w: Who, body: Re
 }
 export const hideOffer = (offerId: string, reason: HideReason, w: Who) => send("POST", offerId, w, { reason });
 export const unhideOffer = (offerId: string, w: Who) => send("DELETE", offerId, w);
+
+/** The creator lists an offer that expired again (the listing period starts over). */
+export async function relistOffer(offerId: string, w: Who): Promise<void> {
+  const signedCmd = await authProof(w.account, w.publicKey);
+  const r = await fetch(`/api/offers/${encodeURIComponent(offerId)}/relist`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ wallet: w.account, publicKey: w.publicKey, signedCmd }),
+  });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Could not list it again");
+}

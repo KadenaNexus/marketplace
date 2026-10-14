@@ -4,6 +4,7 @@ import { TradeCode } from "./TradeCode";
 import { TurnLine } from "./MobileTrade";
 import { currencyPrefix } from "@/lib/markets";
 import { NEW_TRADER_TRADES, isNewTrader } from "@/lib/trust";
+import { OFFER_LISTING_DAYS } from "@/lib/markets";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { EscrowStatus } from "./EscrowStatus";
@@ -37,11 +38,15 @@ interface OfferCardProps {
   inactiveDays?: number | null;
   /** "Post again" for a finished offer you created */
   onRepeat?: (escrow: Escrow) => void;
-  /** Your open offer was hidden from the market by the Marketplace (it looked forgotten) */
-  hiddenByAdmin?: boolean;
+  /** Your open offer is not shown in the market: "expired" (listed too long) or hidden by the Marketplace */
+  hiddenReason?: string | null;
+  /** List an expired offer again */
+  onRelist?: (escrow: Escrow) => void;
+  /** Accepted but never funded for days: filed under Finished */
+  unfundedExpired?: boolean;
 }
 
-export function OfferCard({ escrow, profileMap, ratingSummaryMap, completedMap, onSelect, onDelete, isDeletingOfferId, role, isSelected = false, hasOpenDispute = false, inactiveDays = null, onRepeat, hiddenByAdmin = false }: OfferCardProps) {
+export function OfferCard({ escrow, profileMap, ratingSummaryMap, completedMap, onSelect, onDelete, isDeletingOfferId, role, isSelected = false, hasOpenDispute = false, inactiveDays = null, onRepeat, hiddenReason = null, onRelist, unfundedExpired = false }: OfferCardProps) {
   const { account } = useWallet();
   const isMobile = useIsMobile();
   const [showChat, setShowChat] = useState(false);
@@ -93,9 +98,23 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, completedMap, 
           </div>
         )}
         <TurnLine escrow={hasOpenDispute ? { ...escrow, state: "DISPUTED" } : escrow} me={account?.account} />
-        {hiddenByAdmin && (
+        {hiddenReason === "expired" ? (
+          <div className="mt-2 rounded-lg border border-amber-500/50 bg-amber-500/10 p-2.5 text-sm">
+            <p>Expired: listed {OFFER_LISTING_DAYS} days without a buyer, so it is no longer in the market. Nothing is locked.</p>
+            {onRelist && (
+              <Button size="sm" className="mt-2 h-10 w-full gap-2" onClick={() => onRelist(escrow)}>
+                <RotateCcw className="h-4 w-4" />List again for {OFFER_LISTING_DAYS} days
+              </Button>
+            )}
+          </div>
+        ) : hiddenReason ? (
           <p className="mt-2 rounded-lg border border-amber-500/50 bg-amber-500/10 p-2.5 text-sm">
             Hidden from the market by the Marketplace because it looked forgotten. Nothing is locked. Delete it with ✕, or delete it and post a new one if you still want to trade.
+          </p>
+        ) : null}
+        {unfundedExpired && (
+          <p className="mt-2 rounded-lg bg-muted p-2.5 text-sm text-muted-foreground">
+            Never funded: no KDA was locked, and this trade can no longer go ahead.
           </p>
         )}
         {inactiveDays ? (

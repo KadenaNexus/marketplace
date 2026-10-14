@@ -415,3 +415,9 @@ CREATE TABLE IF NOT EXISTS hidden_offers (
     reason VARCHAR(40) NOT NULL DEFAULT 'inactive',
     hidden_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- An open offer that expired (server/offerModeration.js) and was listed again by its creator: the clock restarts here.
+CREATE TABLE IF NOT EXISTS offer_relists (
+    offer_id VARCHAR(255) PRIMARY KEY,
+    relisted_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
