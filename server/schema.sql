@@ -406,3 +406,12 @@ CREATE TABLE IF NOT EXISTS ratings_removed (
     created_at TIMESTAMP WITH TIME ZONE,
     removed_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Open offers the arbiter hid from the market (forgotten or inactive). Nothing changes on the chain;
+-- the creator can still delete the offer or post it again. See server/offerModeration.js.
+CREATE TABLE IF NOT EXISTS hidden_offers (
+    offer_id VARCHAR(255) PRIMARY KEY,
+    hidden_by VARCHAR(255) NOT NULL,
+    reason VARCHAR(40) NOT NULL DEFAULT 'inactive',
+    hidden_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

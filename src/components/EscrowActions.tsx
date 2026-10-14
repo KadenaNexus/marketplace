@@ -17,6 +17,7 @@ import { TradeEmailGate, useNeedsTradeEmail } from "./TradeEmail";
 import { useCompletedCounts, useTermsGate } from "./Trust";
 import { NEW_TRADER_MAX_KDA, newTraderProblem } from "@/lib/trust";
 import { repeatOffer } from "@/lib/repeatOffer";
+import { getHiddenOffers } from "@/lib/moderationApi";
 import { getSocket } from "@/hooks/useOnlineStatus";
 import { currencyPrefix } from "@/lib/markets";
 import { getPayout } from "@/lib/payoutApi";
@@ -325,6 +326,10 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
 
   const onlineStatusMap = useOnlineStatusMap(allWallets);
 
+  // Open offers the arbiter hid from the market (forgotten ones): not listed for others; the creator sees a note
+  const { data: hiddenList = [] } = useQuery({ queryKey: ["hidden-offers"], queryFn: getHiddenOffers, staleTime: 30 * 1000 });
+  const hiddenIds = useMemo(() => new Set(hiddenList.map((h) => h.offerId)), [hiddenList]);
+
   // Completed trades on the chain: "New trader" on cards, and the new-trader limit when accepting
   const { data: completedMap } = useCompletedCounts(
     account ? [...allWallets, ...escrowsWithDetails.map((e) => e.creator), account.account] : [...allWallets, ...escrowsWithDetails.map((e) => e.creator)],
@@ -333,7 +338,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
 
   // Apply reputation (min stars) and online-now filters for display
   const displayedEscrows = useMemo(() => {
-    let list = escrowsWithDetails;
+    let list = viewMode === "mine" ? escrowsWithDetails : escrowsWithDetails.filter((e) => !(hiddenIds.has(e.offerId) && e.state === "CREATED" && e.creator !== account?.account));
     if (!filters) return list;
     const minStars = filters.minStars ? parseInt(filters.minStars, 10) : 0;
     if (minStars >= 1 && minStars <= 5) {
@@ -353,7 +358,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
       });
     }
     return list;
-  }, [escrowsWithDetails, filters, role, ratingSummaryMap, onlineStatusMap]);
+  }, [escrowsWithDetails, filters, role, ratingSummaryMap, onlineStatusMap, viewMode, hiddenIds, account?.account]);
 
   // Bulk dispute check for offer cards: which offerIds have an open/active dispute (must be after displayedEscrows)
   const disputeQueries = useQueries({
@@ -1263,6 +1268,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
       isSelected={selectedOfferId === e.offerId}
       hasOpenDispute={openDisputeOfferIds.has(e.offerId)}
       inactiveDays={inactiveDaysOf(e)}
+      hiddenByAdmin={e.state === "CREATED" && hiddenIds.has(e.offerId) && e.creator === account?.account}
       onRepeat={repeatOffer}
     />
   );
