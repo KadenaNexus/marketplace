@@ -29,7 +29,7 @@ import { authProof } from "@/lib/session";
 import { Plus, Loader2, ShoppingCart, Store, Info } from "lucide-react";
 import { toast } from "sonner";
 
-import { PAY_CURRENCIES, PAYMENT_METHODS, TOKEN_CURRENCIES, currencyPrefix, isTokenCurrency, methodsFor } from "@/lib/markets";
+import { GIVEAWAY_METHOD, PAY_CURRENCIES, PAYMENT_METHODS, TOKEN_CURRENCIES, currencyPrefix, isTokenCurrency, methodsFor } from "@/lib/markets";
 import { useMarket, vsMarket, vsMarketText } from "@/lib/market";
 import { formatFiat } from "@/lib/utils";
 import { TradeEmailGate, useNeedsTradeEmail } from "./TradeEmail";
@@ -61,6 +61,9 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
   const { data: market } = useMarket();
   const [payout, setPayout] = useState<Record<string, PayoutDraft>>({});
   const [fiatCurrency, setFiatCurrency] = useState("USD");
+  // Free giveaway (sell offers only): price 0, nothing for the winner to pay
+  const [giveaway, setGiveaway] = useState(false);
+  const free = giveaway && side === "SELL";
   const [isLoading, setIsLoading] = useState(false);
 
   const generateOfferId = () => {
@@ -125,17 +128,17 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
     }
     if (needsEmail) { setEmailGateOpen(true); return; }
 
-    if (!offerId || !price || !amount) {
+    if (!offerId || (!price && !free) || !amount) {
       toast.error("Please fill in all required fields");
       return;
     }
 
-    if (paymentMethods.length === 0) {
+    if (!free && paymentMethods.length === 0) {
       toast.error("Please select at least one payment method");
       return;
     }
 
-    const payoutItems = paymentMethods
+    const payoutItems = (free ? [] : paymentMethods)
       .map((m) => ({ method: m, value: (payout[m]?.value ?? "").trim(), ...(hasNetwork(m) ? { network: payout[m]?.network } : {}) }))
       .filter((x) => x.value);
     const payoutProblem = payoutItems.map(stableProblem).find(Boolean);
@@ -143,15 +146,15 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
       toast.error("Check where you get paid", { description: payoutProblem });
       return;
     }
-    if (side === "SELL" && payoutItems.length === 0) {
+    if (side === "SELL" && !free && payoutItems.length === 0) {
       toast.error("Add where you want to be paid", { description: "Fill in at least one payment detail, e.g. your USDT address or bank IBAN." });
       return;
     }
 
-    const priceNum = parseFloat(price);
+    const priceNum = free ? 0 : parseFloat(price);
     const amountNum = parseFloat(amount);
 
-    if (isNaN(priceNum) || priceNum <= 0) {
+    if (!free && (isNaN(priceNum) || priceNum <= 0)) {
       toast.error("Please enter a valid price");
       return;
     }
@@ -217,7 +220,7 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
 
       // Then save off-chain offer details (price, limits, payment method)
       let offChainSaved = true;
-      const paymentMethodJson = JSON.stringify(paymentMethods);
+      const paymentMethodJson = JSON.stringify(free ? [GIVEAWAY_METHOD] : paymentMethods);
       try {
         await putOfferDetails({
           offerId,
@@ -234,7 +237,7 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
         toast.warning("Offer created on-chain. Server could not save price/payment details (check DB write access).");
       }
 
-      if (side === "SELL") {
+      if (side === "SELL" && !free) {
         try {
           const signedCmd = await authProof(account.account, account.publicKey);
           await putPayout(offerId, payoutItems, { wallet: account.account, publicKey: account.publicKey, signedCmd });
@@ -357,6 +360,18 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
             </div>
           </div>
 
+          {/* Free giveaway (sell offers only) */}
+          {side === "SELL" && (
+            <label className={`flex items-start gap-3 rounded-lg border p-3 text-sm ${free ? "border-primary bg-primary/5" : "border-border"}`}>
+              <Checkbox checked={giveaway} onCheckedChange={(v) => setGiveaway(v === true)} className="mt-0.5" aria-label="Free giveaway" />
+              <span>
+                <b>Free giveaway</b>
+                <span className="block text-muted-foreground">Price 0: the winner pays nothing. You still lock the KDA in escrow and release it to them; they mark it as received with one tap.</span>
+              </span>
+            </label>
+          )}
+
+          {!free && (<>
           {/* Price */}
           <div className="space-y-2">
             <Label htmlFor="price">Price per KDA ({fiatCurrency})</Label>
@@ -386,6 +401,7 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
             })()}
           </div>
 
+          </>)}
           {/* Amount (KDA) — required; one fixed amount per offer */}
           <div className="space-y-2">
             <Label htmlFor="amount">Amount (KDA)</Label>
@@ -407,6 +423,7 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
             )}
           </div>
 
+          {!free && (<>
           {/* Fiat Currency */}
           <div className="space-y-2">
             <Label htmlFor="fiatCurrency">Currency</Label>
@@ -453,8 +470,9 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
             )}
           </div>
 
+          </>)}
           {/* Where the seller gets paid: private, shown only to the buyer after they accept */}
-          {side === "SELL" && paymentMethods.length > 0 && (
+          {side === "SELL" && !free && paymentMethods.length > 0 && (
             <div className="space-y-3 rounded-lg border-2 border-amber-300 bg-amber-50/60 p-4 dark:border-amber-700 dark:bg-amber-950/30">
               <div>
                 <Label className="text-base">Where you get paid</Label>

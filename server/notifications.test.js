@@ -54,6 +54,27 @@ test("who is told what, per state change", () => {
   assert.deepEqual(ev.map((e) => [e.wallet, e.kind]), [[X, "accepted"], [S, "started"]], "BUY offer: the accepter must deposit");
 });
 
+test("free giveaway: nothing to pay, no screenshot, one-tap texts", () => {
+  const g = { price: 0, fiat_currency: "USD", payment_method: '["Giveaway"]' };
+  let ev = eventsForChange("CREATED", esc({ state: "ACCEPTED", buyer: B }), g);
+  assert.deepEqual(ev.map((e) => [e.wallet, e.kind]), [[S, "accepted"], [B, "started"]]);
+  assert.match(ev[1].body, /nothing to pay/);
+  ev = eventsForChange("ACCEPTED", esc({ state: "FUNDED", buyer: B }), g);
+  assert.deepEqual(ev.map((e) => [e.wallet, e.kind]), [[B, "funded"], [S, "locked"]]);
+  assert.match(ev[0].title, /Mark as Paid/);
+  assert.match(ev[0].body, /no screenshot/);
+  ev = eventsForChange("FUNDED", esc({ state: "PAID", buyer: B }), g);
+  assert.match(ev[0].title, /release the giveaway/);
+  assert.doesNotMatch(ev[0].body, /screenshot is not proof/);
+  ev = eventsForChange("PAID", esc({ state: "COMPLETED", buyer: B }), g);
+  assert.equal(ev.length, 2, "completion as usual");
+  // price 0 without the Giveaway method (an offer with no details) is not a giveaway
+  ev = eventsForChange("ACCEPTED", esc({ state: "FUNDED", buyer: B }), { price: 0, fiat_currency: "USD", payment_method: '["Bank Transfer"]' });
+  assert.match(ev[0].title, /send the payment/);
+  const soon = deadlineEvents(esc({ state: "FUNDED", buyer: B, fundedAt: T0 }), T0 + 4 * 3600e3 - 20 * 60e3, g);
+  assert.match(soon[0].title, /left to claim your giveaway/);
+});
+
 test("deadline reminders and expiry notices", () => {
   const funded = esc({ state: "FUNDED", buyer: B, fundedAt: T0 });
   assert.equal(deadlineEvents(funded, T0 + 60 * 60e3).length, 0, "plenty of time");

@@ -105,9 +105,11 @@ export const offersPutBodySchema = z.object({
   creator: walletSchema,
   amount: z.coerce.number().finite().positive(),
   side: z.enum(["BUY", "SELL"]),
-  price: z.coerce.number().finite().positive(),
+  price: z.coerce.number().finite().nonnegative(),
   paymentMethod: z.string().optional(),
   fiatCurrency: z.string().max(10).optional(),
+}).refine((b) => b.price > 0 || (b.side === "SELL" && b.paymentMethod === '["Giveaway"]'), {
+  message: "Price must be above 0 (only a free giveaway sell offer can be priced at 0)", path: ["price"],
 });
 
 export const disputesPostBodySchema = z.object({

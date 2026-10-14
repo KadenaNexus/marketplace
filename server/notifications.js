@@ -33,6 +33,12 @@ const parties = (e) => ({
   buyer: e.side === "SELL" ? e.buyer : e.creator,
 });
 
+/** A free giveaway: a sell offer at price 0 with the "Giveaway" method. Nothing is paid; the winner only marks it. */
+export const isGiveawayDetails = (d) => {
+  if (!d || Number(d.price) !== 0 || !d.payment_method) return false;
+  try { const m = JSON.parse(d.payment_method); return Array.isArray(m) && m.includes("Giveaway"); } catch (_) { return false; }
+};
+
 /* ---------------- messages ---------------- */
 /** The notifications a state change produces. Pure, for tests. `d` = offer details (price, currency) or null. */
 export function eventsForChange(prevState, e, d) {
@@ -40,6 +46,19 @@ export function eventsForChange(prevState, e, d) {
   const out = [];
   const add = (wallet, kind, title, body, urgent = false) => { if (wallet) out.push({ wallet, kind, title, body, urgent }); };
   const total = d && d.price ? ` (${money(d.price * e.amount, d.fiat_currency)})` : "";
+  if (isGiveawayDetails(d) && ["ACCEPTED", "FUNDED", "PAID"].includes(e.state)) {
+    if (e.state === "ACCEPTED") {
+      add(seller, "accepted", `Action needed: deposit ${kda(e.amount)}`, `${short(buyer)} accepted your free giveaway. Deposit the ${kda(e.amount)} into escrow within 1 hour, or the trade closes.`, true);
+      add(buyer, "started", "You took a free giveaway", `The giver has 1 hour to lock ${kda(e.amount)} in escrow for you. There is nothing to pay.`);
+    } else if (e.state === "FUNDED") {
+      add(buyer, "funded", "Action needed: tap Mark as Paid", `${kda(e.amount)} is locked for you. There is nothing to pay: open the trade and press Mark as Paid (no screenshot needed) within 4 hours.`, true);
+      add(seller, "locked", "Giveaway locked in escrow", `Your ${kda(e.amount)} is in escrow. The winner has 4 hours to press Mark as Paid.`);
+    } else {
+      add(seller, "paid", "Action needed: release the giveaway", `The winner confirmed. There is no payment to check: press Release to Buyer within 1 hour to send the ${kda(e.amount)}.`, true);
+      add(buyer, "marked", "Confirmed", `The giver has 1 hour to release the ${kda(e.amount)} to you.`);
+    }
+    return out;
+  }
   switch (e.state) {
     case "ACCEPTED":
       // Both sides hear the trade started; the one who must act gets "Action needed".
@@ -79,8 +98,9 @@ export function eventsForChange(prevState, e, d) {
 }
 
 /** Reminders before a deadline and notices after one, from the chain times. Pure, for tests. */
-export function deadlineEvents(e, now) {
+export function deadlineEvents(e, now, d = null) {
   const { seller, buyer } = parties(e);
+  const free = isGiveawayDetails(d);
   const out = [];
   const left = (start, limit) => (start ? start + limit - now : null);
   const mins = (ms) => (ms >= 3600e3 ? `${Math.floor(ms / 3600e3)} h ${Math.round((ms % 3600e3) / 60e3)} min` : `${Math.max(1, Math.round(ms / 60e3))} min`);
@@ -90,12 +110,12 @@ export function deadlineEvents(e, now) {
   }
   if (e.state === "FUNDED") {
     const l = left(e.fundedAt, T2);
-    if (l != null && l > 0 && l <= SOON.FUNDED) out.push({ wallet: buyer, kind: "due-pay", title: `${mins(l)} left to pay`, body: "Send the payment and press Mark as Paid before the time runs out.", urgent: true });
+    if (l != null && l > 0 && l <= SOON.FUNDED) out.push({ wallet: buyer, kind: "due-pay", title: free ? `${mins(l)} left to claim your giveaway` : `${mins(l)} left to pay`, body: free ? "Nothing to pay: press Mark as Paid before the time runs out to receive the giveaway." : "Send the payment and press Mark as Paid before the time runs out.", urgent: true });
     if (l != null && l <= 0 && l > -48 * 3600e3) out.push({ wallet: seller, kind: "expired-pay", title: "Payment window ended", body: "The buyer did not mark the payment within 4 hours. You can reclaim your KDA: open the trade and press Refund." });
   }
   if (e.state === "PAID") {
     const l = left(e.paidAt, T3);
-    if (l != null && l > 0 && l <= SOON.PAID) out.push({ wallet: seller, kind: "due-release", title: `${mins(l)} left to release`, body: "If the payment arrived, press Release to Buyer before the time runs out.", urgent: true });
+    if (l != null && l > 0 && l <= SOON.PAID) out.push({ wallet: seller, kind: "due-release", title: `${mins(l)} left to release`, body: free ? "Press Release to Buyer to send the giveaway before the time runs out." : "If the payment arrived, press Release to Buyer before the time runs out.", urgent: true });
     if (l != null && l <= 0 && l > -48 * 3600e3) for (const w of [seller, buyer]) out.push({ wallet: w, kind: "expired-release", title: "Release deadline passed", body: "Either side can now press Move to dispute so the arbiter can settle the trade." });
   }
   return out.filter((x) => x.wallet);
@@ -105,6 +125,7 @@ function newOfferText(n) {
   const d = n.data || {};
   const what = d.side === "BUY" ? `wants to buy ${kda(d.amount)}` : `is selling ${kda(d.amount)}`;
   let price = "";
+  if (d.side !== "BUY" && isGiveawayDetails(n)) return { title: "Free giveaway", body: `${short(d.creator)} is giving away ${kda(d.amount)} for free. The first to accept gets it.` };
   if (n.price) {
     let methods = [];
     try { methods = JSON.parse(n.payment_method || "[]"); } catch (_) {}
@@ -215,7 +236,7 @@ export async function runNotificationsOnce(pool, { chain, now = Date.now(), send
       }
       for (const n of eventsForChange(before, e, d.get(e.id))) { if ((await notify(pool, { ...n, offer_id: e.id }, { send, now })).created) created++; }
     }
-    if (!first) for (const n of deadlineEvents(e, now)) { if ((await notify(pool, { ...n, offer_id: e.id }, { send, now })).created) created++; }
+    if (!first) for (const n of deadlineEvents(e, now, d.get(e.id))) { if ((await notify(pool, { ...n, offer_id: e.id }, { send, now })).created) created++; }
   }
   if (first) await pool.query("INSERT INTO alert_state (key, value) VALUES ('notifications_initialized', $1) ON CONFLICT (key) DO NOTHING", [new Date(now).toISOString()]);
 
@@ -228,7 +249,7 @@ export async function runNotificationsOnce(pool, { chain, now = Date.now(), send
   for (const n of pending) {
     const o = open.get(n.offer_id);
     const waited = now - new Date(n.created_at).getTime() >= DETAILS_WAIT_MS;
-    if (o && !n.price && !waited) continue;
+    if (o && n.price == null && !waited) continue;
     await pool.query("UPDATE notifications SET pushed_at = now() WHERE id = $1", [n.id]);
     if (!o) continue;
     if (send === webPushSend) await vapidKeys(pool);

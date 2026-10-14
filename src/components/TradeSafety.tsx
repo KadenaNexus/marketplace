@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, FileText, ImagePlus, Loader2, ShieldCheck, Unlock, X } from "lucide-react";
+import { AlertTriangle, FileText, Gift, ImagePlus, Loader2, ShieldCheck, Unlock, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,6 +10,7 @@ import { authProof } from "@/lib/session";
 import type { Escrow } from "@/lib/kadena";
 import { addProof, getProofs, type Proof } from "@/lib/proofApi";
 import { offerMethods } from "./PayoutCard";
+import { isGiveaway } from "@/lib/markets";
 
 const methodsText = (e: Escrow) => offerMethods(e).join(" or ") || "the payment method you agreed on";
 const refHint = (e: Escrow) => {
@@ -82,6 +83,26 @@ export function MarkPaidDialog({ escrow, total, open, onOpenChange, onConfirm }:
   const [failed, setFailed] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const ready = (!!file || reference.trim().length > 0) && own;
+  const kda = escrow.amount.toLocaleString("en-US", { maximumFractionDigits: 4 });
+
+  // A free giveaway: nothing was paid, so there is nothing to prove. The contract still needs the "paid"
+  // step before the seller can release, so the receiver confirms with one tap.
+  if (isGiveaway(escrow)) return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 font-display text-xl"><Gift className="h-5 w-5 text-emerald-600" />Free giveaway</DialogTitle>
+          <DialogDescription>There is nothing to pay and no screenshot is needed. Confirm in your wallet, and the seller can then release {kda} KDA to you.</DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="flex-col gap-2 sm:flex-col">
+          <Button type="button" className="h-12 w-full gap-2" onClick={() => { onOpenChange(false); onConfirm(); }}>
+            <ShieldCheck className="h-4 w-4" />Confirm and ask for release
+          </Button>
+          <Button type="button" variant="outline" className="h-11 w-full" onClick={() => onOpenChange(false)}>Not now</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 
   const submit = async () => {
     if (!account) return;
@@ -150,10 +171,30 @@ export function MarkPaidDialog({ escrow, total, open, onOpenChange, onConfirm }:
 export function ReleaseDialog({ escrow, total, open, onOpenChange, onConfirm }: {
   escrow: Escrow; total: string; open: boolean; onOpenChange: (o: boolean) => void; onConfirm: () => void;
 }) {
-  const { data: proofs = [] } = useProofs(open ? escrow : null);
+  const free = isGiveaway(escrow);
+  const { data: proofs = [] } = useProofs(open && !free ? escrow : null);
   const [checked, setChecked] = useState(false);
   const [named, setNamed] = useState(false);
   const close = (o: boolean) => { onOpenChange(o); if (!o) { setChecked(false); setNamed(false); } };
+  const kda = escrow.amount.toLocaleString("en-US", { maximumFractionDigits: 4 });
+
+  // A free giveaway: no payment to check. Still one clear confirm, since a release cannot be undone.
+  if (free) return (
+    <Dialog open={open} onOpenChange={close}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 font-display text-xl"><Gift className="h-5 w-5 text-emerald-600" />Release the giveaway</DialogTitle>
+          <DialogDescription>This sends {kda} KDA to the winner for free and cannot be undone. There is no payment to check.</DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="flex-col gap-2 sm:flex-col">
+          <Button type="button" className="h-12 w-full gap-2" onClick={() => { close(false); onConfirm(); }}>
+            <Unlock className="h-4 w-4" />Release {kda} KDA to the winner
+          </Button>
+          <Button type="button" variant="outline" className="h-11 w-full" onClick={() => close(false)}>Not yet</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
   return (
     <Dialog open={open} onOpenChange={close}>
       <DialogContent className="max-h-[92vh] max-w-md overflow-y-auto">
@@ -183,7 +224,7 @@ export function ReleaseDialog({ escrow, total, open, onOpenChange, onConfirm }: 
         </div>
         <DialogFooter className="flex-col gap-2 sm:flex-col">
           <Button type="button" className="h-12 w-full gap-2" disabled={!checked || !named} onClick={() => { close(false); onConfirm(); }}>
-            <Unlock className="h-4 w-4" />Release {escrow.amount.toLocaleString("en-US", { maximumFractionDigits: 4 })} KDA to the buyer
+            <Unlock className="h-4 w-4" />Release {kda} KDA to the buyer
           </Button>
           <Button type="button" variant="outline" className="h-11 w-full" onClick={() => close(false)}>Not yet</Button>
         </DialogFooter>
