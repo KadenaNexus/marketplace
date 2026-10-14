@@ -607,7 +607,7 @@ function ExampleTrade({ t }: { t: Copy["example"] }) {
           const isDone = k < i || (k === i && done);
           const dot = isDone ? "border-primary bg-primary" : isNow ? "border-accent bg-accent nx-pulse" : "border-border bg-background";
           return (
-            <li key={chip} className="grid grid-cols-[1.25rem_1fr_auto] gap-x-3">
+            <li key={chip} className="grid grid-cols-[1.25rem_1fr_5.5rem] gap-x-3">
               <span className="flex flex-col items-center">
                 <span className={"mt-1 h-3 w-3 rounded-full border-2 transition-colors " + dot} />
                 {k < last && <span className={"mt-1 w-0.5 flex-1 transition-colors " + (k < i ? "bg-primary" : "bg-border")} />}
@@ -616,7 +616,8 @@ function ExampleTrade({ t }: { t: Copy["example"] }) {
                 <b className="block font-semibold">{title}</b>
                 <span className="text-sm text-muted-foreground">{note}</span>
               </span>
-              <span className="pt-0.5 text-xs tabular-nums text-muted-foreground">
+              {/* fixed width, so the text beside it never rewraps as the steps change (the card keeps its size) */}
+              <span className="whitespace-nowrap pt-0.5 text-end text-xs tabular-nums text-muted-foreground">
                 {isNow ? `${fmt(left)} ${t.left}` : k < i ? t.done : ""}
               </span>
             </li>
