@@ -5,13 +5,9 @@ import { AppLogo } from "@/components/AppLogo";
 import NexusLanding, { useLang } from "@/components/NexusLanding";
 import { OfferAlertsButton, useAlertsStatus } from "@/components/OfferAlerts";
 import { ALERTS_COPY } from "@/lib/alertsCopy";
-import { RoleSelection } from "@/components/RoleSelection";
-import { EscrowActions } from "@/components/EscrowActions";
-import { BuyerView } from "@/components/BuyerView";
-import { SellerView } from "@/components/SellerView";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card, CardContent } from "@/components/ui/card";
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useWallet } from "@/hooks/useWallet";
 import { fetchProfile } from "@/lib/profileApi";
 import { CHAIN_ID, NETWORK_ID, PLATFORM_ARBITER, readEscrow } from "@/lib/kadena";
@@ -20,9 +16,22 @@ import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { NotificationBell } from "@/components/NotificationBell";
 import { toast } from "sonner";
-import { MobileMarket, type MobileTab } from "@/components/MobileMarket";
+import type { MobileTab } from "@/components/MobileMarket";
 import { REPEAT_OFFER_EVENT, type OfferDraft } from "@/lib/repeatOffer";
 import { useIsMobile } from "@/hooks/use-mobile";
+
+// The signed-in market loads on demand, so first-time visitors only download the landing page.
+const RoleSelection = lazy(() => import("@/components/RoleSelection").then((m) => ({ default: m.RoleSelection })));
+const EscrowActions = lazy(() => import("@/components/EscrowActions").then((m) => ({ default: m.EscrowActions })));
+const BuyerView = lazy(() => import("@/components/BuyerView").then((m) => ({ default: m.BuyerView })));
+const SellerView = lazy(() => import("@/components/SellerView").then((m) => ({ default: m.SellerView })));
+const MobileMarket = lazy(() => import("@/components/MobileMarket").then((m) => ({ default: m.MobileMarket })));
+
+const Loading = () => (
+  <div className="flex justify-center py-16 text-sm text-muted-foreground" role="status">
+    Loading…
+  </div>
+);
 
 type UserRole = "buyer" | "seller" | null;
 
@@ -141,7 +150,9 @@ const Index = () => {
       <main className={isConnected ? (isMobile ? "container mx-auto px-4 py-4" : "container mx-auto px-4 py-8") : "w-full"}>
         {!isConnected ? (
           <NexusLanding walletAction={<WalletConnect />} fromAlert={!!linkedOffer} />
-        ) : isMobile ? (
+        ) : (
+          <Suspense fallback={<Loading />}>
+          {isMobile ? (
           <MobileMarket
             tab={mobileTab}
             onTab={setMobileTab}
@@ -203,6 +214,8 @@ const Index = () => {
               </div>
             )}
           </>
+          )}
+          </Suspense>
         )}
       </main>
 
@@ -245,6 +258,10 @@ const Index = () => {
             <span aria-hidden="true">·</span>
             <a className="transition-colors hover:text-foreground" href="https://kadena.ws/community-edition/">
               Kadena Community Edition
+            </a>
+            <span aria-hidden="true">·</span>
+            <a className="transition-colors hover:text-foreground" href="https://kadena.ws/buy-kda/">
+              How to buy KDA
             </a>
           </nav>
         </div>

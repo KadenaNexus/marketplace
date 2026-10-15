@@ -11,14 +11,17 @@ import { useNewMessageNotification } from "@/hooks/useNewMessageNotification";
 import { useTradeDeadlineReminders } from "@/hooks/useTradeDeadlineReminders";
 import { NotificationsProvider, useNotifications } from "@/hooks/useNotifications";
 import { PhoneFirst } from "@/components/PhoneFirst";
+import { lazy, Suspense } from "react";
 import Index from "./pages/Index";
-import NotFound from "./pages/NotFound";
-import Profile from "./pages/Profile";
-import Admin from "./pages/Admin";
-import AdminDisputeDetail from "./pages/AdminDisputeDetail";
-import Alerts from "./pages/Alerts";
-import WalletCheck from "./pages/WalletCheck";
-import Terms from "./pages/Terms";
+
+// Pages other than the landing page load on demand to keep the first download small.
+const NotFound = lazy(() => import("./pages/NotFound"));
+const Profile = lazy(() => import("./pages/Profile"));
+const Admin = lazy(() => import("./pages/Admin"));
+const AdminDisputeDetail = lazy(() => import("./pages/AdminDisputeDetail"));
+const Alerts = lazy(() => import("./pages/Alerts"));
+const WalletCheck = lazy(() => import("./pages/WalletCheck"));
+const Terms = lazy(() => import("./pages/Terms"));
 
 const queryClient = new QueryClient();
 
@@ -48,6 +51,7 @@ const App = () => (
             <OnlineStatusProvider>
               <NotificationsProvider>
               <DeadlineFallback />
+              <Suspense fallback={null}>
               <Routes>
                 <Route path="/" element={<PhoneFirst><Index /></PhoneFirst>} />
                 <Route path="/u/:wallet" element={<Profile />} />
@@ -59,6 +63,7 @@ const App = () => (
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
               </Routes>
+              </Suspense>
               </NotificationsProvider>
             </OnlineStatusProvider>
           </WalletProvider>
