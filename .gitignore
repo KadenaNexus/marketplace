@@ -41,3 +41,4 @@ server/uploads/evidence/*
 *.sw?
 .vercel
 .env*.local
+.local/

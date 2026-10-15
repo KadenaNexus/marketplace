@@ -197,15 +197,19 @@
   ;; Pays `amount` KDA from a trade vault to `to`, keeping `fee` for the platform.
   (defun pay-from-trade (id:string to:string amount:decimal fee:decimal)
     (with-capability (TRADE_VAULT id)
-      (let ((vault (trade-vault id))
-            (net   (- amount fee)))
-        (install-capability (coin.TRANSFER vault to net))
-        (coin.transfer vault to net)
-        (if (> fee 0.0)
-          (with-read config "global" { "fee-account" := fee-account }
-            (install-capability (coin.TRANSFER vault fee-account fee))
-            (coin.transfer vault fee-account fee))
-          "no fee"))))
+      (with-read config "global" { "fee-account" := fee-account }
+        (let ((vault (trade-vault id))
+              (net   (- amount fee)))
+          (if (or (= fee 0.0) (= to fee-account))
+            ;; one transfer (a managed TRANSFER to the same receiver cannot be installed twice in one tx)
+            (let ((x 0))
+              (install-capability (coin.TRANSFER vault to amount))
+              (coin.transfer vault to amount))
+            (let ((x 0))
+              (install-capability (coin.TRANSFER vault to net))
+              (coin.transfer vault to net)
+              (install-capability (coin.TRANSFER vault fee-account fee))
+              (coin.transfer vault fee-account fee)))))))
 
   ;; Returns `amount` KDA from a trade vault to its offer's pool (if still open) or to the seller.
   (defun return-from-trade (trade-id:string offer-id:string seller:string amount:decimal)
