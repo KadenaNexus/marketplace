@@ -1,0 +1,237 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Kadena P2P Escrow Design System - Minimal Dark Crypto Aesthetic */
+
+@layer base {
+  :root {
+    /* Kadena Nexus light theme */
+    --background: 0 0% 100%;
+    --foreground: 196 60% 18%;
+    --card: 0 0% 100%;
+    --card-foreground: 196 60% 18%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 196 60% 18%;
+    --primary: 195 63% 30%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 192 24% 96%;
+    --secondary-foreground: 196 60% 18%;
+    --muted: 192 24% 96%;
+    --muted-foreground: 197 20% 39%;
+    --accent: 29 92% 46%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 195 63% 30%;
+    --success-foreground: 0 0% 100%;
+    --warning: 29 92% 46%;
+    --warning-foreground: 0 0% 100%;
+    --border: 197 21% 87%;
+    --input: 197 21% 87%;
+    --ring: 195 63% 30%;
+    --radius: 0.6rem;
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 196 60% 18%;
+    --sidebar-primary: 195 63% 30%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 192 24% 96%;
+    --sidebar-accent-foreground: 196 60% 18%;
+    --sidebar-border: 197 21% 87%;
+    --sidebar-ring: 195 63% 30%;
+    --font-sans: "Instrument Sans", system-ui, sans-serif;
+    --font-display: "Bricolage Grotesque", "Instrument Sans", system-ui, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  }
+
+  .dark {
+    --background: 196 52% 12%;
+    --foreground: 196 35% 94%;
+    --card: 196 53% 15%;
+    --card-foreground: 196 35% 94%;
+    --popover: 196 53% 15%;
+    --popover-foreground: 196 35% 94%;
+    --primary: 195 54% 59%;
+    --primary-foreground: 196 52% 12%;
+    --secondary: 197 50% 18%;
+    --secondary-foreground: 196 35% 94%;
+    --muted: 197 50% 18%;
+    --muted-foreground: 198 24% 73%;
+    --accent: 26 86% 58%;
+    --accent-foreground: 196 52% 12%;
+    --destructive: 0 72% 62%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 195 54% 59%;
+    --success-foreground: 196 52% 12%;
+    --warning: 26 86% 58%;
+    --warning-foreground: 196 52% 12%;
+    --border: 200 40% 25%;
+    --input: 197 50% 18%;
+    --ring: 195 54% 59%;
+    --sidebar-background: 196 53% 15%;
+    --sidebar-foreground: 196 35% 94%;
+    --sidebar-primary: 195 54% 59%;
+    --sidebar-primary-foreground: 196 52% 12%;
+    --sidebar-accent: 197 50% 18%;
+    --sidebar-accent-foreground: 196 35% 94%;
+    --sidebar-border: 200 40% 25%;
+    --sidebar-ring: 195 54% 59%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-family: var(--font-sans);
+  }
+
+  code, .mono {
+    font-family: var(--font-mono);
+  }
+}
+
+@layer components {
+  .escrow-card {
+    @apply bg-card border border-border rounded-lg p-6;
+  }
+
+  .status-pending {
+    @apply bg-warning/20 text-warning border-warning/30;
+  }
+
+  .status-active {
+    @apply bg-primary/20 text-primary border-primary/30;
+  }
+
+  .status-completed {
+    @apply bg-success/20 text-success border-success/30;
+  }
+
+  .status-cancelled {
+    @apply bg-destructive/20 text-destructive border-destructive/30;
+  }
+
+  .tx-hash {
+    @apply font-mono text-xs text-muted-foreground bg-muted px-2 py-1 rounded break-all;
+  }
+
+  .address {
+    @apply font-mono text-sm;
+  }
+}
+
+/* Themed native scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(220 13% 75%) hsl(220 10% 96%);
+}
+
+.dark * {
+  scrollbar-color: hsl(220 15% 25%) hsl(220 15% 12%);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: hsl(220 10% 96%);
+  border-radius: 4px;
+}
+
+.dark ::-webkit-scrollbar-track {
+  background: hsl(220 15% 12%);
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(220 13% 75%);
+  border-radius: 4px;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: hsl(220 15% 25%);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(220 13% 65%);
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: hsl(220 15% 35%);
+}
+
+::-webkit-scrollbar-thumb:active {
+  background: hsl(160 84% 45% / 0.7);
+}
+
+.nx-brand {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.6rem;
+  color: hsl(var(--foreground));
+  font: 700 1.1rem/1 var(--font-display);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.nx-brand img {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  object-fit: contain;
+}
+
+.nx-part-link {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 1rem;
+  padding-left: 1rem;
+  border-left: 1px solid hsl(var(--border));
+  color: hsl(var(--muted-foreground));
+  font: 400 0.85rem/1 var(--font-sans);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: color 0.2s ease;
+}
+
+.nx-part-link:hover {
+  color: hsl(var(--foreground));
+}
+
+@media (max-width: 900px) {
+  .nx-part-link {
+    display: none;
+  }
+}
+
+[dir="rtl"], [dir="rtl"] .font-sans, [dir="rtl"] .font-display {
+  font-family: "IBM Plex Sans Arabic", "Instrument Sans", system-ui, sans-serif;
+}
+
+[dir="rtl"] h1 {
+  letter-spacing: 0;
+}
+
+@keyframes nx-ring {
+  0% { box-shadow: 0 0 0 0 hsl(var(--accent) / .45); }
+  70% { box-shadow: 0 0 0 7px hsl(var(--accent) / 0); }
+  100% { box-shadow: 0 0 0 0 hsl(var(--accent) / 0); }
+}
+
+.nx-pulse {
+  animation: nx-ring 1.8s ease-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nx-pulse { animation: none; }
+}
+
+h1, h2, h3 {
+  text-wrap: balance;
+}

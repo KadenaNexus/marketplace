@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /wallet-check
+
+Sitemap: https://marketplace.kadena.ws/sitemap.xml
