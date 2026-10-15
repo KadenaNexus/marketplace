@@ -1,7 +1,9 @@
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useWallet } from "@/hooks/useWallet";
-import { listAllEscrows, PLATFORM_ARBITER } from "@/lib/kadena";
+import { listAllEscrows, PLATFORM_ARBITER, type Escrow } from "@/lib/kadena";
+import { isV11, loadV11Escrows } from "@/lib/v11ui";
+import { useV11Config } from "@/hooks/useV11";
 import { listDisputes } from "@/lib/disputeApi";
 import { NeedsAttention } from "@/components/NeedsAttention";
 import { OpenOffersAdmin } from "@/components/OpenOffersAdmin";
@@ -13,11 +15,16 @@ import { ArrowLeft, Shield, Loader2, AlertCircle, RefreshCw } from "lucide-react
 export default function Admin() {
   const { account, isConnected, isConnecting, connect, disconnect, error } = useWallet();
 
+  // v11 trades (the arbiter is the contract config's) plus v10 history while the old contract still reads
   const { data: escrows = [], isLoading: loadingEscrows, refetch: refetchEscrows } = useQuery({
     queryKey: ["admin-escrows", account?.account],
-    queryFn: () => listAllEscrows(),
+    queryFn: async () => {
+      const [v11, v10] = await Promise.all([loadV11Escrows(account?.account), listAllEscrows().catch(() => [] as Escrow[])]);
+      return [...v11, ...v10];
+    },
     enabled: !!account && isConnected,
   });
+  const { data: v11Config } = useV11Config();
 
   const { data: disputes = [], isLoading: loadingDisputes, refetch } = useQuery({
     queryKey: ["admin-disputes"],
@@ -25,11 +32,16 @@ export default function Admin() {
     enabled: !!account,
   });
 
-  const isPlatformArbiter = !!account && account.account === PLATFORM_ARBITER;
+  const isPlatformArbiter = !!account && (account.account === PLATFORM_ARBITER || account.account === v11Config?.arbiter);
   const arbiterOfferIds = new Set(
     escrows.filter((e) => e.arbiter === account?.account).map((e) => e.offerId)
   );
-  const myDisputes = disputes.filter((d) => arbiterOfferIds.has(d.offerId));
+  // v11 trades disputed on the chain but without a record on our server yet are listed too
+  const recorded = new Set(disputes.map((d) => d.offerId));
+  const chainOnly = escrows
+    .filter((e) => isV11(e) && e.state === "DISPUTED" && e.arbiter === account?.account && !recorded.has(e.offerId))
+    .map((e) => ({ offerId: e.offerId, status: "OPEN" as const, reason: "Disputed on chain (no record on the server)", createdAt: undefined as string | undefined, triggeredByTimeout: false }));
+  const myDisputes = [...disputes.filter((d) => arbiterOfferIds.has(d.offerId)), ...chainOnly];
   const offerMap = Object.fromEntries(escrows.map((e) => [e.offerId, e]));
 
   // The arbiter's way in on a computer (the rest of the Marketplace is for phones): connect the arbiter

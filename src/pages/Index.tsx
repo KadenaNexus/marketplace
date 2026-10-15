@@ -11,6 +11,8 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useWallet } from "@/hooks/useWallet";
 import { fetchProfile } from "@/lib/profileApi";
 import { CHAIN_ID, NETWORK_ID, PLATFORM_ARBITER, readEscrow } from "@/lib/kadena";
+import { readPool, readTrade } from "@/lib/v11";
+import { useV11Config } from "@/hooks/useV11";
 import { LogOut, Shield, Megaphone, Bell } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -48,7 +50,8 @@ const Index = () => {
     enabled: !!account && isConnected,
   });
 
-  const isArbiter = !!account && account.account === PLATFORM_ARBITER;
+  const { data: v11Config } = useV11Config();
+  const isArbiter = !!account && (account.account === PLATFORM_ARBITER || account.account === v11Config?.arbiter);
 
   // Offer alerts: sign-up strip, and links from alert emails (?offer=ID)
   const [lang] = useLang();
@@ -64,14 +67,30 @@ const Index = () => {
     if (!linkedOffer || !isConnected || !account || linkHandled.current === location.key) return;
     linkHandled.current = location.key;
     const me = account.account;
-    readEscrow(linkedOffer)
-      .then((e) => {
+    // v11 first: a trade I am part of opens in My trades; a pool opens in the market on the side that can take it
+    const v11 = linkedOffer.startsWith("trade-")
+      ? readTrade(linkedOffer).then((t) => (t ? { trade: t } : null))
+      : linkedOffer.startsWith("pool-")
+        ? readPool(linkedOffer).then((p) => (p ? { pool: p } : null))
+        : Promise.resolve(null);
+    v11.then((r) => {
+      if (r && "trade" in r) {
+        if (r.trade.seller === me || r.trade.buyer === me) { setRole(null); setMobileTab("trades"); }
+        else toast.info(ALERTS_COPY[lang].offerGone);
+        return;
+      }
+      if (r && "pool" in r) {
+        if (r.pool.creator === me) { setRole(null); setMobileTab("trades"); }
+        else { setRole(r.pool.side === "SELL" ? "buyer" : "seller"); setMobileTab("offers"); }
+        return;
+      }
+      return readEscrow(linkedOffer).then((e) => {
         if (!e) return toast.info(ALERTS_COPY[lang].offerGone);
         if (e.state === "CREATED" && e.creator !== me) { setRole(e.side === "SELL" ? "buyer" : "seller"); setMobileTab("offers"); }
         else if (e.creator === me || e.buyer === me || e.seller === me) { setRole(null); setMobileTab("trades"); }
         else toast.info(ALERTS_COPY[lang].offerGone);
-      })
-      .catch(() => {});
+      });
+    }).catch(() => {});
   }, [linkedOffer, isConnected, account, lang, location.key]);
 
   // "Post again" on a finished offer: open New offer on the same side (the form fills itself in)
@@ -172,9 +191,9 @@ const Index = () => {
                   <Megaphone className="h-5 w-5 text-white" />
                 </div>
                 <div className="space-y-1">
-                  <h2 className="text-lg font-semibold text-white">New: sell KDA for $BRO</h2>
+                  <h2 className="text-lg font-semibold text-white">New: take any amount from an offer</h2>
                   <p className="text-sm text-white/95 leading-relaxed">
-                    Choose BRO (Kadena token) as the currency of an offer and get paid in BRO on the Kadena chain.
+                    Offers are pools with a min and max per trade. Sellers lock the KDA when posting, so a buyer's take is funded at once: no accept step, no waiting for a deposit. Kadena tokens settle instantly.
                   </p>
                 </div>
               </CardContent>
