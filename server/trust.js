@@ -9,10 +9,11 @@
  *   POST /api/terms/accept                  { wallet, publicKey, signedCmd, version }
  */
 import { fetchChainOffers } from "./alerts.js";
+import { fetchChain, poolsById, tradeAsLegacyEscrow } from "./chain.js";
 
 export const TERMS_VERSION = "2026-10-14"; // BRO added as a way to pay
 
-/** Completed trades per wallet from all escrows (either side counts). */
+/** Completed trades per wallet from all escrows (either side counts): v10 offers and v11 trades alike. */
 export function completedCounts(offers) {
   const n = new Map();
   for (const o of offers) {
@@ -22,7 +23,22 @@ export function completedCounts(offers) {
   return n;
 }
 
-export function createChainCache({ fetchOffers = fetchChainOffers, freshMs = 60 * 1000, now = () => Date.now() } = {}) {
+/**
+ * v10 escrows (history) plus every v11 trade in the same legacy shape, for the counts. Read one after the other
+ * (a single Pact server rejects parallel reads). If one contract cannot be read, the other still counts; both
+ * failing throws, so the cache keeps its last good read.
+ */
+export async function fetchAllEscrows() {
+  const out = [];
+  let failed = 0;
+  try { out.push(...await fetchChainOffers()); } catch (e) { failed++; console.warn("[trust] v10 read failed:", e.message); }
+  try { const c = await fetchChain(); const by = poolsById(c.pools); out.push(...c.trades.map((t) => tradeAsLegacyEscrow(t, by, c.config.arbiter))); }
+  catch (e) { failed++; console.warn("[trust] v11 read failed:", e.message); }
+  if (failed === 2) throw new Error("chain not reachable");
+  return out;
+}
+
+export function createChainCache({ fetchOffers = fetchAllEscrows, freshMs = 60 * 1000, now = () => Date.now() } = {}) {
   let last = null, at = 0, inflight = null;
   return async function offers() {
     if (last && now() - at < freshMs) return last;

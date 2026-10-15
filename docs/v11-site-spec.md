@@ -74,6 +74,31 @@ The trade code (`tradeCode`) keeps working on either id.
 - Hidden offers / admin list: work on pools. The server's auto-expiry job is replaced by the pool's on-chain expiry.
 - `/api/pools/:id/details` PUT/GET (creator-authenticated PUT; GET returns payout only to a party of a trade on that pool).
 
+### Server routes (v11), as built in `server/pools.js`, `server/payout.js`, `server/index.js`
+
+Authenticated calls use the usual `wallet, publicKey, signedCmd` (body for PUT/POST, query for GET).
+
+- `GET /api/pools` → `[{ poolId, creator, side, available, locked, min, max, price, currency, token, payWindow, expiresAt?,
+  agent, state: "OPEN", createdAt?, takes, networks: string[], notes: string, hidden: { reason, hiddenAt } | null }]`
+  (open pools only, cached ~15 s; the UI filters `hidden` for everyone but the creator).
+- `GET /api/pools/:poolId/details` → `{ poolId, networks, notes, updatedAt }` (public, never addresses; empty defaults when nothing saved).
+- `PUT /api/pools/:poolId/details` body `{ networks: ("USDT:TRC20"|"USDT:ERC20"|"USDC:ERC20")[], payout: { [network]: address }, notes? }`
+  → `{ ok, poolId, networks, notes }`. 404 until the pool is on the chain (save it after the create transaction is
+  confirmed), 403 unless the wallet is the pool's creator, 400 on a bad address (TRC20 `T…`, ERC20 `0x…`).
+- `GET /api/pools/:poolId/payout?wallet=…&publicKey=…&signedCmd=…[&tradeId=…]` → `{ poolId, networks, payout, notes, updatedAt, isMine }`
+  for the creator, a buyer/seller of a trade on the pool, or the arbiter; `tradeId` lets a take from seconds ago count.
+- `GET /api/offers/:tradeId/payout` (legacy PayoutCard) with a v11 trade id: a trade on a SELL pool answers with the
+  pool's addresses as `details: [{ method: "USDT", value, network: "TRC20" }]` (read only); a trade on a BUY pool
+  works as in v10 with the taker (KDA holder) saving `details` while the trade is FUNDED.
+- `GET /api/offers/:tradeId` with a v11 trade id → the v10 shape plus `v11: true, poolId, seller, buyer, payAmount,
+  token, payWindow, agent, state` (price/currency from the chain).
+- `GET /api/trades/recent` items carry `token` (module name for an instant swap, else null); `total` is the amount paid
+  (0 for a giveaway). The socket event `trade-completed` carries the same item.
+- Notification kinds for v11 trades: `funded` (buyer), `taken` (seller), `paid`, `marked`, `completed`, `disputed`,
+  `refunded`, `cancelled` (seller only), `split`, `due-pay`, `expired-pay`, `due-release`, `expired-release`;
+  `new_offer` items for pools have `offerId = poolId` and `open` true while the pool is OPEN; `expiring-pool-…` a day
+  before a pool's on-chain expiry. Hide/relist/admin list (`/api/offers/:id/hide`, `/api/admin/open-offers`) take pool ids.
+
 ## UI
 
 - Market: pool cards (available, min–max, price, currency/network chips, "Instant" badge for tokens, seller trust).

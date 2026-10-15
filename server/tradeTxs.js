@@ -14,11 +14,12 @@ import { hash as blakeHash } from "@kadena/cryptography-utils";
 const env = (k, d) => (process.env[k] ?? d);
 const cfg = () => ({
   contract: `${env("VITE_CONTRACT_NAMESPACE", "free")}.${env("VITE_CONTRACT_MODULE", "p2p-escrow-v10")}`,
+  contractV11: `${env("VITE_CONTRACT_NAMESPACE", "free")}.${env("VITE_CONTRACT_MODULE_V11", "p2p-escrow-v11")}`,
   apis: env("ALERTS_CHAIN_API", "https://api.chainweb-community.org,https://chainweb.chaddex.com,https://api.chainweb.com")
     .split(",").map((s) => s.trim().replace(/\/$/, "")).filter(Boolean),
 });
 
-/** Contract function -> what people see. */
+/** Contract function -> what people see (v10 and v11 names; the first string argument is the offer, pool or trade id). */
 export const ACTIONS = {
   "create-offer": "Create offer",
   "accept-offer": "Accept",
@@ -32,19 +33,30 @@ export const ACTIONS = {
   "timeout-accepted-close": "Closed: deposit time ran out",
   "timeout-funded-refund": "Refund: payment time ran out",
   "timeout-paid-dispute": "Dispute: release time ran out",
+  // v11
+  "top-up": "Top up",
+  "withdraw": "Withdraw",
+  "update-offer": "Edit offer",
+  "take-offer": "Take",
+  "take-and-settle": "Swap",
+  "cancel": "Cancel",
+  "timeout-refund": "Refund: payment time ran out",
+  "open-dispute": "Open dispute",
+  "resolve": "Resolved by the arbiter",
 };
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** The escrow call in a signed command, or null when it is something else. */
-export function parseEscrowCall(cmd, contract = cfg().contract) {
+/** The escrow call in a signed command, or null when it is something else. `contract` = one module name or a list. */
+export function parseEscrowCall(cmd, contract = [cfg().contract, cfg().contractV11]) {
   let c;
   try { c = JSON.parse(cmd); } catch { return null; }
   if (c?.networkId !== "mainnet01" && c?.networkId !== env("TRADE_TXS_NETWORK", "mainnet01")) return null;
   if (String(c?.meta?.chainId) !== "1") return null;
   const code = c?.payload?.exec?.code;
   if (typeof code !== "string" || code.length > 4000) return null;
-  const m = code.match(new RegExp(`\\(\\s*${escapeRe(contract)}\\.([a-z-]+)\\s+"([^"]{1,255})"`));
+  const modules = (Array.isArray(contract) ? contract : [contract]).map(escapeRe).join("|");
+  const m = code.match(new RegExp(`\\(\\s*(?:${modules})\\.([a-z-]+)\\s+"([^"]{1,255})"`));
   if (!m || !ACTIONS[m[1]]) return null;
   const sender = typeof c.meta?.sender === "string" && /^k:[0-9a-f]{64}$/i.test(c.meta.sender) ? c.meta.sender : "";
   return { fn: m[1], offerId: m[2], sender };

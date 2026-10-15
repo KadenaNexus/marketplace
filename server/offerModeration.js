@@ -1,27 +1,74 @@
 /**
- * The arbiter tidies the market: open offers nobody is following up (forgotten, creator gone) can be
- * hidden from the offer list. The contract only lets the creator close an open offer, so nothing changes
- * on the chain: the offer is hidden in the Marketplace, its creator is told (bell, push, email) and can
- * delete it or post it again. Only open (CREATED) offers can be hidden; nothing is locked in them.
+ * The arbiter tidies the market: open pools nobody is following up (forgotten, creator gone) can be
+ * hidden from the offer list. The contract only lets the creator close a pool, so nothing changes
+ * on the chain: the pool is hidden in the Marketplace, its creator is told (bell, push, email) and can
+ * close it or post it again. Only open pools can be hidden; what is locked in open trades stays on the chain.
  *
- *   GET    /api/hidden-offers                         -> [{ offerId, reason, hiddenAt }]   (public: the app filters with it)
- *   GET    /api/admin/open-offers   (query auth)      -> open offers where you are the arbiter, with age and creator activity
- *   POST   /api/offers/:offerId/hide   { wallet, publicKey, signedCmd, reason? }
+ *   GET    /api/hidden-offers                         -> [{ offerId, reason, hiddenAt }]   (public: the app filters with it; ids are pool ids)
+ *   GET    /api/admin/open-offers   (query auth)      -> open pools where you are the arbiter, with age and creator activity
+ *   POST   /api/offers/:offerId/hide   { wallet, publicKey, signedCmd, reason? }        (:offerId = a pool id)
  *   DELETE /api/offers/:offerId/hide   { wallet, publicKey, signedCmd }
- *   POST   /api/offers/:offerId/relist { wallet, publicKey, signedCmd }   the creator lists an expired offer again
+ *   POST   /api/offers/:offerId/relist { wallet, publicKey, signedCmd }   the creator lists an expired offer again (v10)
  *
- * Automatic rule: an open offer that has been listed for OFFER_EXPIRY_DAYS (default 7, 0 = off) without a
- * buyer is hidden the same way (reason "expired"). Its creator is told and can list it again for another
- * period with one tap, or delete it. Trades that were accepted are never touched here: no KDA can be locked
- * in an open offer, but it can be in a trade, and those are settled only on the chain.
+ * Expiry: a v11 pool expires on the chain (its own `expires-at`); the server only reminds the creator a day
+ * before (`poolExpiryReminders`). The v10 rule (`expireOldOffers`: hide an offer listed OFFER_EXPIRY_DAYS
+ * without a buyer) is kept for the old contract but no longer runs.
  */
-import { readEscrowFromChain } from "./payout.js";
 import { notify, tradeCode } from "./notifications.js";
 import { createChainCache } from "./trust.js";
 import { fetchChainOffers } from "./alerts.js";
+import { fetchChain, readConfig, readPool } from "./chain.js";
 
 const DAY = 86400000;
 export const expiryDays = () => { const n = Number(process.env.OFFER_EXPIRY_DAYS ?? 7); return Number.isFinite(n) && n >= 0 ? n : 7; };
+/** v10 CREATED and v11 OPEN both mean "open, nothing taken yet from this listing". */
+const isOpen = (state) => state === "CREATED" || state === "OPEN";
+
+/* ---------------- v11 pools as moderation targets ---------------- */
+let configCache = { at: 0, v: null };
+async function arbiter() {
+  if (Date.now() - configCache.at > 60 * 1000) configCache = { at: Date.now(), v: await readConfig() };
+  return configCache.v.arbiter;
+}
+/** A pool in the shape the routes check: { creator, arbiter, side, state, amount, … } or null. */
+export async function readPoolTarget(poolId) {
+  const p = await readPool(poolId);
+  return p ? { ...p, id: p.poolId, amount: p.available, arbiter: await arbiter() } : null;
+}
+/** Open pools for the admin list (the arbiter comes from the config). */
+export async function fetchOpenPools() {
+  const c = await fetchChain();
+  return c.pools.filter((p) => p.state === "OPEN").map((p) => ({ ...p, id: p.poolId, amount: p.available, arbiter: c.config.arbiter }));
+}
+
+/**
+ * A day before a pool's on-chain expiry, tell its creator once (kind carries the expiry time, so a new expiry
+ * set with Edit is reminded again). Returns the pool ids warned.
+ */
+export async function poolExpiryReminders(pool, { pools, now = Date.now(), notifyFn = notify } = {}) {
+  const open = (pools || await fetchOpenPools()).filter((p) => p.state === "OPEN" && p.expiresAt);
+  const warned = [];
+  for (const p of open) {
+    const leftMs = new Date(p.expiresAt).getTime() - now;
+    if (leftMs <= 0 || leftMs > DAY) continue;
+    const code = tradeCode(p.poolId), hours = Math.max(1, Math.round(leftMs / 3600000));
+    const sent = await notifyFn(pool, {
+      wallet: p.creator, offer_id: p.poolId, kind: `expiring-pool-${new Date(p.expiresAt).toISOString().slice(0, 16)}`,
+      title: "Your offer expires tomorrow",
+      body: `${code ? `#${code} ` : ""}expires in about ${hours} hour${hours === 1 ? "" : "s"} and then leaves the market. Nothing moves: the unsold KDA stays in the offer until you close it. Open My offers to extend the expiry or close the offer.`,
+    }).catch((e) => { console.warn("[expiry] warn:", e.message); return null; });
+    if (sent?.created !== false) warned.push(p.poolId);
+  }
+  return { warned };
+}
+
+export function startPoolExpiryWatcher(getPool, everyMs = 30 * 60 * 1000) {
+  const tick = () => poolExpiryReminders(getPool())
+    .then((r) => { if (r.warned.length) console.log("[expiry] warned:", r.warned.length); })
+    .catch((e) => console.warn("[expiry]", e.message));
+  setTimeout(tick, 60 * 1000);
+  return setInterval(tick, everyMs);
+}
 
 /**
  * One round of the automatic rule. Listed since = the later of when the offer was posted and when its creator
@@ -84,7 +131,7 @@ export const REASONS = {
   other: "",
 };
 
-export function registerOfferModerationRoutes(app, { getPool, requireAuth, sendAuthError, readEscrow = readEscrowFromChain, chainOffers = createChainCache(), notifyFn = notify }) {
+export function registerOfferModerationRoutes(app, { getPool, requireAuth, sendAuthError, readEscrow = readPoolTarget, chainOffers = createChainCache({ fetchOffers: fetchOpenPools }), notifyFn = notify }) {
   const okId = (id) => typeof id === "string" && id.length > 0 && id.length <= 255;
   const auth = (req, res, from) => {
     const a = requireAuth(req, from);
@@ -113,7 +160,7 @@ export function registerOfferModerationRoutes(app, { getPool, requireAuth, sendA
     const w = auth(req, res, "query"); if (!w) return;
     let offers;
     try { offers = await chainOffers(); } catch { return res.status(503).json({ error: "Could not read the chain right now" }); }
-    const open = offers.filter((o) => o.state === "CREATED" && o.arbiter === w);
+    const open = offers.filter((o) => isOpen(o.state) && o.arbiter === w);
     if (!open.length) return res.json([]);
     const ids = open.map((o) => o.id), creators = [...new Set(open.map((o) => o.creator))];
     const pool = getPool();
@@ -126,11 +173,13 @@ export function registerOfferModerationRoutes(app, { getPool, requireAuth, sendA
     const s = new Map(seen.rows.map((x) => [x.wallet, x.last_seen]));
     const h = new Map(hid.rows.map((x) => [x.offer_id, x]));
     return res.json(open.map((o) => {
-      const x = d.get(o.id), created = x?.created_at ?? null, last = s.get(o.creator) ?? null;
+      const x = d.get(o.id), created = o.createdAt ?? x?.created_at ?? null, last = s.get(o.creator) ?? null;
       const active = [created, last].filter(Boolean).map((t) => new Date(t).getTime());
       return {
         offerId: o.id, code: tradeCode(o.id), side: o.side, amount: o.amount, creator: o.creator,
-        price: x ? Number(x.price) : null, currency: x?.fiat_currency ?? null,
+        // v11: price and currency are on the pool; v10: in offer_details
+        price: o.price ?? (x ? Number(x.price) : null), currency: o.currency ?? x?.fiat_currency ?? null,
+        min: o.min ?? null, max: o.max ?? null, expiresAt: o.expiresAt ?? null,
         createdAt: created, creatorLastActive: active.length ? new Date(Math.max(...active)).toISOString() : null,
         hidden: h.has(o.id) ? { reason: h.get(o.id).reason, hiddenAt: h.get(o.id).hidden_at } : null,
       };
@@ -140,7 +189,7 @@ export function registerOfferModerationRoutes(app, { getPool, requireAuth, sendA
   app.post("/api/offers/:offerId/hide", async (req, res) => {
     const w = auth(req, res, "body"); if (!w) return;
     const e = await arbiterOf(req, res, w); if (!e) return;
-    if (e.state !== "CREATED") return res.status(409).json({ error: `Only open offers can be hidden (this one is ${e.state})` });
+    if (!isOpen(e.state)) return res.status(409).json({ error: `Only open offers can be hidden (this one is ${e.state})` });
     const key = String(req.body?.reason || "inactive");
     const reason = key in REASONS ? key : "other";
     const r = await getPool().query("INSERT INTO hidden_offers (offer_id, hidden_by, reason) VALUES ($1, $2, $3) ON CONFLICT (offer_id) DO NOTHING RETURNING offer_id", [req.params.offerId, w, reason]);
@@ -149,7 +198,7 @@ export function registerOfferModerationRoutes(app, { getPool, requireAuth, sendA
       notifyFn(getPool(), {
         wallet: e.creator, offer_id: req.params.offerId, kind: "hidden",
         title: "Your offer was hidden from the market",
-        body: `${code ? `#${code}: ` : ""}${REASONS[reason] || "It looked forgotten."} Nothing was locked and nothing moved. Delete it from My trades, or post it again if you still want to trade.`,
+        body: `${code ? `#${code}: ` : ""}${REASONS[reason] || "It looked forgotten."} Nothing was locked in a trade and nothing moved on the chain. Close it from My offers to get the unsold KDA back, or post it again if you still want to trade.`,
       }).catch((err) => console.warn("[moderation] notify:", err.message));
     }
     return res.json({ ok: true, hidden: true });
@@ -164,7 +213,7 @@ export function registerOfferModerationRoutes(app, { getPool, requireAuth, sendA
     try { e = await readEscrow(id); } catch { return res.status(503).json({ error: "Could not read the chain right now" }); }
     if (!e) return res.status(404).json({ error: "Offer not found" });
     if (e.creator !== w) return res.status(403).json({ error: "Only the creator of this offer can list it again" });
-    if (e.state !== "CREATED") return res.status(409).json({ error: `This offer is ${e.state}, not open` });
+    if (!isOpen(e.state)) return res.status(409).json({ error: `This offer is ${e.state}, not open` });
     const pool = getPool();
     const h = (await pool.query("SELECT reason FROM hidden_offers WHERE offer_id = $1", [id])).rows[0];
     if (h && h.reason !== "expired") return res.status(403).json({ error: "The Marketplace hid this offer. Delete it and post a new one, or ask in the Telegram group." });

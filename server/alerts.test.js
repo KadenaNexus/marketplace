@@ -10,7 +10,7 @@ import os from "os";
 import path from "path";
 import pg from "pg";
 import express from "express";
-import { matches, runAlertsOnce, registerAlertRoutes, offersEmail } from "./alerts.js";
+import { matches, runAlertsOnce, registerAlertRoutes, offersEmail, poolAsAlertOffer, poolMethods } from "./alerts.js";
 
 const MAIL = path.join(os.tmpdir(), `alerts-mail-${process.pid}.jsonl`);
 process.env.ALERTS_MAIL_LOG = MAIL;
@@ -51,6 +51,35 @@ test("matching by side, currency and amount", () => {
   assert.equal(matches(sub, { side: "SELL", amount: 500, currency: "GBP" }), false);
   assert.equal(matches(sub, { side: "SELL", amount: 500, currency: "" }), true, "unknown currency is not filtered out");
   assert.equal(matches({ want_sell: false, want_buy: true, currencies: "" }, { side: "BUY", amount: 1 }), true);
+});
+
+test("a v11 pool: price and range from the chain, networks from pool_details, announced like an offer", async () => {
+  const p = { poolId: "alerttest-pool", creator: "k:c", side: "SELL", available: 1000, locked: 0, min: 50, max: 500, price: 0.01, currency: "USDT", token: "", state: "OPEN" };
+  const o = poolAsAlertOffer(p);
+  assert.deepEqual([o.id, o.state, o.amount, o.price, o.currency, o.min, o.max], ["alerttest-pool", "CREATED", 1000, 0.01, "USDT", 50, 500]);
+  assert.equal(poolAsAlertOffer({ ...p, state: "CLOSED" }).state, "CLOSED");
+  assert.deepEqual(poolMethods(o, ["USDT:TRC20", "USDC:ERC20", "USDT:ERC20"]), ["USDT (TRC20)", "USDT (ERC20)"]);
+  assert.deepEqual(poolMethods({ ...o, token: "n_x.kb-usdc", currency: "kb-USDC" }), ["kb-USDC (instant)"]);
+  assert.deepEqual(poolMethods({ ...o, price: 0 }), ["Giveaway"]);
+  const m = offersEmail({ id: 1, token: "t".repeat(32), lang: "en" }, [{ ...o, methods: ["USDT (TRC20)"] }]);
+  assert.match(m.text, /Selling 1,000 KDA\nPrice per KDA: 0\.01 USDT · Total: 10 USDT\nPer trade: 50–500 KDA\nPayment: USDT \(TRC20\)/);
+  // the watcher: a pool whose creator saved the networks goes out at once; one without waits (like v10 details)
+  await pool.query("TRUNCATE alert_subscriptions, alert_offers_seen, alert_mail_log, alert_state RESTART IDENTITY");
+  await pool.query("DELETE FROM pool_details WHERE pool_id LIKE 'alerttest-%'");
+  clearMail();
+  await pool.query("INSERT INTO alert_subscriptions (email, token, want_sell, want_buy, frequency, confirmed_at) VALUES ('pools@example.com', 'tok-pools-0123456789abcdef', true, true, 'instant', now())");
+  await pool.query("INSERT INTO pool_details (pool_id, creator, networks, payout) VALUES ('alerttest-pool', 'k:c', '[\"USDT:TRC20\"]', '{\"USDT:TRC20\":\"T1\"}')");
+  await runAlertsOnce(pool, { now: T0, chain: [] });
+  const r = await runAlertsOnce(pool, { now: T0 + 60e3, chain: [o, poolAsAlertOffer({ ...p, poolId: "alerttest-pool2", price: 0.5, currency: "kb-USDC", token: "n_x.kb-usdc" }), poolAsAlertOffer({ ...p, poolId: "alerttest-pool3" })] });
+  assert.deepEqual(r.announced.sort(), ["alerttest-pool", "alerttest-pool2"], "the token pool needs no networks; pool3 waits for its creator");
+  const mail = mails().at(-1);
+  assert.match(mail.text, /Per trade: 50–500 KDA/);
+  assert.match(mail.text, /Payment: USDT \(TRC20\)/);
+  assert.match(mail.text, /kb-USDC \(instant\)/);
+  assert.ok(!mail.html.includes("T1"), "no addresses in an email");
+  await pool.query("TRUNCATE alert_subscriptions, alert_offers_seen, alert_mail_log, alert_state RESTART IDENTITY");
+  await pool.query("DELETE FROM pool_details WHERE pool_id LIKE 'alerttest-%'");
+  clearMail();
 });
 
 test("offer details are escaped in the email", () => {

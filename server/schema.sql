@@ -421,3 +421,16 @@ CREATE TABLE IF NOT EXISTS offer_relists (
     offer_id VARCHAR(255) PRIMARY KEY,
     relisted_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Escrow v11 (server/pools.js): what the server keeps per pool, off chain. Price, currency and limits are on the
+-- chain now; here live the payment networks the creator accepts (e.g. ["USDT:TRC20","USDC:ERC20"]), the receiving
+-- address per network ({"USDT:TRC20":"T…"}, shown only to the parties of a trade on the pool) and free-text notes.
+CREATE TABLE IF NOT EXISTS pool_details (
+    pool_id TEXT PRIMARY KEY,
+    creator TEXT NOT NULL,
+    networks JSONB NOT NULL DEFAULT '[]',
+    payout JSONB NOT NULL DEFAULT '{}',
+    notes TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

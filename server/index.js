@@ -12,12 +12,15 @@ import "dotenv/config";
 import { registerAlertRoutes, startAlertWatcher } from "./alerts.js";
 import { registerMarketRoutes } from "./market.js";
 import { registerTrustRoutes, recheckCompletedOffers } from "./trust.js";
-import { registerOfferModerationRoutes, startOfferExpiryWatcher, expiryDays } from "./offerModeration.js";
+import { registerOfferModerationRoutes, startPoolExpiryWatcher, expiryDays } from "./offerModeration.js";
 import { registerCompletedFeedRoutes, completedItem } from "./completedFeed.js";
 import { registerTradeEmailRoutes, emailNotification } from "./tradeEmails.js";
 import { registerNotificationRoutes, startNotificationWatcher, notifyMessage, notifyTradeChangeSoon, notify, onNotificationCreated, onTradeCompleted } from "./notifications.js";
 import { registerTradeTxRoutes, startTradeTxWatcher } from "./tradeTxs.js";
 import { registerPayoutRoutes, readEscrowFromChain, sidesOf } from "./payout.js";
+import { registerPoolRoutes } from "./pools.js";
+import { fetchChain, readTradeWithPool } from "./chain.js";
+import { createChainCache } from "./trust.js";
 import { registerProofRoutes } from "./proofs.js";
 import { initSessionSecret, isSessionToken, issueSessionToken, verifySessionToken } from "./session.js";
 import express from "express";
@@ -324,10 +327,12 @@ const onTradeStepSettled = ({ offerId, ok }) => {
 };
 registerTradeTxRoutes(app, () => pool, { onSettled: (x) => onTradeStepSettled(x) });
 registerMarketRoutes(app);
-registerCompletedFeedRoutes(app, () => pool);
+// one cached read of the v11 chain (pools, trades, config) shared by the routes that list from it
+const chainCache = createChainCache({ fetchOffers: fetchChain, freshMs: 15 * 1000 });
+registerCompletedFeedRoutes(app, () => pool, { chain: chainCache });
 // live "a trade was just completed" for everyone on the Marketplace (the request key may arrive a moment later)
-onTradeCompleted(({ offerId, amount, wallets }) => {
-  setTimeout(() => completedItem(pool, offerId, amount)
+onTradeCompleted(({ offerId, amount, wallets, trade }) => {
+  setTimeout(() => completedItem(pool, offerId, amount, trade)
     .then((item) => io.emit("trade-completed", { ...item, wallets }))
     .catch((e) => console.warn("[feed]", e.message)), 3000);
 });
@@ -336,6 +341,8 @@ onNotificationCreated((row) => emailNotification(pool, row));
 registerTrustRoutes(app, { getPool: () => pool, requireAuth: (...a) => requireAuth(...a), sendAuthError: (...a) => sendAuthError(...a) });
 registerOfferModerationRoutes(app, { getPool: () => pool, requireAuth: (...a) => requireAuth(...a), sendAuthError: (...a) => sendAuthError(...a) });
 registerPayoutRoutes(app, { getPool: () => pool, requireAuth: (...a) => requireAuth(...a), sendAuthError: (...a) => sendAuthError(...a) });
+// escrow v11 pools: the market list and the per-pool payment details (server/pools.js)
+registerPoolRoutes(app, { getPool: () => pool, requireAuth: (...a) => requireAuth(...a), sendAuthError: (...a) => sendAuthError(...a), chain: chainCache });
 registerProofRoutes(app, {
   getPool: () => pool,
   requireAuth: (...a) => requireAuth(...a),
@@ -880,7 +887,18 @@ app.get("/api/offers/:offerId", validateParams(offerIdParamSchema), async (req, 
       [offerId]
     );
     const row = result.rows[0];
-    if (!row) return res.status(404).json({ error: "Offer not found" });
+    if (!row) {
+      // a v11 trade id: price and currency are on the chain (no offer_details row); creator = the pool's creator
+      const r = await readTradeWithPool(offerId).catch(() => null);
+      if (!r) return res.status(404).json({ error: "Offer not found" });
+      const { trade: t, pool: p } = r;
+      const method = t.token ? `${t.currency} (instant)` : t.price === 0 ? "Giveaway" : t.currency;
+      return res.json({
+        offerId: t.tradeId, creator: p.creator, amount: t.amount, side: p.side, price: t.price, paymentMethod: JSON.stringify([method]),
+        fiatCurrency: t.currency, createdAt: t.fundedAt ?? null, listedSince: null, expiryDays: 0,
+        v11: true, poolId: t.poolId, seller: t.seller, buyer: t.buyer, payAmount: t.payAmount, token: t.token, payWindow: t.payWindow, agent: t.agent, state: t.state,
+      });
+    }
     return res.json({
       offerId: row.offer_id,
       creator: row.creator,
@@ -2560,7 +2578,8 @@ async function start() {
     startAlertWatcher(() => pool);
     startNotificationWatcher(() => pool);
     startTradeTxWatcher(() => pool, 15000, (x) => onTradeStepSettled(x));
-    startOfferExpiryWatcher(() => pool);
+    // v11 pools expire on the chain; the server only reminds the creator a day before
+    startPoolExpiryWatcher(() => pool);
     // once: drop rating registrations from before they were checked against the chain (kept in *_removed)
     setTimeout(() => recheckCompletedOffers(pool)
       .then((r) => { if (!r.skipped) console.log("[trust] rating registrations re-checked:", JSON.stringify(r)); })

@@ -34,6 +34,14 @@ test("reads the escrow call from a signed command", () => {
   assert.equal(parseEscrowCall(cmdFor(`(free.p2p-escrow-v10.get-escrow "${OFFER}")`, BUYER)), null, "a read is not a step");
   assert.equal(parseEscrowCall(cmdFor(`(free.p2p-escrow-v10.deposit "${OFFER}")`, SELLER, { networkId: "testnet04" })), null, "other network");
   assert.equal(parseEscrowCall("not json"), null);
+  // escrow v11: pools and trades, the first string is the pool or trade id
+  assert.deepEqual(parseEscrowCall(cmdFor(`(free.p2p-escrow-v11.take-offer "trade-1-abc" "pool-1-xyz" "${BUYER}" 100.0)`, BUYER)), { fn: "take-offer", offerId: "trade-1-abc", sender: BUYER });
+  assert.deepEqual(parseEscrowCall(cmdFor(`(free.p2p-escrow-v11.create-offer "pool-1-xyz" "${SELLER}" "SELL" 1000.0 50.0 500.0 0.01 "USDT" "" 1800 free.p2p-escrow-v11.EPOCH "")`, SELLER)).offerId, "pool-1-xyz");
+  for (const fn of ["top-up", "withdraw", "update-offer", "close-offer", "take-and-settle", "mark-paid", "release", "cancel", "timeout-refund", "open-dispute", "resolve"]) {
+    assert.equal(parseEscrowCall(cmdFor(`(free.p2p-escrow-v11.${fn} "x-1" 1.0)`, SELLER))?.fn, fn, fn);
+  }
+  assert.equal(parseEscrowCall(cmdFor(`(free.p2p-escrow-v11.get-offer "pool-1")`, SELLER)), null, "a read is not a step");
+  assert.equal(parseEscrowCall(cmdFor(`(free.p2p-escrow-v11.release "x-1")`, SELLER), "free.p2p-escrow-v10"), null, "only the modules asked for");
 });
 
 test("records steps, refuses a command that does not match its key, settles with the chain result", async () => {

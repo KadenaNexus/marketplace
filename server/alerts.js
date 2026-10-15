@@ -8,8 +8,10 @@
  * Double opt-in: nothing is sent until the address is confirmed. Every email carries a manage link
  * and a one-click unsubscribe (RFC 8058 List-Unsubscribe headers).
  *
- * Trust: side, amount and state come from the chain. Price, currency and payment methods come from
- * offer_details (written by the creator's browser), so they are shown escaped and never as links.
+ * Trust: side, amount and state come from the chain. Escrow v11: price, currency and the per-trade range are on
+ * the chain too (a pool, see chain.js); the payment networks come from pool_details. v10 (`chain` injected):
+ * price, currency and payment methods come from offer_details (written by the creator's browser). Either way
+ * they are shown escaped and never as links.
  *
  * Off unless RESEND_API_KEY is set (or ALERTS_MAIL_LOG for local testing). Env:
  *   RESEND_API_KEY        Resend key (account where kadena.ws is verified)
@@ -27,8 +29,9 @@ import fs from "fs";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { z } from "zod";
 import { hash as blakeHash } from "@kadena/cryptography-utils";
+import { fetchChain } from "./chain.js";
 
-export const ALERT_CURRENCIES = ["USD", "EUR", "SAR", "AED", "BRO"];
+export const ALERT_CURRENCIES = ["USD", "EUR", "SAR", "AED", "BRO", "USDT", "USDC", "kb-USDC", "kb-ETH", "FLUX"];
 
 const env = (k, d) => (process.env[k] && process.env[k].trim() !== "" ? process.env[k].trim() : d);
 const cfg = () => ({
@@ -85,6 +88,12 @@ export async function fetchChainOffers() {
   throw new Error(`All Chainweb nodes failed: ${last?.message}`);
 }
 
+/** A v11 pool in the shape the alert watcher and emails use. Open pools are "CREATED" here; price and range come with it. */
+export function poolAsAlertOffer(p) {
+  return { id: p.poolId, state: p.state === "OPEN" ? "CREATED" : p.state, side: p.side, amount: p.available, creator: p.creator, price: p.price, currency: p.currency, token: p.token, min: p.min, max: p.max };
+}
+export async function fetchChainPools() { return (await fetchChain()).pools.map(poolAsAlertOffer); }
+
 /* ---------------- matching ---------------- */
 /** Does an offer (chain data + optional details) match a subscription? Pure, for tests. */
 export function matches(sub, offer) {
@@ -102,7 +111,7 @@ const T = {
   en: {
     dir: "ltr",
     selling: (a) => `Selling ${a} KDA`, buying: (a) => `Buying ${a} KDA`,
-    price: "Price per KDA", total: "Total", pay: "Payment", posted: "Posted", view: "View offer", isNew: "New",
+    price: "Price per KDA", total: "Total", perTrade: "Per trade", pay: "Payment", posted: "Posted", view: "View offer", isNew: "New",
     subjOne: (o) => `New offer: ${o.side === "SELL" ? `${fmtNum(o.amount)} KDA for sale` : `buying ${fmtNum(o.amount)} KDA`}${o.price ? ` at ${fmtNum(o.price, isToken(o.currency) ? 12 : 6)} ${o.currency}` : ""}`,
     subjMany: (n) => `${n} new KDA offers on Kadena P2P Marketplace`,
     subjDigest: (n) => `Today's KDA offers: ${n} open on Kadena P2P Marketplace`,
@@ -127,7 +136,7 @@ const T = {
   ar: {
     dir: "rtl",
     selling: (a) => `بيع ${a} KDA`, buying: (a) => `شراء ${a} KDA`,
-    price: "السعر لكل KDA", total: "الإجمالي", pay: "طريقة الدفع", posted: "نُشر", view: "عرض العرض", isNew: "جديد",
+    price: "السعر لكل KDA", total: "الإجمالي", perTrade: "لكل صفقة", pay: "طريقة الدفع", posted: "نُشر", view: "عرض العرض", isNew: "جديد",
     subjOne: (o) => `عرض جديد: ${o.side === "SELL" ? `${fmtNum(o.amount)} KDA للبيع` : `شراء ${fmtNum(o.amount)} KDA`}${o.price ? ` بسعر ${fmtNum(o.price, isToken(o.currency) ? 12 : 6)} ${o.currency}` : ""}`,
     subjMany: (n) => `${n} عروض KDA جديدة في سوق Kadena P2P`,
     subjDigest: (n) => `عروض KDA اليوم: ${n} عرض مفتوح في سوق Kadena P2P`,
@@ -185,6 +194,7 @@ function offerCard(o, lang, markNew) {
   const head = o.side === "SELL" ? t.selling(fmtNum(o.amount)) : t.buying(fmtNum(o.amount));
   const rows = [];
   if (o.price) rows.push([t.price, `${fmtNum(o.price, isToken(o.currency) ? 12 : 6)} ${o.currency}`], [t.total, `${(isToken(o.currency) ? fmtNum(o.price * o.amount, 12) : fmtMoney(o.price * o.amount))} ${o.currency}`]);
+  if (o.min != null && o.max != null) rows.push([t.perTrade, `${fmtNum(o.min)}–${fmtNum(o.max)} KDA`]);
   if (o.methods?.length) rows.push([t.pay, o.methods.join(", ")]);
   const tag = markNew ? ` <span style="background:${ORANGE};color:#fff;font-size:11px;border-radius:4px;padding:1px 6px">${esc(t.isNew)}</span>` : "";
   return `<div style="border:1px solid ${LINE};border-radius:10px;padding:14px;margin:12px 0">
@@ -195,7 +205,7 @@ ${button(`${cfg().url}/?offer=${encodeURIComponent(o.id)}`, t.view)}</div>`;
 function offerText(o, lang) {
   const t = T[lang] || T.en;
   const head = o.side === "SELL" ? t.selling(fmtNum(o.amount)) : t.buying(fmtNum(o.amount));
-  return [head, o.price ? `${t.price}: ${fmtNum(o.price, isToken(o.currency) ? 12 : 6)} ${o.currency} · ${t.total}: ${(isToken(o.currency) ? fmtNum(o.price * o.amount, 12) : fmtMoney(o.price * o.amount))} ${o.currency}` : "", o.methods?.length ? `${t.pay}: ${o.methods.join(", ")}` : "", `${cfg().url}/?offer=${encodeURIComponent(o.id)}`].filter(Boolean).join("\n");
+  return [head, o.price ? `${t.price}: ${fmtNum(o.price, isToken(o.currency) ? 12 : 6)} ${o.currency} · ${t.total}: ${(isToken(o.currency) ? fmtNum(o.price * o.amount, 12) : fmtMoney(o.price * o.amount))} ${o.currency}` : "", o.min != null && o.max != null ? `${t.perTrade}: ${fmtNum(o.min)}–${fmtNum(o.max)} KDA` : "", o.methods?.length ? `${t.pay}: ${o.methods.join(", ")}` : "", `${cfg().url}/?offer=${encodeURIComponent(o.id)}`].filter(Boolean).join("\n");
 }
 
 const MAX_IN_EMAIL = 10;
@@ -260,11 +270,24 @@ const DETAILS_WAIT_MS = 3 * 60 * 1000; // wait up to 3 min for the creator's bro
 async function getState(pool, key) { const r = await pool.query("SELECT value FROM alert_state WHERE key = $1", [key]); return r.rows[0]?.value ?? null; }
 async function setState(pool, key, value) { await pool.query("INSERT INTO alert_state (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", [key, value]); }
 
+/** The payment line of a v11 pool: its networks from pool_details ("USDT (TRC20)"), "instant" for a token, "Giveaway" for price 0. */
+export function poolMethods(o, networks = []) {
+  if (o.token) return [`${o.currency} (instant)`];
+  if (Number(o.price) === 0) return ["Giveaway"];
+  return networks.filter((n) => n.startsWith(`${o.currency}:`)).map((n) => `${n.split(":")[0]} (${n.split(":")[1]})`);
+}
 async function withDetails(pool, chainOffers) {
   if (!chainOffers.length) return [];
-  const r = await pool.query("SELECT offer_id, price, fiat_currency, payment_method FROM offer_details WHERE offer_id = ANY($1)", [chainOffers.map((o) => o.id)]);
-  const by = new Map(r.rows.map((x) => [x.offer_id, x]));
+  const v10 = chainOffers.filter((o) => o.price == null), pools = chainOffers.filter((o) => o.price != null);
+  const r = v10.length ? await pool.query("SELECT offer_id, price, fiat_currency, payment_method FROM offer_details WHERE offer_id = ANY($1)", [v10.map((o) => o.id)]) : { rows: [] };
+  const pr = pools.length ? await pool.query("SELECT pool_id, networks FROM pool_details WHERE pool_id = ANY($1)", [pools.map((o) => o.id)]) : { rows: [] };
+  const by = new Map(r.rows.map((x) => [x.offer_id, x])), nets = new Map(pr.rows.map((x) => [x.pool_id, x.networks || []]));
   return chainOffers.map((o) => {
+    if (o.price != null) {
+      // a pool: the price is on the chain; "details" means the creator saved the payment networks (not needed for a token or a giveaway)
+      const methods = poolMethods(o, nets.get(o.id));
+      return { ...o, hasDetails: methods.length > 0, methods };
+    }
     const d = by.get(o.id);
     const currency = d?.fiat_currency ? String(d.fiat_currency).toUpperCase().slice(0, 10) : "";
     return { ...o, hasDetails: !!d, price: d ? Number(d.price) : 0, currency, methods: d ? methodsOf(d.payment_method) : [] };
@@ -274,7 +297,7 @@ async function withDetails(pool, chainOffers) {
 /** One watcher round. `now` and `chain` can be injected for tests. Returns a summary. */
 export async function runAlertsOnce(pool, { now = Date.now(), chain } = {}) {
   const c = cfg();
-  const offers = chain || await fetchChainOffers();
+  const offers = chain || await fetchChainPools();
   // offers the arbiter hid from the market (server/offerModeration.js) are not announced either
   const hidden = new Set((await pool.query("SELECT offer_id FROM hidden_offers").catch(() => ({ rows: [] }))).rows.map((r) => r.offer_id));
   const open = offers.filter((o) => o.state === "CREATED" && !hidden.has(o.id));
