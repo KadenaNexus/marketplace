@@ -88,7 +88,10 @@ export type EscrowState =
   | "REFUNDED"
   | "CLOSED"
   | "DELETED"
-  | "DISPUTED";
+  | "DISPUTED"
+  // escrow v11 trades shown through the same views (src/lib/v11.ts tradeToEscrow)
+  | "CANCELLED"
+  | "SPLIT";
 
 export const T1_SECONDS = 3600;
 export const T2_SECONDS = 14400;

@@ -26,6 +26,13 @@ import {
 } from "@/lib/kadena";
 import { isStepExpired } from "@/components/TradeTimer";
 import { PayoutCard } from "@/components/PayoutCard";
+import { PoolPayoutCard } from "@/components/pools/PoolPayoutCard";
+import { buildResolveTx } from "@/lib/v11";
+import { isV11, loadV11Escrows, sendV11 } from "@/lib/v11ui";
+import { authProof } from "@/lib/session";
+import { Input } from "@/components/ui/input";
+import { Slider } from "@/components/ui/slider";
+import { Scale } from "lucide-react";
 import { ProofCard } from "@/components/TradeSafety";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -62,18 +69,54 @@ export default function AdminDisputeDetail() {
   const [releaseToSellerLoading, setReleaseToSellerLoading] = useState(false);
   const [moveToDisputeLoading, setMoveToDisputeLoading] = useState(false);
 
-  const { data: escrows = [] } = useQuery({
-    queryKey: ["admin-escrows"],
-    queryFn: () => listAllEscrows(),
+  // v11 trades first (the arbiter is the contract config's), then v10 history while the old contract still reads
+  const { data: escrows = [], refetch: refetchEscrows } = useQuery({
+    queryKey: ["admin-escrows", account?.account],
+    queryFn: async () => {
+      const [v11, v10] = await Promise.all([loadV11Escrows(account?.account), listAllEscrows().catch(() => [] as Escrow[])]);
+      return [...v11, ...v10];
+    },
     enabled: !!offerId,
   });
   const escrow = escrows.find((e) => e.offerId === offerId) ?? null;
+  const v11 = escrow && isV11(escrow) ? escrow : null;
 
-  const { data: dispute, refetch: refetchDispute } = useQuery({
+  const { data: dispute, isLoading: disputeLoading, refetch: refetchDispute } = useQuery({
     queryKey: ["dispute", offerId],
-    queryFn: () => getDispute(offerId!),
+    queryFn: () => getDispute(offerId!).catch(() => null),
     enabled: !!offerId,
   });
+
+  // v11: the arbiter settles with a split (to the buyer 0..amount; the rest back to the seller)
+  const [toBuyer, setToBuyer] = useState("");
+  const [resolving, setResolving] = useState(false);
+  const handleResolveV11 = async () => {
+    if (!account || !v11) return;
+    const n = parseFloat(toBuyer);
+    if (!Number.isFinite(n) || n < 0 || n > v11.amount) return toast.error(`Enter between 0 and ${v11.amount} KDA for the buyer`);
+    const what = n === v11.amount ? "Release everything to the buyer" : n === 0 ? "Refund everything to the seller" : `Split: ${n} KDA to the buyer, ${Number((v11.amount - n).toFixed(12))} KDA to the seller`;
+    if (!confirm(`${what}? This settles the dispute on the chain and cannot be undone.`)) return;
+    setResolving(true);
+    try {
+      const requestKey = await sendV11(`Settling the dispute: ${what}`, () => buildResolveTx(v11.offerId, account.account, account.publicKey, n));
+      toast.success("Dispute settled on the chain", {
+        description: <a href={getTxExplorerUrl(requestKey)} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "underline", wordBreak: "break-all" }}>View on Explorer ↗</a>,
+      });
+      if (dispute && (dispute.status === "OPEN" || dispute.status === "UNDER_REVIEW")) {
+        try {
+          const signedCmd = await authProof(account.account, account.publicKey, { fresh: true });
+          await putReleaseRefundTxRequestKey({ offerId: v11.offerId, requestKey, wallet: account.account, publicKey: account.publicKey, signedCmd });
+          await closeDispute({ offerId: v11.offerId, wallet: account.account, publicKey: account.publicKey, signedCmd });
+        } catch { toast.warning("Settled on chain; the dispute record could not be closed on the server"); }
+      }
+      refetchEscrows();
+      refetchAll();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Resolve failed");
+    } finally {
+      setResolving(false);
+    }
+  };
 
   const { data: evidence = [], refetch: refetchEvidence } = useQuery({
     queryKey: ["evidence", offerId, account?.account],
@@ -323,7 +366,8 @@ export default function AdminDisputeDetail() {
     );
   }
 
-  if (!dispute) {
+  // a v11 trade disputed on the chain can be settled even when our server has no record of the dispute
+  if (!dispute && (disputeLoading || !v11)) {
     return (
       <div className="min-h-screen bg-background">
         <header className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-50">
@@ -363,8 +407,8 @@ export default function AdminDisputeDetail() {
               Dispute: {offerId.slice(0, 16)}…
             </span>
           </div>
-          <Badge variant={dispute.status === "OPEN" ? "destructive" : dispute.status === "UNDER_REVIEW" ? "secondary" : "outline"}>
-            {dispute.status}
+          <Badge variant={!dispute || dispute.status === "OPEN" ? "destructive" : dispute.status === "UNDER_REVIEW" ? "secondary" : "outline"}>
+            {dispute ? dispute.status : escrow.state}
           </Badge>
         </div>
       </header>
@@ -381,9 +425,10 @@ export default function AdminDisputeDetail() {
             <p><Label className="text-muted-foreground">Seller</Label> {escrow.seller}</p>
             <p><Label className="text-muted-foreground">Buyer</Label> {escrow.buyer || "—"}</p>
             <p><Label className="text-muted-foreground">Arbiter</Label> {escrow.arbiter}</p>
-            <p><Label className="text-muted-foreground">Amount</Label> {escrow.amount} KDA • Price {escrow.fiatCurrency} {escrow.price}</p>
-            <p><Label className="text-muted-foreground">State</Label> {escrow.state}</p>
-            <div className="space-y-3 pt-2"><PayoutCard escrow={escrow} total="" /><ProofCard escrow={escrow} /></div>
+            <p><Label className="text-muted-foreground">Amount</Label> {escrow.amount} KDA • Price {escrow.fiatCurrency} {escrow.price}{v11 && <> • Pay {v11.trade.payAmount} {v11.trade.currency} • Pool <span className="font-mono">{v11.trade.poolId}</span></>}</p>
+            <p><Label className="text-muted-foreground">State</Label> {escrow.state}{v11 ? " (escrow v11)" : ""}</p>
+            <div className="space-y-3 pt-2">{v11 && v11.side === "SELL" ? <PoolPayoutCard escrow={v11} /> : <PayoutCard escrow={escrow} total="" />}<ProofCard escrow={escrow} /></div>
+            {dispute && (
             <div className="flex flex-wrap gap-4 pt-1">
               {dispute.fundTxRequestKey ? (
                 <a
@@ -410,10 +455,12 @@ export default function AdminDisputeDetail() {
                 <span className="text-muted-foreground text-sm">Release / Refund Tx — appears after arbiter releases or refunds</span>
               )}
             </div>
+            )}
           </CardContent>
         </Card>
 
         {/* Dispute header */}
+        {dispute ? (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -430,6 +477,44 @@ export default function AdminDisputeDetail() {
             <p className="mt-1">{dispute.reason || "No reason provided"}</p>
           </CardContent>
         </Card>
+        ) : (
+          <p className="rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm">Disputed on the chain, but our server has no dispute record (no reason, evidence or messages). You can still settle it below.</p>
+        )}
+
+        {/* v11: settle with a split */}
+        {v11 && isArbiter && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2"><Scale className="h-5 w-5 text-primary" />Resolve</CardTitle>
+              <CardDescription>
+                {escrow.state === "DISPUTED"
+                  ? `Decide where the ${escrow.amount} KDA goes. Everything to the buyer completes the trade, everything to the seller refunds it, anything between splits it.`
+                  : `This trade is ${escrow.state}. The arbiter can only settle a trade that is DISPUTED on the chain; ${["FUNDED", "PAID"].includes(escrow.state) ? "the buyer (or the seller after mark-paid) must open the dispute first." : "nothing is left to do."}`}
+              </CardDescription>
+            </CardHeader>
+            {escrow.state === "DISPUTED" && (
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-sm">
+                    <span>To the buyer: <b className="font-mono">{toBuyer || "0"}</b> KDA</span>
+                    <span>To the seller: <b className="font-mono">{Number(Math.max(0, escrow.amount - (parseFloat(toBuyer) || 0)).toFixed(6))}</b> KDA</span>
+                  </div>
+                  <Slider value={[Math.min(escrow.amount, Math.max(0, parseFloat(toBuyer) || 0))]} min={0} max={escrow.amount} step={escrow.amount / 100} onValueChange={(v) => setToBuyer(String(Number(v[0].toFixed(6))))} aria-label="KDA to the buyer" />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Input type="number" inputMode="decimal" step="any" min={0} max={escrow.amount} value={toBuyer} onChange={(e) => setToBuyer(e.target.value)} placeholder="KDA to the buyer" className="h-10 w-48 font-mono" aria-label="KDA to the buyer" />
+                    <Button type="button" variant="outline" size="sm" onClick={() => setToBuyer("0")}>All to seller</Button>
+                    <Button type="button" variant="outline" size="sm" onClick={() => setToBuyer(String(Number((escrow.amount / 2).toFixed(6))))}>Half</Button>
+                    <Button type="button" variant="outline" size="sm" onClick={() => setToBuyer(String(escrow.amount))}>All to buyer</Button>
+                  </div>
+                </div>
+                <Button className="gap-2" onClick={handleResolveV11} disabled={resolving || toBuyer === ""}>
+                  {resolving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Scale className="h-4 w-4" />}
+                  Resolve on the chain
+                </Button>
+              </CardContent>
+            )}
+          </Card>
+        )}
 
         {/* Admin actions */}
         {canAct && (
@@ -470,7 +555,7 @@ export default function AdminDisputeDetail() {
         )}
 
         {/* Release escrow funds — arbiter can send KDA to buyer or seller from admin */}
-        {isArbiter && escrow && ["FUNDED", "PAID", "DISPUTED"].includes(escrow.state) && (
+        {isArbiter && escrow && !v11 && ["FUNDED", "PAID", "DISPUTED"].includes(escrow.state) && (
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
