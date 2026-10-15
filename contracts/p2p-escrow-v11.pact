@@ -395,9 +395,10 @@
           (emit-event (TRADE_EVENT trade-id offer-id (if giveaway "COMPLETED" "FUNDED") seller buyer amount))
           trade-id))))
 
-  ;; Instant swap: the buyer pays the token and receives the KDA in one transaction.
-  ;; The buyer signs the token's TRANSFER capability (buyer -> seller, pay amount).
-  (defun take-and-settle (trade-id:string offer-id:string taker:string amount:decimal token:module{fungible-v2})
+  ;; Instant swap: the buyer pays `pay` of the token and receives the KDA in one transaction.
+  ;; `pay` must cover amount * price (rounded to the token's precision); the buyer signs the token's
+  ;; TRANSFER capability (buyer -> seller, pay), so the site computes `pay` and the chain only checks it.
+  (defun take-and-settle (trade-id:string offer-id:string taker:string amount:decimal token:module{fungible-v2} pay:decimal)
     (not-paused)
     (new-trade-id trade-id)
     (check-take offer-id taker amount)
@@ -410,10 +411,13 @@
         (enforce (> (length token-name) 0) "This offer is paid outside Kadena: use take-offer")
         (enforce (= (format "{}" [token]) token-name) "Wrong token module for this offer")
         (let* ((fee  (fee-for amount))
-               (pay  (round (* amount price) (token::precision)))
+               (prec (token::precision))
+               (due  (round (* amount price) prec))
                (net  (- amount fee))
                (pool (offer-vault offer-id)))
-          (enforce (> pay 0.0) "Payment rounds to zero")
+          (enforce (> due 0.0) "Payment rounds to zero")
+          (enforce (= pay (floor pay prec)) "Payment has too many decimals for this token")
+          (enforce (>= pay due) (format "Payment must be at least {} {}" [due currency]))
           ;; token: buyer -> seller
           (token::transfer taker creator pay)
           ;; KDA: pool -> buyer (and fee)
