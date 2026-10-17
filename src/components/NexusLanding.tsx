@@ -151,7 +151,7 @@ const COPY: Record<Lang, Copy> = {
       "personPre": "The Kadena Nexus team is in the ",
       "personLink": "Telegram group",
       "personPost": ". Ask there before, during, or after a trade, and we'll help you through it.",
-      "watchCaption": "A full trade between two phones with Linx Wallet, from posting the offer to the KDA arriving. Demo with sample accounts."
+      "watchCaption": "A full trade between two phones, inside Linx Wallet, from posting the offer to the KDA arriving. Demo with sample accounts."
     },
     "compare": {
       "h2": "Escrow on Kadena or a centralized P2P desk",
@@ -380,7 +380,7 @@ const COPY: Record<Lang, Copy> = {
       "personPre": "فريق Kadena Nexus موجود في ",
       "personLink": "مجموعة تيليجرام",
       "personPost": ". اسأل هناك قبل الصفقة أو أثناءها أو بعدها، وسنساعدك خطوة بخطوة.",
-      "watchCaption": "صفقة كاملة بين هاتفين بمحفظة Linx، من نشر العرض حتى وصول KDA. عرض توضيحي بحسابات تجريبية (الشرح في الفيديو بالإنجليزية)."
+      "watchCaption": "صفقة كاملة بين هاتفين من داخل محفظة Linx، من نشر العرض حتى وصول KDA. عرض توضيحي بحسابات تجريبية (الشرح في الفيديو بالإنجليزية)."
     },
     "compare": {
       "h2": "ضمان على Kadena أم منصة P2P مركزية",
