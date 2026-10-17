@@ -12,7 +12,8 @@ import { tradeAsLegacyEscrow } from "./chain.js";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL || "postgresql://postgres:postgres@localhost:5432/kadena_nexus" });
 const S = "k:" + "a".repeat(64), B = "k:" + "b".repeat(64), X = "k:" + "c".repeat(64);
-const T0 = Date.parse("2026-10-13T08:00:00Z");
+// Relative to the real clock: the feed only shows new offers from the last few days of real time (now()).
+const T0 = Math.floor(Date.now() / 3600e3) * 3600e3 - 3600e3;
 const esc = (o) => ({ id: "ntest-1", side: "SELL", amount: 1000, creator: S, buyer: "", state: "CREATED", acceptedAt: null, fundedAt: null, paidAt: null, ...o });
 const sent = [];
 const send = async (sub, payload) => { sent.push({ to: sub.wallet, endpoint: sub.endpoint, ...payload }); return sub.endpoint.includes("gone") ? "gone" : "ok"; };
