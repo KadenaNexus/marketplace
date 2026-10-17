@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { Bell, MessageCircle, Smartphone, Wallet } from "lucide-react";
 import { AppLogo } from "@/components/AppLogo";
 import { useLang } from "@/components/NexusLanding";
-import { LINX_APP_STORE } from "@/components/WalletPicker";
+import { LINX_ANDROID, LINX_IOS, LinxPath } from "@/components/OpenInLinx";
 
 
 const COPY = {
@@ -13,12 +13,15 @@ const COPY = {
     works: "Works on iPhone and Android, in the browser. No app store needed for the Marketplace itself.",
     orType: "Or type",
     why: [
-      ["Linx wallet on the same phone", "Approve each step in Linx and come straight back."],
+      ["Inside Linx Wallet", "Open the Marketplace from Linx and approve every step without leaving the app."],
       ["Alerts and notifications", "New offers, your turn in a trade, deadlines. Add it to your Home Screen for push notifications."],
       ["Live chat", "Talk to the other side before and during a trade."],
       ["Made for one hand", "One clear button for the step that is yours."],
     ],
-    getLinx: "Get Linx Wallet",
+    linxTitle: "Best on your phone: inside Linx Wallet",
+    linxHow: "Install Linx, then open",
+    appStore: "App Store",
+    googlePlay: "Google Play",
     stay: "Arbiter sign-in",
   },
   ar: {
@@ -27,12 +30,15 @@ const COPY = {
     works: "يعمل على iPhone وAndroid من المتصفح. لا حاجة لتحميل تطبيق للسوق نفسه.",
     orType: "أو اكتب",
     why: [
-      ["محفظة Linx على نفس الجوال", "وافق على كل خطوة في Linx ثم عد مباشرة."],
+      ["من داخل محفظة Linx", "افتح السوق من Linx ووافق على كل خطوة دون مغادرة التطبيق."],
       ["تنبيهات وإشعارات", "عروض جديدة، دورك في الصفقة، المهل. أضفه إلى الشاشة الرئيسية لتصلك الإشعارات."],
       ["محادثة مباشرة", "تواصل مع الطرف الآخر قبل الصفقة وأثناءها."],
       ["مصمم لليد الواحدة", "زر واضح واحد للخطوة المطلوبة منك."],
     ],
-    getLinx: "احصل على محفظة Linx",
+    linxTitle: "الأفضل على جوالك: من داخل محفظة Linx",
+    linxHow: "ثبّت Linx ثم افتح",
+    appStore: "App Store",
+    googlePlay: "Google Play",
     stay: "دخول المحكّم",
   },
 } as const;
@@ -96,9 +102,14 @@ function PhoneOnlyScreen() {
               );
             })}
           </ul>
-          <a href={LINX_APP_STORE} target="_blank" rel="noopener noreferrer" className="inline-flex h-11 items-center rounded-full border border-border px-5 font-semibold hover:border-primary">
-            {t.getLinx}
-          </a>
+          <div className="space-y-3 rounded-2xl border border-primary/30 bg-primary/5 p-4">
+            <p className="font-semibold">{t.linxTitle}</p>
+            <p className="text-sm text-muted-foreground">{t.linxHow} <LinxPath lang={lang} className="text-xs" /></p>
+            <div className="flex flex-wrap gap-3">
+              <a href={LINX_IOS} target="_blank" rel="noopener noreferrer" className="inline-flex h-11 items-center rounded-full bg-primary px-5 font-semibold text-primary-foreground hover:opacity-90">{t.appStore}</a>
+              <a href={LINX_ANDROID} target="_blank" rel="noopener noreferrer" className="inline-flex h-11 items-center rounded-full border border-border px-5 font-semibold hover:border-primary">{t.googlePlay}</a>
+            </div>
+          </div>
         </div>
         <div className="flex flex-col items-center gap-3">
           <div className="flex h-72 w-72 items-center justify-center rounded-3xl border border-border bg-white p-4 shadow-sm">

@@ -3,6 +3,7 @@ import { BellRing, Check, ChevronRight, Copy, Loader2, Monitor, QrCode, Smartpho
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { isPhone, onPendingApproval } from "@/lib/walletconnect";
+import { LINX_IOS, linxStoreLink } from "./OpenInLinx";
 
 /** Choice shown when this browser has the Ecko extension and phone wallets are also possible. */
 export function WalletPicker({ open, onOpenChange, onEcko, onPhone }: {
@@ -100,7 +101,7 @@ export function WalletApprovalBanner() {
   );
 }
 
-export const LINX_APP_STORE = "https://apps.apple.com/app/linx-wallet/id6450412379";
+export const LINX_APP_STORE = LINX_IOS;
 
 /** What approving in Linx looks like, so nobody is surprised by the requests. */
 function LinxExpectations() {
@@ -112,7 +113,7 @@ function LinxExpectations() {
         <li>Then <b className="text-foreground">1 approval for every trade step</b>: create, accept, deposit, mark as paid, release. Switch to Linx, approve, come back.</li>
       </ul>
       <p className="pt-1 text-xs text-muted-foreground">
-        No Linx yet? <a href={LINX_APP_STORE} target="_blank" rel="noopener noreferrer" className="font-medium text-primary underline">Get it on the App Store</a>
+        No Linx yet? <a href={linxStoreLink()} target="_blank" rel="noopener noreferrer" className="font-medium text-primary underline">Get Linx Wallet</a>
       </p>
     </div>
   );
