@@ -18,7 +18,7 @@
 
 import { ReactNode, useEffect, useState } from "react";
 import { OfferAlertsButton } from "@/components/OfferAlerts";
-import { LINX_APP_STORE } from "@/components/WalletPicker";
+import { linxStoreLink, OpenInLinxCard } from "@/components/OpenInLinx";
 import { ALERTS_COPY } from "@/lib/alertsCopy";
 
 export type Lang = "en" | "ar";
@@ -193,7 +193,7 @@ const COPY: Record<Lang, Copy> = {
       "items": [
         [
           "Linx Wallet on your phone",
-          "The Marketplace is made for phones: open marketplace.kadena.ws in your phone's browser and connect Linx. Your wallet is your account. Each step of a trade is one approval in Linx, and connecting the first time takes two (the connection and a sign-in)."
+          "The Marketplace is inside Linx Wallet: in Linx, open Explore → Web3 Apps → Kadena → Kadena P2P Marketplace, and approve each step without leaving the app. You can also open marketplace.kadena.ws in your phone's browser and connect Linx. Your wallet is your account, and each step of a trade is one approval."
         ],
         [
           "A little KDA on Chain 1 for gas",
@@ -422,7 +422,7 @@ const COPY: Record<Lang, Copy> = {
       "items": [
         [
           "محفظة Linx على جوالك",
-          "السوق مصمم للجوال: افتح marketplace.kadena.ws في متصفح جوالك واربط Linx. المحفظة هي حسابك. كل خطوة في الصفقة موافقة واحدة في Linx، وأول ربط يحتاج موافقتين (الربط وتسجيل الدخول)."
+          "السوق موجود داخل محفظة Linx: في Linx افتح Explore ← Web3 Apps ← Kadena ← Kadena P2P Marketplace، ووافق على كل خطوة دون مغادرة التطبيق. ويمكنك أيضاً فتح marketplace.kadena.ws في متصفح جوالك وربط Linx. المحفظة هي حسابك، وكل خطوة في الصفقة موافقة واحدة."
         ],
         [
           "قليل من KDA على السلسلة 1 لرسوم الشبكة",
@@ -668,6 +668,7 @@ export default function NexusLanding({ walletAction, contractUrl, fromAlert }: N
           </button>
           <h1 className="font-display text-[clamp(2.3rem,5vw,3.9rem)] font-bold leading-[1.08] tracking-[-0.02em]">{t.hero.h1}</h1>
           <p className="mt-5 max-w-[36rem] text-lg leading-relaxed text-muted-foreground">{t.hero.p}</p>
+          <OpenInLinxCard lang={lang} className="mt-6 max-w-[36rem]" />
           <div className="mt-8 flex flex-wrap items-center gap-3">
             {walletAction}
             <a href="#watch" className="inline-flex h-11 items-center gap-2 rounded-full border border-border px-5 font-semibold text-foreground hover:border-primary">
@@ -872,7 +873,7 @@ export default function NexusLanding({ walletAction, contractUrl, fromAlert }: N
             <div className="mt-5 flex flex-wrap items-center gap-3">
               {walletAction}
               <a
-                href={LINX_APP_STORE}
+                href={linxStoreLink()}
                 target="_blank"
                 rel="noreferrer"
                 className="inline-flex h-11 items-center rounded-full border border-border px-5 font-semibold text-foreground hover:border-primary"
