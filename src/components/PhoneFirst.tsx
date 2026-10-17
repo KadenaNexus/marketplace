@@ -1,49 +1,38 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { Bell, MessageCircle, Smartphone, Wallet } from "lucide-react";
+import { ExternalLink, Smartphone } from "lucide-react";
 import { AppLogo } from "@/components/AppLogo";
 import { useLang } from "@/components/NexusLanding";
-import { LINX_ANDROID, LINX_IOS, LinxPath } from "@/components/OpenInLinx";
-
+import { LINX_ANDROID, LINX_IOS, LinxPath, inWalletBrowser, linxStoreLink } from "@/components/OpenInLinx";
 
 const COPY = {
   en: {
-    title: "The Marketplace is now on your phone",
-    lead: "Trading happens where your wallet, alerts and chat are: on your phone. Scan this code with your phone's camera to open it.",
-    works: "Works on iPhone and Android, in the browser. No app store needed for the Marketplace itself.",
-    orType: "Or type",
-    why: [
-      ["Inside Linx Wallet", "Open the Marketplace from Linx and approve every step without leaving the app."],
-      ["Alerts and notifications", "New offers, your turn in a trade, deadlines. Add it to your Home Screen for push notifications."],
-      ["Live chat", "Talk to the other side before and during a trade."],
-      ["Made for one hand", "One clear button for the step that is yours."],
-    ],
-    linxTitle: "Best on your phone: inside Linx Wallet",
-    linxHow: "Install Linx, then open",
-    appStore: "App Store",
-    googlePlay: "Google Play",
+    title: "The Marketplace is in Linx Wallet",
+    lead: "Kadena P2P Marketplace runs inside the Linx Wallet app on your phone. Every trade step is approved right there, without switching apps.",
+    step1: "Install Linx Wallet",
+    step2: "In Linx, open",
+    step2b: "Your offers, trades and chats are all there.",
+    open: "Open Linx Wallet",
+    iphone: "iPhone",
+    android: "Android",
+    scan: "Scan with your phone's camera to get Linx",
+    already: "Opened this from Linx and still see this page? Continue",
     stay: "Arbiter sign-in",
   },
   ar: {
-    title: "السوق الآن على جوالك",
-    lead: "التداول يتم حيث توجد محفظتك وتنبيهاتك والمحادثة: على جوالك. امسح هذا الرمز بكاميرا الجوال لفتحه.",
-    works: "يعمل على iPhone وAndroid من المتصفح. لا حاجة لتحميل تطبيق للسوق نفسه.",
-    orType: "أو اكتب",
-    why: [
-      ["من داخل محفظة Linx", "افتح السوق من Linx ووافق على كل خطوة دون مغادرة التطبيق."],
-      ["تنبيهات وإشعارات", "عروض جديدة، دورك في الصفقة، المهل. أضفه إلى الشاشة الرئيسية لتصلك الإشعارات."],
-      ["محادثة مباشرة", "تواصل مع الطرف الآخر قبل الصفقة وأثناءها."],
-      ["مصمم لليد الواحدة", "زر واضح واحد للخطوة المطلوبة منك."],
-    ],
-    linxTitle: "الأفضل على جوالك: من داخل محفظة Linx",
-    linxHow: "ثبّت Linx ثم افتح",
-    appStore: "App Store",
-    googlePlay: "Google Play",
+    title: "السوق داخل محفظة Linx",
+    lead: "سوق Kadena P2P يعمل من داخل تطبيق محفظة Linx على جوالك. توافق على كل خطوة في الصفقة هناك دون التنقل بين التطبيقات.",
+    step1: "ثبّت محفظة Linx",
+    step2: "في Linx افتح",
+    step2b: "عروضك وصفقاتك ومحادثاتك كلها هناك.",
+    open: "افتح محفظة Linx",
+    iphone: "iPhone",
+    android: "Android",
+    scan: "امسح بكاميرا جوالك لتحميل Linx",
+    already: "فتحت الصفحة من Linx وما زالت تظهر؟ تابع",
     stay: "دخول المحكّم",
   },
 } as const;
-
-const ICONS = [Wallet, Bell, MessageCircle, Smartphone];
 
 /** A computer: a fine pointer (mouse) and a wide screen. Touch screens (phones, tablets) are not. */
 function isComputer(): boolean {
@@ -53,73 +42,97 @@ function isComputer(): boolean {
 }
 
 /**
- * The Marketplace is for phones. On a computer, show where to open it instead (a QR code of this very
- * page, so an offer link from an email opens the same offer on the phone). The only computer use left is
- * the arbiter's dispute board (/admin), reached from a small link at the bottom.
+ * Fallback if Linx's browser is ever not recognised: "?inlinx=1" in the address (or the small link on the
+ * screen) lets this device through, so a real Linx user is never locked out.
  */
-export function PhoneFirst({ children }: { children: ReactNode }) {
-  const [gate] = useState(isComputer);
-  if (!gate) return <>{children}</>;
-  return <PhoneOnlyScreen />;
+const PASS_KEY = "nx-in-wallet";
+function passed(): boolean {
+  try {
+    if (new URLSearchParams(window.location.search).get("inlinx") === "1") { localStorage.setItem(PASS_KEY, "1"); return true; }
+    return localStorage.getItem(PASS_KEY) === "1";
+  } catch { return false; }
 }
 
-function PhoneOnlyScreen() {
-  const [lang] = useLang();
-  const t = COPY[lang];
-  const [qr, setQr] = useState<string | null>(null);
-  const url = typeof window !== "undefined" ? window.location.href : "https://marketplace.kadena.ws";
-  const host = typeof window !== "undefined" ? window.location.host : "marketplace.kadena.ws";
+/**
+ * The Marketplace is used only inside Linx Wallet (Explore > Web3 Apps > Kadena > Kadena P2P Marketplace).
+ * Anywhere else (a phone's browser, a computer) shows how to get there instead. The arbiter's dispute board
+ * (/admin) is a separate route and is not affected.
+ */
+export function PhoneFirst({ children }: { children: ReactNode }) {
+  const [where] = useState<"ok" | "computer" | "browser">(() =>
+    isComputer() ? "computer" : inWalletBrowser() || passed() ? "ok" : "browser");
+  const [through, setThrough] = useState(false);
+  if (where === "ok" || through) return <>{children}</>;
+  return <LinxOnlyScreen computer={where === "computer"} onContinue={() => { try { localStorage.setItem(PASS_KEY, "1"); } catch { /* ignore */ } setThrough(true); }} />;
+}
 
+function Qr({ url, label }: { url: string; label: string }) {
+  const [qr, setQr] = useState<string | null>(null);
   useEffect(() => {
     import("qrcode")
-      .then((QRCode) => QRCode.toDataURL(url, { margin: 1, width: 520, errorCorrectionLevel: "M", color: { dark: "#123A48", light: "#FFFFFF" } }))
+      .then((QRCode) => QRCode.toDataURL(url, { margin: 1, width: 360, errorCorrectionLevel: "M", color: { dark: "#123A48", light: "#FFFFFF" } }))
       .then(setQr).catch(() => setQr(null));
   }, [url]);
+  return (
+    <a href={url} target="_blank" rel="noopener noreferrer" className="flex flex-col items-center gap-2">
+      <span className="flex h-44 w-44 items-center justify-center rounded-2xl border border-border bg-white p-3 shadow-sm">
+        {qr ? <img src={qr} alt={label} className="h-full w-full" /> : <Smartphone className="h-8 w-8 text-muted-foreground" />}
+      </span>
+      <span className="text-sm font-semibold">{label}</span>
+    </a>
+  );
+}
 
+function LinxOnlyScreen({ computer, onContinue }: { computer: boolean; onContinue: () => void }) {
+  const [lang] = useLang();
+  const t = COPY[lang];
+  const stepNo = "flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-bold text-primary-foreground";
   return (
     <div className="min-h-screen bg-background" dir={lang === "ar" ? "rtl" : "ltr"} lang={lang}>
       <header className="border-b border-border bg-card/50" dir="ltr">
         <div className="container mx-auto px-4 py-4"><AppLogo /></div>
       </header>
-      <main className="container mx-auto grid max-w-5xl items-center gap-10 px-4 py-12 md:grid-cols-[1fr_auto]">
-        <div className="space-y-6">
-          <div className="space-y-3">
-            <h1 className="font-display text-4xl font-bold leading-tight">{t.title}</h1>
-            <p className="text-lg text-muted-foreground">{t.lead}</p>
-            <p className="text-sm text-muted-foreground">{t.works}</p>
-          </div>
-          <ul className="grid gap-4 sm:grid-cols-2">
-            {t.why.map(([title, body], i) => {
-              const Icon = ICONS[i];
-              return (
-                <li key={title} className="flex gap-3">
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><Icon className="h-5 w-5" /></span>
-                  <span>
-                    <span className="block font-semibold">{title}</span>
-                    <span className="block text-sm text-muted-foreground">{body}</span>
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-          <div className="space-y-3 rounded-2xl border border-primary/30 bg-primary/5 p-4">
-            <p className="font-semibold">{t.linxTitle}</p>
-            <p className="text-sm text-muted-foreground">{t.linxHow} <LinxPath lang={lang} className="text-xs" /></p>
-            <div className="flex flex-wrap gap-3">
-              <a href={LINX_IOS} target="_blank" rel="noopener noreferrer" className="inline-flex h-11 items-center rounded-full bg-primary px-5 font-semibold text-primary-foreground hover:opacity-90">{t.appStore}</a>
-              <a href={LINX_ANDROID} target="_blank" rel="noopener noreferrer" className="inline-flex h-11 items-center rounded-full border border-border px-5 font-semibold hover:border-primary">{t.googlePlay}</a>
+      <main className="container mx-auto max-w-3xl space-y-8 px-4 py-10">
+        <div className="space-y-3">
+          <h1 className="font-display text-3xl font-bold leading-tight md:text-4xl">{t.title}</h1>
+          <p className="text-lg text-muted-foreground">{t.lead}</p>
+        </div>
+        <ol className="space-y-6">
+          <li className="flex gap-4">
+            <span className={stepNo}>1</span>
+            <div className="min-w-0 flex-1 space-y-3">
+              <p className="pt-1 font-semibold">{t.step1}</p>
+              {computer ? (
+                <>
+                  <div className="flex flex-wrap gap-6">
+                    <Qr url={LINX_IOS} label={t.iphone} />
+                    <Qr url={LINX_ANDROID} label={t.android} />
+                  </div>
+                  <p className="text-sm text-muted-foreground">{t.scan}</p>
+                </>
+              ) : (
+                <a href={linxStoreLink()} target="_blank" rel="noopener noreferrer"
+                  className="inline-flex h-12 items-center gap-2 rounded-full bg-primary px-6 font-semibold text-primary-foreground hover:opacity-90">
+                  {t.open}<ExternalLink className="h-4 w-4" />
+                </a>
+              )}
             </div>
-          </div>
-        </div>
-        <div className="flex flex-col items-center gap-3">
-          <div className="flex h-72 w-72 items-center justify-center rounded-3xl border border-border bg-white p-4 shadow-sm">
-            {qr ? <img src={qr} alt={t.title} className="h-full w-full" /> : <Smartphone className="h-10 w-10 text-muted-foreground" />}
-          </div>
-          <p className="text-sm text-muted-foreground">{t.orType} <span className="font-mono font-semibold text-foreground" dir="ltr">{host}</span></p>
-        </div>
+          </li>
+          <li className="flex gap-4">
+            <span className={stepNo}>2</span>
+            <div className="min-w-0 flex-1 space-y-2">
+              <p className="pt-1 font-semibold">{t.step2}</p>
+              <LinxPath lang={lang} className="text-sm" />
+              <p className="text-sm text-muted-foreground">{t.step2b}</p>
+            </div>
+          </li>
+        </ol>
+        {!computer && (
+          <button type="button" onClick={onContinue} className="text-xs text-muted-foreground underline hover:text-foreground">{t.already}</button>
+        )}
       </main>
       <footer className="container mx-auto px-4 pb-10 text-center">
-        <Link to="/admin" className="text-xs text-muted-foreground underline hover:text-foreground">{t.stay}</Link>
+        {computer && <Link to="/admin" className="text-xs text-muted-foreground underline hover:text-foreground">{t.stay}</Link>}
       </footer>
     </div>
   );
