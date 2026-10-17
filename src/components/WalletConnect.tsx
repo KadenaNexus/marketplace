@@ -6,7 +6,7 @@ import { CHAIN_ID } from "@/lib/kadena";
 import { sendTestTransfer } from "@/lib/kadena";
 import { Wallet, LogOut, AlertCircle, Loader2, Send } from "lucide-react";
 import { toast } from "sonner";
-import { LINX_APP_STORE } from "./WalletPicker";
+import { linxStoreLink } from "./OpenInLinx";
 import { useLang } from "./NexusLanding";
 
 /** `inHeader`: on phones the button says just "Connect" so the header fits on one line. */
@@ -41,7 +41,7 @@ export function WalletConnect({ inHeader = false }: { inHeader?: boolean } = {})
       <div className="flex items-center gap-2 text-warning">
         <AlertCircle className="h-4 w-4" />
         <a 
-          href={LINX_APP_STORE}
+          href={linxStoreLink()}
           target="_blank" 
           rel="noopener noreferrer"
           className="underline hover:no-underline"
