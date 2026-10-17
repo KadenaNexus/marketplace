@@ -19,7 +19,7 @@ export function PushPrompt() {
   const { data: mail } = useTradeEmail();
   const [hidden, setHidden] = useState(hiddenNow);
   const [busy, setBusy] = useState(false);
-  const askPush = push === "needs-install" || push === "default";
+  const askPush = push === "default"; // Linx-only: no "Add to Home Screen" steps
   const askMail = !!mail?.available && !mail.on;
   if (!account || !enabled || hidden || (!askPush && !askMail)) return null;
   const hide = () => { try { localStorage.setItem(HIDE_KEY, String(Date.now() + 14 * 86400e3)); } catch { /* ignore */ } setHidden(true); };

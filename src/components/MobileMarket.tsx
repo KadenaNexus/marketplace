@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { MarketLine } from "@/components/MarketTag";
 import { TradeFeed, TradeFeedToasts } from "@/components/TradeFeed";
 import { PushPrompt } from "@/components/PushPrompt";
-import { OpenInLinxCard } from "@/components/OpenInLinx";
 import { Link } from "react-router-dom";
 import { Bell, Clock, List, Megaphone, Plus, X } from "lucide-react";
 import { EscrowActions } from "@/components/EscrowActions";
@@ -79,7 +78,6 @@ export function MobileMarket({
       <TradeFeedToasts />
       {tab === "offers" && (
         <div className="space-y-4">
-          <OpenInLinxCard lang={lang} />
           {!noticeHidden && (
             <div className="flex items-start gap-3 rounded-xl bg-gradient-to-r from-orange-600 to-orange-500 p-3 text-white">
               <Megaphone className="mt-0.5 h-4 w-4 shrink-0" />
