@@ -41,6 +41,8 @@ runs on, and reads the token's own `precision`.
 
 ## Deployment (not done yet)
 
+**Step by step for the governance wallets (Chainweaver), with a dry run against mainnet: [`DEPLOY-v11.md`](DEPLOY-v11.md).** The ready-to-paste transaction (contract + tables + config) is `deploy/deploy-v11.pact`.
+
 1. Governance keyset `free.p2p-escrow-v11-gov`: the same two Chainweaver wallets that deployed v10, `keys-all`.
    A keyset is defined per chain: define it on chain 1 and on chain 2.
 2. Deploy `p2p-escrow-v11.pact` on mainnet01 **chain 1 and chain 2** with `gov-keyset` in the transaction data, then
