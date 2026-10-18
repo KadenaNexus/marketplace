@@ -53,6 +53,8 @@ export function PoolPayoutCard({ escrow: e }: { escrow: V11Escrow }) {
   const amount = agent ? `${auto.amount} ${t.currency}` : `${formatFiat(t.payAmount, "USD")} ${t.currency}`;
   const buyer = me === t.buyer;
   const live = t.state === "FUNDED";
+  // a closed trade whose addresses the server no longer gives out: nothing useful to show
+  if (!live && !["PAID", "DISPUTED"].includes(t.state) && !networks.some((n) => payout?.[n])) return null;
 
   return (
     <section className={`space-y-3 rounded-xl border-2 p-4 ${buyer && live ? "border-primary/40" : "border-border"}`} aria-label={buyer ? "Where to send the payment" : "Where you get paid"}>

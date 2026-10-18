@@ -141,6 +141,8 @@ test("v11: a take appears FUNDED; who is told what per state", () => {
   // with an agent the release is automatic once the payment is seen
   ev = eventsForChange(undefined, legacy(tradeOf({ agent: X })));
   assert.match(ev[0].body, /released to you automatically once the payment is seen/);
+  assert.equal(ev[0].title, "Action needed: send USDT", "auto-release: the title never quotes the bare amount");
+  assert.match(ev[0].body, /exact USDT amount it shows/);
   ev = eventsForChange("FUNDED", legacy(tradeOf({ state: "PAID" })), null, { tRelease: 1800 });
   assert.deepEqual(ev.map((e) => [e.wallet, e.kind]), [[S, "paid"], [B, "marked"]]);
   assert.match(ev[0].body, /paid 1 USDT.*within 30 min/);

@@ -61,8 +61,12 @@ function tradeEvents(prevState, e, tRelease = 3600) {
   const pay = money(e.payAmount, e.currency), window = dur(e.payWindow || 0), release = dur(tRelease), sell = e.side === "SELL";
   switch (e.state) {
     case "FUNDED":
-      add(buyer, "funded", `Action needed: send ${pay}`,
-        `${sell ? `You took ${kda(e.amount)} from ${short(seller)}` : `${short(seller)} took your offer and locked ${kda(e.amount)} in escrow`}. Send ${pay} to the seller's ${e.currency} address shown in the trade within ${window}${e.agent ? ". The KDA is released to you automatically once the payment is seen." : ", then press Mark as Paid."}`, true);
+      // Auto-release trades: never quote the contract amount, the buyer must send the exact amount with the
+      // identifying digits shown in the trade (a payment of the bare amount does not release anything).
+      if (e.agent) add(buyer, "funded", `Action needed: send ${e.currency}`,
+        `${sell ? `You took ${kda(e.amount)} from ${short(seller)}` : `${short(seller)} took your offer and locked ${kda(e.amount)} in escrow`}. Open the trade and send the exact ${e.currency} amount it shows (about ${pay}, with extra digits that identify your payment) to the seller's address within ${window}. The KDA is released to you automatically once the payment is seen.`, true);
+      else add(buyer, "funded", `Action needed: send ${pay}`,
+        `${sell ? `You took ${kda(e.amount)} from ${short(seller)}` : `${short(seller)} took your offer and locked ${kda(e.amount)} in escrow`}. Send ${pay} to the seller's ${e.currency} address shown in the trade within ${window}, then press Mark as Paid.`, true);
       add(seller, "taken", `${short(buyer)} took ${kda(e.amount)}, waiting for payment`,
         `${sell ? `${short(buyer)} took ${kda(e.amount)} from your offer` : `You took ${short(buyer)}'s offer and your ${kda(e.amount)} is in escrow`}. The buyer has ${window} to send ${pay} and mark it paid. Don't release anything until the ${e.currency} is in your wallet.`);
       break;
