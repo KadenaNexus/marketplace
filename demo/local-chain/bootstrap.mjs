@@ -8,6 +8,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(path.join(HERE, "../../package.json"));
 const { hash, signHash, genKeyPair } = require("@kadena/cryptography-utils");
 const SRV = process.env.PACT_SERVER || "http://127.0.0.1:4600";
+const CHAIN = process.env.CHAIN_ID || "1"; // reset.sh runs one Pact server per chain and bootstraps each
 const V = path.join(HERE, "../../contracts");
 const keysPath = process.env.DEMO_KEYS || path.join(HERE, "keys.json");
 const keys = fs.existsSync(keysPath) ? JSON.parse(fs.readFileSync(keysPath, "utf8")) : {};
@@ -20,7 +21,7 @@ const FEE = keys.gov.account;
 async function send(code, data = {}, signer = null, caps = []) {
   const cmd = JSON.stringify({ networkId: "development", payload: { exec: { code, data } },
     signers: signer ? [{ pubKey: signer.publicKey, clist: caps }] : [],
-    meta: { chainId: "1", sender: signer ? "k:" + signer.publicKey : "", gasLimit: 150000, gasPrice: 1e-8, ttl: 600, creationTime: Math.floor(Date.now() / 1000) - 5 }, nonce: String(Date.now()) + Math.random() });
+    meta: { chainId: CHAIN, sender: signer ? "k:" + signer.publicKey : "", gasLimit: 150000, gasPrice: 1e-8, ttl: 600, creationTime: Math.floor(Date.now() / 1000) - 5 }, nonce: String(Date.now()) + Math.random() });
   const h = hash(cmd);
   const sigs = signer ? [{ sig: signHash(h, signer).sig }] : [];
   const r = await fetch(SRV + "/api/v1/send", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cmds: [{ hash: h, sigs, cmd }] }) });
@@ -45,5 +46,5 @@ if (!contract.includes("demo-now")) throw new Error("now() patch did not apply")
 await send(contract + `\n(create-table free.p2p-escrow-v11.config)(create-table free.p2p-escrow-v11.offers)(create-table free.p2p-escrow-v11.trades)(create-table free.p2p-escrow-v11.reputation)(free.p2p-escrow-v11.init-config "${ARBITER}" "${FEE}")`, { "gov-keyset": ks }, gov);
 const fund = async (k, amt) => send(`(coin.coinbase "${k.account}" (read-keyset "ks") ${amt})`, { ks: { keys: [k.publicKey], pred: "keys-all" } });
 for (const [who, k] of Object.entries(keys)) if (k.account) await fund(k, who === "seller" ? "5000.5" : "50.0");
-console.log("bootstrapped v11 on", SRV, "arbiter", ARBITER, "gov", gov.account);
+console.log(`bootstrapped v11 on chain ${CHAIN} at`, SRV, "arbiter", ARBITER, "gov", gov.account);
 console.log(await send('(free.p2p-escrow-v11.get-config)'));

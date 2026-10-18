@@ -11,9 +11,8 @@ import { OfferAlertsButton } from "@/components/OfferAlerts";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { useWallet } from "@/hooks/useWallet";
-import { useAppChainBalance } from "@/hooks/useAppChainBalance";
+import { useV11ChainBalances } from "@/hooks/useAppChainBalance";
 import { useNotifications } from "@/hooks/useNotifications";
-import { CHAIN_ID } from "@/lib/kadena";
 import { ALERTS_COPY } from "@/lib/alertsCopy";
 import { cn } from "@/lib/utils";
 import type { Lang } from "@/components/NexusLanding";
@@ -57,7 +56,7 @@ export function MobileMarket({
   refreshTrigger: number; lang: Lang; alertsEnabled: boolean; avatar?: string | null;
 }) {
   const { account } = useWallet();
-  const { data: balance } = useAppChainBalance(account?.account);
+  const { data: balances } = useV11ChainBalances(account?.account);
   const [noticeHidden, setNoticeHidden] = useState(() => { try { return localStorage.getItem(NOTICE_KEY) === "1"; } catch { return false; } });
   // Reload the lists when a notification says something changed (new offer, trade step)
   const { items } = useNotifications();
@@ -87,8 +86,10 @@ export function MobileMarket({
           )}
           <div className="flex items-baseline justify-between gap-3">
             <h1 className="font-display text-3xl font-bold">Offers</h1>
-            {balance !== undefined && (
-              <p className="text-sm text-muted-foreground tabular-nums">Chain {CHAIN_ID}: {balance.toLocaleString("en-US", { maximumFractionDigits: 4 })} KDA</p>
+            {balances && (
+              <p className="text-right text-sm text-muted-foreground tabular-nums">
+                {balances.map((b) => <span key={b.chain} className="block">Chain {b.chain}: {b.balance.toLocaleString("en-US", { maximumFractionDigits: 4 })} KDA</span>)}
+              </p>
             )}
           </div>
           <SideSwitch side={side} onSide={onSide} label="What do you want to do" />

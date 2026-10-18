@@ -7,11 +7,12 @@ import assert from "node:assert/strict";
 import pg from "pg";
 import { recentCompleted, completedItem } from "./completedFeed.js";
 import { runNotificationsOnce, onTradeCompleted } from "./notifications.js";
+import { toTrade, tradeAsLegacyEscrow, poolsById, toPool } from "./chain.js";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL || "postgresql://postgres:postgres@localhost:5432/kadena_nexus" });
 const A = "k:" + "a".repeat(64), B = "k:" + "b".repeat(64);
 const clean = async () => {
-  for (const t of ["trade_states", "offer_details", "trade_txs", "notifications"]) await pool.query(`DELETE FROM ${t} WHERE offer_id LIKE 'feed-test-%'`);
+  for (const t of ["trade_states", "offer_details", "trade_txs", "notifications"]) await pool.query(`DELETE FROM ${t} WHERE offer_id LIKE 'feed-test-%' OR offer_id LIKE '2:feed-test-%'`);
 };
 before(clean);
 after(async () => { await clean(); await pool.end(); });
@@ -75,5 +76,27 @@ test("the watcher announces a trade when it becomes COMPLETED, once", async () =
   const mine = seen.filter((x) => x.offerId === "feed-test-live");
   assert.equal(mine.length, 1);
   assert.deepEqual(mine[0], { offerId: "feed-test-live", amount: 50, wallets: [A, B] });
+  onTradeCompleted(null);
+});
+
+test("the same trade id on chains 1 and 2: two trades in the watcher and the feed, each with its own data", async () => {
+  const seen = [];
+  onTradeCompleted((x) => seen.push(x));
+  await pool.query("INSERT INTO alert_state (key, value) VALUES ('notifications_initialized', 'test') ON CONFLICT (key) DO NOTHING");
+  const at = "2026-10-18T11:00:00Z", time = { time: at }, EPOCH = { time: "1970-01-01T00:00:00Z" };
+  const rec = (o) => ({ offer: "feed-test-pool2", seller: A, buyer: B, amount: 20, price: 0.5, currency: "USDT", token: "", "pay-amount": 10, fee: 0, "pay-window": 900, agent: "", state: "COMPLETED", "funded-at": time, "paid-at": time, "closed-at": time, ...o });
+  const one = toTrade("feed-test-dup", rec({}), "1");
+  const two = toTrade("feed-test-dup", rec({ amount: 7, currency: "kb-ETH", token: "n_e595727b657fbbb3b8e362a05a7bb8d12865c1ff.kb-ETH", "pay-amount": 0.0000315, price: 0.0000045 }), "2");
+  const pool1 = toPool("feed-test-pool2", { creator: A, side: "SELL" }, "1"), pool2 = toPool("feed-test-pool2", { creator: A, side: "SELL" }, "2");
+  const by = poolsById([pool1, pool2]);
+  const chain = [one, two].map((t) => tradeAsLegacyEscrow(t, by, "k:arb"));
+  await runNotificationsOnce(pool, { chain, send: async () => "ok" });
+  const states = (await pool.query("SELECT offer_id FROM trade_states WHERE offer_id IN ('feed-test-dup', '2:feed-test-dup') ORDER BY offer_id")).rows.map((r) => r.offer_id);
+  assert.deepEqual(states, ["2:feed-test-dup", "feed-test-dup"], "one row per chain");
+  const mine = seen.filter((x) => x.offerId.endsWith("feed-test-dup")).map((x) => [x.offerId, x.amount, x.trade.currency]).sort();
+  assert.deepEqual(mine, [["2:feed-test-dup", 7, "kb-ETH"], ["feed-test-dup", 20, "USDT"]], "both announced, each with its own amount");
+  const r = await recentCompleted(pool, 50, [one, two]);
+  const items = r.recent.filter((i) => i.offerId.endsWith("feed-test-dup")).map((i) => [i.offerId, i.amount, i.currency, i.total]).sort();
+  assert.deepEqual(items, [["2:feed-test-dup", 7, "kb-ETH", 0.0000315], ["feed-test-dup", 20, "USDT", 10]]);
   onTradeCompleted(null);
 });

@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { MarketTag } from "./MarketTag";
 import { TradeCode } from "./TradeCode";
+import type { IUnsignedCommand } from "@kadena/client";
 import { createPortal } from "react-dom";
 import { useQuery, useQueries, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
@@ -68,13 +69,14 @@ import {
 import { getOfferDetails } from "@/lib/offerDetailsApi";
 import { formatFiat } from "@/lib/utils";
 import {
+  canonicalRef,
   readTrade,
   buildMarkPaidTx as buildV11MarkPaidTx, buildReleaseTx as buildV11ReleaseTx, buildCancelTx as buildV11CancelTx,
   buildTimeoutRefundTx as buildV11TimeoutRefundTx, buildOpenDisputeTx as buildV11OpenDisputeTx,
 } from "@/lib/v11";
 import { isV11, toV11Escrow, hasAgent, payText, loadV11Escrows, type V11Escrow } from "@/lib/v11ui";
 import { PoolPayoutCard } from "./pools/PoolPayoutCard";
-import { isGiveawayPool, isInstant, windowLabel } from "@/lib/markets";
+import { chainLabel, isGiveawayPool, isInstant, windowLabel } from "@/lib/markets";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { TradeTimer, isStepExpired, nextStep } from "./TradeTimer";
@@ -135,7 +137,7 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
 const ACTIVE_STATES = ["ACCEPTED", "FUNDED", "PAID", "DISPUTED"] as const;
 /** What the buyer pays: the contract's pay-amount for a v11 trade, amount × price for a v10 one. */
 const tradeTotal = (e: Escrow) => isGiveaway(e) ? "Free"
-  : isV11(e) ? `${formatFiat(e.trade.payAmount, "USD")} ${e.trade.currency}`
+  : isV11(e) ? `${formatFiat(e.trade.payAmount, e.trade.currency)} ${e.trade.currency}`
   : `${currencyPrefix(e.fiatCurrency)}${formatFiat(e.amount * e.price, e.fiatCurrency)}`;
 const PAST_TERMINAL_STATES = ["COMPLETED", "REFUNDED", "CLOSED", "CANCELLED", "SPLIT"] as const;
 /** Accepted, never funded, for days: nothing is locked and it cannot go ahead, so it is filed under Finished. */
@@ -429,7 +431,9 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
   // Link to an offer or trade (?offer=ID) from an alert email or a notification: select it once it is in
   // this list and scroll to it. Reacts every time the link changes, not only on first load.
   const [searchParams, setSearchParams] = useSearchParams();
-  const linkedOffer = searchParams.get("offer");
+  // "?offer=2:trade-…" names a trade on chain 2; "1:x" and "x" are the same chain-1 trade
+  const linkedParam = searchParams.get("offer");
+  const linkedOffer = linkedParam ? canonicalRef(linkedParam) : null;
   const handledLink = useRef<string | null>(null);
   const reloadedFor = useRef<string | null>(null);
   const linkKey = useLocation().key;
@@ -602,7 +606,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
 
   const executeAction = async (
     actionName: string,
-    buildTx: () => any
+    buildTx: () => IUnsignedCommand
   ) => {
     if (!account) {
       toast.error("Please connect your wallet");
@@ -1586,6 +1590,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
             <div className="min-w-0 flex-1">
               <h2 className="truncate font-display text-lg font-semibold leading-tight">{tradeTitle(selectedEscrow, account?.account)}</h2>
               <TradeCode offerId={selectedEscrow.offerId} copy className="mt-0.5" />
+              {isV11(selectedEscrow) && <span className="ml-2 text-xs text-muted-foreground">{chainLabel(selectedEscrow.trade.chain)}</span>}
             </div>
             <span className="shrink-0 pr-2"><EscrowStatus state={shownState(selectedEscrow)} /></span>
           </header>
@@ -1616,7 +1621,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
         <Card className="escrow-card">
           <CardHeader>
             <div className="flex items-center justify-between">
-              <CardTitle className="flex items-center gap-3 text-lg"><TradeCode offerId={selectedEscrow.offerId} copy size="md" /><span className="font-mono text-sm font-normal text-muted-foreground">{selectedEscrow.offerId}</span></CardTitle>
+              <CardTitle className="flex items-center gap-3 text-lg"><TradeCode offerId={selectedEscrow.offerId} copy size="md" /><span className="font-mono text-sm font-normal text-muted-foreground">{selectedEscrow.offerId}</span>{isV11(selectedEscrow) && <span className="text-xs font-normal text-muted-foreground">{chainLabel(selectedEscrow.trade.chain)}</span>}</CardTitle>
               <EscrowStatus
                 state={
                   existingDispute && (existingDispute.status === "OPEN" || existingDispute.status === "UNDER_REVIEW")

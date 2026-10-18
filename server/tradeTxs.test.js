@@ -12,7 +12,7 @@ const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL || "postgr
 const OFFER = "offer-test-tradetxs";
 const SELLER = "k:" + "a".repeat(64);
 const BUYER = "k:" + "b".repeat(64);
-const clean = () => pool.query("DELETE FROM trade_txs WHERE offer_id LIKE 'offer-test-%'");
+const clean = () => pool.query("DELETE FROM trade_txs WHERE offer_id LIKE 'offer-test-%' OR offer_id LIKE '2:offer-test-%'");
 
 let n = 0;
 const cmdFor = (code, sender, extra = {}) => JSON.stringify({
@@ -29,19 +29,45 @@ before(clean);
 after(async () => { await clean(); await pool.end(); });
 
 test("reads the escrow call from a signed command", () => {
-  assert.deepEqual(parseEscrowCall(cmdFor(`(free.p2p-escrow-v10.accept-offer "${OFFER}" "${BUYER}")`, BUYER)), { fn: "accept-offer", offerId: OFFER, sender: BUYER });
+  assert.deepEqual(parseEscrowCall(cmdFor(`(free.p2p-escrow-v10.accept-offer "${OFFER}" "${BUYER}")`, BUYER)), { fn: "accept-offer", offerId: OFFER, sender: BUYER, chain: "1" });
   assert.equal(parseEscrowCall(cmdFor(`(coin.transfer "${BUYER}" "${SELLER}" 1.0)`, BUYER)), null, "not the escrow");
   assert.equal(parseEscrowCall(cmdFor(`(free.p2p-escrow-v10.get-escrow "${OFFER}")`, BUYER)), null, "a read is not a step");
   assert.equal(parseEscrowCall(cmdFor(`(free.p2p-escrow-v10.deposit "${OFFER}")`, SELLER, { networkId: "testnet04" })), null, "other network");
   assert.equal(parseEscrowCall("not json"), null);
   // escrow v11: pools and trades, the first string is the pool or trade id
-  assert.deepEqual(parseEscrowCall(cmdFor(`(free.p2p-escrow-v11.take-offer "trade-1-abc" "pool-1-xyz" "${BUYER}" 100.0)`, BUYER)), { fn: "take-offer", offerId: "trade-1-abc", sender: BUYER });
+  assert.deepEqual(parseEscrowCall(cmdFor(`(free.p2p-escrow-v11.take-offer "trade-1-abc" "pool-1-xyz" "${BUYER}" 100.0)`, BUYER)), { fn: "take-offer", offerId: "trade-1-abc", sender: BUYER, chain: "1" });
   assert.deepEqual(parseEscrowCall(cmdFor(`(free.p2p-escrow-v11.create-offer "pool-1-xyz" "${SELLER}" "SELL" 1000.0 50.0 500.0 0.01 "USDT" "" 1800 free.p2p-escrow-v11.EPOCH "")`, SELLER)).offerId, "pool-1-xyz");
   for (const fn of ["top-up", "withdraw", "update-offer", "close-offer", "take-and-settle", "mark-paid", "release", "cancel", "timeout-refund", "open-dispute", "resolve"]) {
     assert.equal(parseEscrowCall(cmdFor(`(free.p2p-escrow-v11.${fn} "x-1" 1.0)`, SELLER))?.fn, fn, fn);
   }
   assert.equal(parseEscrowCall(cmdFor(`(free.p2p-escrow-v11.get-offer "pool-1")`, SELLER)), null, "a read is not a step");
   assert.equal(parseEscrowCall(cmdFor(`(free.p2p-escrow-v11.release "x-1")`, SELLER), "free.p2p-escrow-v10"), null, "only the modules asked for");
+});
+
+test("v11 on chain 2: the step is saved under the chain-2 reference; v10 and unknown chains are refused", () => {
+  const on = (chain) => ({ meta: { chainId: chain, sender: BUYER, gasLimit: 3000, gasPrice: 1e-8, ttl: 600, creationTime: 1760000000 } });
+  assert.deepEqual(parseEscrowCall(cmdFor(`(free.p2p-escrow-v11.take-and-settle "trade-1-abc" "pool-1-xyz" "${BUYER}" 10.0 n_e595727b657fbbb3b8e362a05a7bb8d12865c1ff.kb-ETH 0.000045)`, BUYER, on("2"))),
+    { fn: "take-and-settle", offerId: "2:trade-1-abc", sender: BUYER, chain: "2" });
+  assert.equal(parseEscrowCall(cmdFor(`(free.p2p-escrow-v10.accept-offer "${OFFER}" "${BUYER}")`, BUYER, on("2"))), null, "v10 is on chain 1 only");
+  assert.equal(parseEscrowCall(cmdFor(`(free.p2p-escrow-v11.release "trade-1-abc")`, BUYER, on("3"))), null, "v11 is not on chain 3");
+  assert.equal(parseEscrowCall(cmdFor(`(free.p2p-escrow-v11.release "trade-1-abc")`, BUYER, on("2")), undefined, ["1"]), null, "V11_CHAINS=1 only");
+});
+
+test("the same trade id on chains 1 and 2: two histories, each settled by asking its own chain", async () => {
+  const id = "offer-test-twochains";
+  const on2 = { meta: { chainId: "2", sender: BUYER, gasLimit: 3000, gasPrice: 1e-8, ttl: 600, creationTime: 1760000001 } };
+  const one = await send(`(free.p2p-escrow-v11.mark-paid "${id}")`, BUYER);
+  const two = await send(`(free.p2p-escrow-v11.mark-paid "${id}")`, BUYER, on2);
+  assert.deepEqual([one.r.offerId, two.r.offerId], [id, `2:${id}`]);
+  const asked = {};
+  await settlePending(pool, async (keys, chain) => {
+    asked[chain] = keys.filter((k) => k === one.requestKey || k === two.requestKey);
+    return Object.fromEntries(keys.map((k) => [k, { status: k === two.requestKey ? "failure" : "success", blockTime: new Date() }]));
+  });
+  assert.deepEqual(asked["1"], [one.requestKey], "chain 1 is asked about the chain-1 step only");
+  assert.deepEqual(asked["2"], [two.requestKey], "chain 2 is asked about the chain-2 step only");
+  assert.deepEqual((await listTradeTxs(pool, id)).map((t) => t.status), ["confirmed"]);
+  assert.deepEqual(await listTradeTxs(pool, `2:${id}`), [], "the failed chain-2 step is not listed, and not mixed into chain 1");
 });
 
 test("records steps, refuses a command that does not match its key, settles with the chain result", async () => {

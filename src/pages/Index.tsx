@@ -10,8 +10,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useWallet } from "@/hooks/useWallet";
 import { fetchProfile } from "@/lib/profileApi";
-import { CHAIN_ID, NETWORK_ID, PLATFORM_ARBITER, readEscrow } from "@/lib/kadena";
-import { readPool, readTrade } from "@/lib/v11";
+import { NETWORK_ID, PLATFORM_ARBITER, readEscrow } from "@/lib/kadena";
+import { V11_CHAINS, canonicalRef, parseRef, readPool, readTrade } from "@/lib/v11";
 import { useV11Config } from "@/hooks/useV11";
 import { LogOut, Shield, Megaphone, Bell } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -57,7 +57,9 @@ const Index = () => {
   const [lang] = useLang();
   const alerts = useAlertsStatus();
   const [params] = useSearchParams();
-  const linkedOffer = params.get("offer");
+  // a v11 link names (chain, id): "?offer=2:trade-…" (chain 2); no chain = chain 1, so older links keep working
+  const linkedRaw = params.get("offer") ?? params.get("pool");
+  const linkedOffer = linkedRaw ? canonicalRef(linkedRaw) : null;
   // Links to an offer or trade (?offer=ID) from alert emails and notifications: an open offer opens on the
   // side that can accept it; a trade you are part of opens in Active Trades on the home view.
   const linkHandled = useRef<string | null>(null);
@@ -68,9 +70,10 @@ const Index = () => {
     linkHandled.current = location.key;
     const me = account.account;
     // v11 first: a trade I am part of opens in My trades; a pool opens in the market on the side that can take it
-    const v11 = linkedOffer.startsWith("trade-")
+    const rawId = parseRef(linkedOffer).id;
+    const v11 = rawId.startsWith("trade-")
       ? readTrade(linkedOffer).then((t) => (t ? { trade: t } : null))
-      : linkedOffer.startsWith("pool-")
+      : rawId.startsWith("pool-")
         ? readPool(linkedOffer).then((p) => (p ? { pool: p } : null))
         : Promise.resolve(null);
     v11.then((r) => {
@@ -84,6 +87,7 @@ const Index = () => {
         else { setRole(r.pool.side === "SELL" ? "buyer" : "seller"); setMobileTab("offers"); }
         return;
       }
+      if (parseRef(linkedOffer).chain !== "1") return toast.info(ALERTS_COPY[lang].offerGone); // v10 is on chain 1 only
       return readEscrow(linkedOffer).then((e) => {
         if (!e) return toast.info(ALERTS_COPY[lang].offerGone);
         if (e.state === "CREATED" && e.creator !== me) { setRole(e.side === "SELL" ? "buyer" : "seller"); setMobileTab("offers"); }
@@ -135,7 +139,7 @@ const Index = () => {
           <AppLogo />
           <div className="ml-auto flex min-w-0 items-center gap-2 sm:gap-4">
             <span className="hidden rounded-full border border-border bg-secondary px-3 py-1 text-xs font-medium text-muted-foreground sm:inline-flex">
-              {NETWORK_ID === "mainnet01" ? "Mainnet" : NETWORK_ID} · Chain {CHAIN_ID}
+              {NETWORK_ID === "mainnet01" ? "Mainnet" : NETWORK_ID} · Chain{V11_CHAINS.length > 1 ? "s" : ""} {V11_CHAINS.join(" & ")}
             </span>
             <span className="hidden sm:inline-flex"><ThemeToggle /></span>
             <NotificationBell />

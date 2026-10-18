@@ -6,9 +6,9 @@
 import type { IUnsignedCommand } from "@kadena/client";
 import { PLATFORM_ARBITER, getTxExplorerUrl, pollTransaction, signTransaction, submitTransaction, type Escrow } from "./kadena";
 import { setTxLabel, txFinished } from "./txProgress";
-import { readConfig, readPools, readTrades, tradeToEscrow, type Pool, type Trade, type V11Config } from "./v11";
+import { readConfigs, readPools, readTrades, tradeToEscrow, type Pool, type Trade, type V11Config } from "./v11";
 import { getPoolDetails, getPoolsIndex } from "./poolsApi";
-import { isGiveawayPool, isInstant, networkLabel } from "./markets";
+import { isGiveawayPool, isInstant, kadenaToken, networkLabel } from "./markets";
 
 export const FALLBACK_CONFIG: V11Config = { arbiter: PLATFORM_ARBITER, tRelease: 3600, feeBps: 0, feeAccount: "", paused: false };
 
@@ -25,13 +25,15 @@ export function toV11Escrow(t: Trade, pool: Pool | null | undefined, networks: s
 }
 
 /**
- * Every v11 trade in the legacy shape: one read of the trades, one of the pools, the server's pool details
- * (networks) when it has them, and the config's release window and arbiter.
+ * Every v11 trade (all chains) in the legacy shape: one read of the trades and one of the pools per chain, the
+ * server's pool details (networks) when it has them, and each chain's release window and arbiter. Pools, trades
+ * and details are keyed by reference ("2:pool-…"), so the same id on two chains never mixes.
  */
 export async function loadV11Escrows(me: string | undefined): Promise<V11Escrow[]> {
-  const [trades, pools, index, cfg] = await Promise.all([
-    readTrades(), readPools(), getPoolsIndex(), readConfig().catch(() => FALLBACK_CONFIG),
+  const [trades, pools, index, cfgs] = await Promise.all([
+    readTrades(), readPools(), getPoolsIndex(), readConfigs().catch(() => ({} as Record<string, V11Config>)),
   ]);
+  const cfgOf = (chain: string) => cfgs[chain] ?? FALLBACK_CONFIG;
   const poolById = new Map<string, Pool>(pools.map((p) => [p.poolId, p]));
   const networks = new Map<string, string[]>((index ?? []).map((p) => [p.poolId, p.networks]));
   if (!index) {
@@ -39,7 +41,7 @@ export async function loadV11Escrows(me: string | undefined): Promise<V11Escrow[
     const ids = [...new Set(trades.filter((t) => me && (t.seller === me || t.buyer === me)).map((t) => t.poolId))];
     await Promise.all(ids.map(async (id) => { const d = await getPoolDetails(id); if (d) networks.set(id, d.networks); }));
   }
-  return trades.map((t) => toV11Escrow(t, poolById.get(t.poolId), networks.get(t.poolId), cfg.tRelease, cfg.arbiter));
+  return trades.map((t) => toV11Escrow(t, poolById.get(t.poolId), networks.get(t.poolId), cfgOf(t.chain).tRelease, cfgOf(t.chain).arbiter));
 }
 
 /** The running clock of a v11 trade: the buyer's payment window, then the seller's release window. */
@@ -51,8 +53,8 @@ export function v11Deadline(e: V11Escrow): { iso?: string; limit: number } {
 }
 
 export const kda = (n: number) => `${n.toLocaleString("en-US", { maximumFractionDigits: 4 })} KDA`;
-/** "USDT 1.20" for the trade; the pool's token symbol for instant trades. */
-export const payText = (t: Trade) => `${t.currency} ${t.payAmount.toLocaleString("en-US", { maximumFractionDigits: 6 })}`;
+/** "USDT 1.20" for the trade; the pool's token symbol for instant trades (with the token's decimals, kb-ETH up to 18). */
+export const payText = (t: Trade) => `${t.currency} ${t.payAmount.toLocaleString("en-US", { maximumFractionDigits: Math.min(20, kadenaToken(t.currency)?.precision ?? 6) })}`;
 
 /** The agent of the pool releases on its own once it sees the payment. */
 export const hasAgent = (e: V11Escrow) => !!e.trade.agent;

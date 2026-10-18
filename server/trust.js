@@ -9,7 +9,7 @@
  *   POST /api/terms/accept                  { wallet, publicKey, signedCmd, version }
  */
 import { fetchChainOffers } from "./alerts.js";
-import { fetchChain, poolsById, tradeAsLegacyEscrow } from "./chain.js";
+import { configFor, fetchChain, poolsById, tradeAsLegacyEscrow } from "./chain.js";
 
 export const TERMS_VERSION = "2026-10-14"; // BRO added as a way to pay
 
@@ -32,7 +32,7 @@ export async function fetchAllEscrows() {
   const out = [];
   let failed = 0;
   try { out.push(...await fetchChainOffers()); } catch (e) { failed++; console.warn("[trust] v10 read failed:", e.message); }
-  try { const c = await fetchChain(); const by = poolsById(c.pools); out.push(...c.trades.map((t) => tradeAsLegacyEscrow(t, by, c.config.arbiter))); }
+  try { const c = await fetchChain(); const by = poolsById(c.pools); out.push(...c.trades.map((t) => tradeAsLegacyEscrow(t, by, configFor(c, t.chain).arbiter))); }
   catch (e) { failed++; console.warn("[trust] v11 read failed:", e.message); }
   if (failed === 2) throw new Error("chain not reachable");
   return out;

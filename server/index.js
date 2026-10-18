@@ -888,7 +888,7 @@ app.get("/api/offers/:offerId", validateParams(offerIdParamSchema), async (req, 
     );
     const row = result.rows[0];
     if (!row) {
-      // a v11 trade id: price and currency are on the chain (no offer_details row); creator = the pool's creator
+      // a v11 trade reference ("2:trade-…" on chain 2): price and currency are on the chain (no offer_details row); creator = the pool's creator
       const r = await readTradeWithPool(offerId).catch(() => null);
       if (!r) return res.status(404).json({ error: "Offer not found" });
       const { trade: t, pool: p } = r;
@@ -896,7 +896,7 @@ app.get("/api/offers/:offerId", validateParams(offerIdParamSchema), async (req, 
       return res.json({
         offerId: t.tradeId, creator: p.creator, amount: t.amount, side: p.side, price: t.price, paymentMethod: JSON.stringify([method]),
         fiatCurrency: t.currency, createdAt: t.fundedAt ?? null, listedSince: null, expiryDays: 0,
-        v11: true, poolId: t.poolId, seller: t.seller, buyer: t.buyer, payAmount: t.payAmount, token: t.token, payWindow: t.payWindow, agent: t.agent, state: t.state,
+        v11: true, chain: t.chain, poolId: t.poolId, seller: t.seller, buyer: t.buyer, payAmount: t.payAmount, token: t.token, payWindow: t.payWindow, agent: t.agent, state: t.state,
       });
     }
     return res.json({

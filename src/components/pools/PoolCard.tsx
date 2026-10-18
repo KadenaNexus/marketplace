@@ -6,7 +6,7 @@ import { RatingDisplay } from "../RatingDisplay";
 import { useWallet } from "@/hooks/useWallet";
 import type { PoolListing } from "@/lib/poolsApi";
 import type { RatingSummary } from "@/lib/ratingApi";
-import { isGiveawayPool, isInstant, networkLabel, windowLabel } from "@/lib/markets";
+import { chainLabel, isGiveawayPool, isInstant, networkLabel, windowLabel } from "@/lib/markets";
 import { NEW_TRADER_TRADES, isNewTrader } from "@/lib/trust";
 import { formatFiat, cn } from "@/lib/utils";
 import { Gift, Lock, Settings2, Zap } from "lucide-react";
@@ -58,7 +58,7 @@ export function PoolCard({ pool: p, profileMap, ratingSummaryMap, completedMap, 
           <p className="shrink-0 rounded-full bg-emerald-500/15 px-3 py-1 text-sm font-bold text-emerald-700 dark:text-emerald-300"><Gift className="mr-1 inline h-4 w-4" />Free</p>
         ) : (
           <p className="shrink-0 text-right text-sm text-muted-foreground">
-            <span className="font-mono text-foreground">{formatFiat(p.price, "USD")}</span> {p.currency} / KDA
+            <span className="font-mono text-foreground">{formatFiat(p.price, p.currency)}</span> {p.currency} / KDA
             {!instant && <MarketTag price={p.price} currency="USD" className="flex justify-end" />}
           </p>
         )}
@@ -88,6 +88,7 @@ export function PoolCard({ pool: p, profileMap, ratingSummaryMap, completedMap, 
         {instant && <span className="rounded-full bg-orange-500/15 px-2.5 py-1 font-medium text-orange-700 dark:text-orange-300"><Zap className="mr-1 inline h-3 w-3" />Instant</span>}
         {nets.map((n) => <span key={n} className="rounded-full bg-muted px-2.5 py-1">{networkLabel(n)}</span>)}
         {instant && <span className="rounded-full bg-muted px-2.5 py-1">{p.currency} on Kadena</span>}
+        <span className="rounded-full px-2 py-1 text-muted-foreground" title={`This offer and its trades are on Kadena chain ${p.chain}`}>{chainLabel(p.chain)}</span>
         {!mine && (
           <span className="rounded-full bg-muted px-2.5 py-1">
             {who}: {trades ? `${trades} trade${trades === 1 ? "" : "s"}` : profileMap[p.creator]?.username || `${p.creator.slice(0, 6)}…${p.creator.slice(-4)}`}

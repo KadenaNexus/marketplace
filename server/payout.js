@@ -13,9 +13,9 @@
  *   GET /api/offers/:offerId/payout   (wallet, publicKey, signedCmd in the query)
  *   PUT /api/offers/:offerId/payout   { wallet, publicKey, signedCmd, details: [{ method, value }] }
  */
-import { isToken, KADENA_ACCOUNT, TOKENS } from "./tokens.js";
+import { KADENA_ACCOUNT, TOKENS } from "./tokens.js";
 import { hash as blakeHash } from "@kadena/cryptography-utils";
-import { readTradeWithPool, tradeAsLegacyEscrow } from "./chain.js";
+import { parseRef, readTradeWithPool, tradeAsLegacyEscrow } from "./chain.js";
 import { legacyPayoutDetails } from "./pools.js";
 
 const env = (k, d) => (process.env[k] ?? d);
@@ -31,11 +31,14 @@ export const EDITABLE_STATES_V11 = ["FUNDED"];
 const MAX_ITEMS = 6;
 
 /**
- * One escrow from the chain: { creator, buyer, arbiter, side, state } or null. A v10 offer id, or a v11 trade id
- * (then in the legacy shape with `poolId`, see chain.js). Ids made by the site say which contract to ask first.
+ * One escrow from the chain: { creator, buyer, arbiter, side, state } or null. A v10 offer id, or a v11 trade
+ * reference (then in the legacy shape with `poolId`, see chain.js). Ids made by the site say which contract to ask
+ * first; v10 lives on chain 1 only, so a "2:…" reference is v11.
  */
 export async function readEscrowFromChain(offerId) {
-  if (/^trade-/.test(offerId)) return (await readV11(offerId)) ?? readV10(offerId);
+  const { chain, id } = parseRef(offerId);
+  if (chain !== "1") return readV11(offerId);
+  if (/^trade-/.test(id)) return (await readV11(offerId)) ?? readV10(offerId);
   return (await readV10(offerId)) ?? readV11(offerId);
 }
 async function readV11(tradeId) {
@@ -89,9 +92,10 @@ export function cleanDetails(raw) {
       out.push({ method, value, network });
       continue;
     }
-    if (isToken(method)) {
-      // a Kadena token: paid to a Kadena account on one chain
-      const t = TOKENS[method.toUpperCase()], network = String(it?.network ?? "");
+    const t = TOKENS[method.toUpperCase()];
+    if (t) {
+      // a v10 Kadena token (BRO): paid to a Kadena account on one chain
+      const network = String(it?.network ?? "");
       if (!t.chains.includes(network)) return { error: `${method}: choose the chain (${t.chains.map((c) => `chain ${c}`).join(" or ")})` };
       if (!KADENA_ACCOUNT.test(value)) return { error: `${method}: that doesn't look like a Kadena account (k:…)` };
       out.push({ method: method.toUpperCase(), value, network });

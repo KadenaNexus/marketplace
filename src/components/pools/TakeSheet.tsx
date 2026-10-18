@@ -9,7 +9,7 @@ import { appChainShortfall, isInsufficientFunds } from "@/lib/kadena";
 import { buildTakeAndSettleTx, buildTakeTx, newTradeId, payAmountFor, tokenBalance, tokenPayFor, tokenPrecision, tradeVault } from "@/lib/v11";
 import { sendV11 } from "@/lib/v11ui";
 import { rememberTradeNetwork, type PoolListing } from "@/lib/poolsApi";
-import { isGiveawayPool, isInstant, kadenaToken, networkLabel, paymentNetwork, windowLabel } from "@/lib/markets";
+import { chainLabel, isGiveawayPool, isInstant, kadenaToken, networkLabel, paymentNetwork, windowLabel } from "@/lib/markets";
 import { NEW_TRADER_MAX_KDA, newTraderProblem } from "@/lib/trust";
 import { useMyCompletedTrades, useTermsGate } from "../Trust";
 import { TradeEmailGate, useNeedsTradeEmail } from "../TradeEmail";
@@ -20,6 +20,8 @@ import { Gift, Loader2, Zap } from "lucide-react";
 import { toast } from "sonner";
 
 const round4 = (n: number) => Math.floor(n * 10000) / 10000;
+/** A token amount with every decimal it has (kb-ETH: up to 18), never rounded for display. */
+const tokenText = (pay: string) => pay.replace(/\.0$/, "");
 
 interface TakeSheetProps {
   pool: PoolListing | null;
@@ -58,15 +60,17 @@ export function TakeSheet({ pool: p, open, onOpenChange, profileMap = {}, onTake
     setAmount(String(minTake));
     setNetwork(p.networks[0] ?? "");
     setPrecision(null);
-    if (instant && p.token) tokenPrecision(p.token).then(setPrecision).catch(() => setPrecision(token?.precision ?? 12));
+    if (instant && p.token) tokenPrecision(p.token, p.chain).then(setPrecision).catch(() => setPrecision(token?.precision ?? 12));
   }, [open, p, minTake, instant, token?.precision]);
 
   const n = parseFloat(amount);
   const valid = Number.isFinite(n) && n > 0;
-  const pay = useMemo(() => {
-    if (!p || !valid) return 0;
-    return instant ? tokenPayFor(n, p.price, precision ?? token?.precision ?? 12) : payAmountFor(n, p.price);
+  // instant: the exact token amount as a Pact decimal string (rounded up to the token's precision)
+  const tokenPay = useMemo(() => {
+    if (!p || !valid || !instant) return "";
+    try { return tokenPayFor(n, p.price, precision ?? token?.precision ?? 12); } catch { return ""; }
   }, [p, valid, n, instant, precision, token?.precision]);
+  const pay = !p || !valid ? 0 : instant ? Number(tokenPay || 0) : payAmountFor(n, p.price);
   const problem = !p ? null
     : !valid ? "Enter an amount"
     : n < minTake ? `At least ${kdaAmount(minTake)} KDA`
@@ -82,7 +86,7 @@ export function TakeSheet({ pool: p, open, onOpenChange, profileMap = {}, onTake
 
   const verb = !p ? "" : free ? "Claim" : instant ? "Swap now" : p.side === "SELL" ? "Buy" : "Sell";
   const buttonText = !p ? "" : free ? `Claim ${valid ? kdaAmount(n) : ""} KDA` : instant ? "Swap now" : `${verb} ${valid ? kdaAmount(n) : ""} KDA`;
-  const payText = p ? `${formatFiat(pay, "USD")} ${p.currency}` : "";
+  const payText = !p ? "" : instant ? `${tokenText(tokenPay || "0")} ${p.currency}` : `${formatFiat(pay, "USD")} ${p.currency}`;
 
   async function submit() {
     if (!p || !account) return;
@@ -90,17 +94,17 @@ export function TakeSheet({ pool: p, open, onOpenChange, profileMap = {}, onTake
     if (problem) { toast.error(problem.startsWith("New traders") ? `Up to ${NEW_TRADER_MAX_KDA} KDA for now` : "Check the amount", { description: problem }); return; }
     if (!(await terms.check())) return;
     setBusy(true);
-    const tradeId = newTradeId();
+    const tradeId = newTradeId(p.chain); // a trade lives on its pool's chain
     try {
       let requestKey: string;
       if (instant) {
-        const bal = await tokenBalance(p.token, account.account);
-        if (bal < pay) { toast.error(`Not enough ${p.currency}`, { description: `This swap needs ${payText}; your account has ${formatFiat(bal, "USD")} ${p.currency} on chain.` }); return; }
+        const bal = await tokenBalance(p.token, account.account, p.chain);
+        if (bal < pay) { toast.error(`Not enough ${p.currency} on chain ${p.chain}`, { description: `This swap needs ${payText} on chain ${p.chain}; your account has ${bal.toLocaleString("en-US", { maximumFractionDigits: token?.precision ?? 12 })} ${p.currency} there.` }); return; }
         requestKey = await sendV11(`Swapping ${payText} for ${kdaAmount(n)} KDA`, () =>
-          buildTakeAndSettleTx(tradeId, p.poolId, account.account, account.publicKey, n, p.token, p.creator, pay));
+          buildTakeAndSettleTx(tradeId, p.poolId, account.account, account.publicKey, n, p.token, p.creator, tokenPay));
       } else if (p.side === "BUY") {
         // the taker is the KDA holder: it locks `n` KDA in the trade's vault
-        const shortfall = await appChainShortfall(account.account, n).catch(() => null);
+        const shortfall = await appChainShortfall(account.account, n, p.chain).catch(() => null);
         if (shortfall) { toast.error(shortfall.title, { description: shortfall.description, duration: 20000 }); return; }
         const vault = await tradeVault(tradeId);
         requestKey = await sendV11(`Locking ${kdaAmount(n)} KDA for the buyer`, () =>
@@ -117,7 +121,7 @@ export function TakeSheet({ pool: p, open, onOpenChange, profileMap = {}, onTake
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error";
       if (isInsufficientFunds(msg) && p.side === "BUY") {
-        const s = await appChainShortfall(account.account, n).catch(() => null);
+        const s = await appChainShortfall(account.account, n, p.chain).catch(() => null);
         if (s) { toast.error(s.title, { description: s.description, duration: 20000 }); return; }
       }
       toast.error(`${verb} failed`, { description: msg });
@@ -137,6 +141,7 @@ export function TakeSheet({ pool: p, open, onOpenChange, profileMap = {}, onTake
               </SheetTitle>
               <SheetDescription className="flex items-center gap-2">
                 {p.side === "SELL" ? "From" : "To"} <ProfileSummaryView wallet={p.creator} summary={profileMap[p.creator]} size="sm" />
+                <span className="ml-auto text-xs text-muted-foreground">{chainLabel(p.chain)}</span>
               </SheetDescription>
             </SheetHeader>
 
@@ -179,8 +184,8 @@ export function TakeSheet({ pool: p, open, onOpenChange, profileMap = {}, onTake
                     <p className="text-xs text-muted-foreground">{p.side === "SELL" ? "You pay" : "You receive"}</p>
                     <p className="font-mono text-2xl font-bold tabular-nums">{valid ? payText : "—"}</p>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      {formatFiat(p.price, "USD")} {p.currency} per KDA
-                      {instant ? <> · <Zap className="inline h-3 w-3 text-orange-600" /> paid from your Kadena account in the same transaction</> : p.side === "SELL" ? <> · {p.networks.length === 1 ? `by ${networkLabel(p.networks[0])}` : network ? `by ${networkLabel(network)}` : p.currency} within {windowLabel(p.payWindow)} of taking</> : <> · the buyer pays you within {windowLabel(p.payWindow)}, then you release</>}
+                      {formatFiat(p.price, p.currency)} {p.currency} per KDA
+                      {instant ? <> · <Zap className="inline h-3 w-3 text-orange-600" /> paid from your Kadena account on chain {p.chain} in the same transaction</> : p.side === "SELL" ? <> · {p.networks.length === 1 ? `by ${networkLabel(p.networks[0])}` : network ? `by ${networkLabel(network)}` : p.currency} within {windowLabel(p.payWindow)} of taking</> : <> · the buyer pays you within {windowLabel(p.payWindow)}, then you release</>}
                     </p>
                   </>
                 )}

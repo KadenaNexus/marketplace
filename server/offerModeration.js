@@ -17,7 +17,7 @@
 import { notify, tradeCode } from "./notifications.js";
 import { createChainCache } from "./trust.js";
 import { fetchChainOffers } from "./alerts.js";
-import { fetchChain, readConfig, readPool } from "./chain.js";
+import { configFor, fetchChain, readConfig, parseRef, readPool } from "./chain.js";
 
 const DAY = 86400000;
 export const expiryDays = () => { const n = Number(process.env.OFFER_EXPIRY_DAYS ?? 7); return Number.isFinite(n) && n >= 0 ? n : 7; };
@@ -25,20 +25,23 @@ export const expiryDays = () => { const n = Number(process.env.OFFER_EXPIRY_DAYS
 const isOpen = (state) => state === "CREATED" || state === "OPEN";
 
 /* ---------------- v11 pools as moderation targets ---------------- */
-let configCache = { at: 0, v: null };
-async function arbiter() {
-  if (Date.now() - configCache.at > 60 * 1000) configCache = { at: Date.now(), v: await readConfig() };
-  return configCache.v.arbiter;
+const configCache = new Map(); // chain -> { at, v }
+async function arbiter(chain) {
+  const c = configCache.get(chain);
+  if (c && Date.now() - c.at < 60 * 1000) return c.v.arbiter;
+  const v = await readConfig({ chain });
+  configCache.set(chain, { at: Date.now(), v });
+  return v.arbiter;
 }
-/** A pool in the shape the routes check: { creator, arbiter, side, state, amount, … } or null. */
+/** A pool (by reference, "2:pool-…" on chain 2) in the shape the routes check: { creator, arbiter, side, state, amount, … } or null. */
 export async function readPoolTarget(poolId) {
   const p = await readPool(poolId);
-  return p ? { ...p, id: p.poolId, amount: p.available, arbiter: await arbiter() } : null;
+  return p ? { ...p, id: p.poolId, amount: p.available, arbiter: await arbiter(parseRef(poolId).chain) } : null;
 }
-/** Open pools for the admin list (the arbiter comes from the config). */
+/** Open pools of every v11 chain for the admin list (the arbiter comes from each chain's config). */
 export async function fetchOpenPools() {
   const c = await fetchChain();
-  return c.pools.filter((p) => p.state === "OPEN").map((p) => ({ ...p, id: p.poolId, amount: p.available, arbiter: c.config.arbiter }));
+  return c.pools.filter((p) => p.state === "OPEN").map((p) => ({ ...p, id: p.poolId, amount: p.available, arbiter: configFor(c, p.chain).arbiter }));
 }
 
 /**

@@ -5,6 +5,8 @@
  * accepts ("USDT:TRC20" | "USDT:ERC20" | "USDC:ERC20"), the receiving address per network and free-text notes.
  * Addresses are private: shown to the pool's creator, to a buyer or seller of a trade on that pool, and to
  * the arbiter. Who is who is read from the chain, never from the browser.
+ * :poolId is a reference (chain.js): "2:pool-…" for a pool on chain 2, the bare id on chain 1; pool_details is keyed
+ * by it, so the same id on the two chains has two rows.
  *
  *   GET /api/pools                   -> [pool…]  open pools from the chain + networks, notes, hidden flag (cached ~15 s)
  *   GET /api/pools/:poolId/details   -> { poolId, networks, notes, updatedAt }                 (public, no addresses)
@@ -12,7 +14,7 @@
  *   GET /api/pools/:poolId/payout    (wallet, publicKey, signedCmd[, tradeId] in the query)
  *                                    -> { poolId, networks, payout, notes, isMine }            (creator, a party of a trade on the pool, arbiter)
  */
-import { fetchChain, readPool, readTrade } from "./chain.js";
+import { configFor, fetchChain, parseRef, readPool, readTrade } from "./chain.js";
 import { createChainCache } from "./trust.js";
 
 const TRC20 = /^T[1-9A-HJ-NP-Za-km-z]{33}$/, ERC20 = /^0x[0-9a-fA-F]{40}$/;
@@ -49,7 +51,8 @@ export async function legacyPayoutDetails(pool, poolId, currency) {
 }
 
 export function registerPoolRoutes(app, { getPool, requireAuth, sendAuthError, chain = createChainCache({ fetchOffers: fetchChain, freshMs: 15 * 1000 }), readPoolFn = readPool, readTradeFn = readTrade }) {
-  const okId = (id) => typeof id === "string" && id.length > 0 && id.length <= 128;
+  // a reference: the on-chain id (1–128 characters, the contract's limit) with an optional "<chain>:" in front
+  const okId = (ref) => { if (typeof ref !== "string") return false; const { id } = parseRef(ref); return id.length > 0 && id.length <= 128; };
   const auth = (req, res, from) => {
     const a = requireAuth(req, from);
     if (!a.ok) { sendAuthError(res, a); return null; }
@@ -120,7 +123,7 @@ export function registerPoolRoutes(app, { getPool, requireAuth, sendAuthError, c
       let t; try { t = await readTradeFn(tradeId); } catch { return chainDown(res); }
       party = !!t && t.poolId === id && (t.buyer === w || t.seller === w);
     }
-    if (!isMine && !party && w !== c.config.arbiter) return res.status(403).json({ error: "Payment details are shown to the two sides of a trade on this offer" });
+    if (!isMine && !party && w !== configFor(c, p.chain).arbiter) return res.status(403).json({ error: "Payment details are shown to the two sides of a trade on this offer" });
     const r = (await getPool().query("SELECT networks, payout, notes, updated_at FROM pool_details WHERE pool_id = $1", [id])).rows[0];
     res.set("Cache-Control", "no-store");
     return res.json({ poolId: id, networks: r?.networks || [], payout: r?.payout || {}, notes: r?.notes || "", updatedAt: r?.updated_at || null, isMine });

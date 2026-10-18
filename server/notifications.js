@@ -15,11 +15,11 @@
  * feed shows no message text. Web Push uses VAPID keys generated on first start (stored in alert_state)
  * unless VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY are set. NOTIFICATIONS_ENABLED=false switches it off.
  */
-import { isToken } from "./tokens.js";
+import { isToken, tokenSymbol } from "./tokens.js";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { z } from "zod";
 import webpush from "web-push";
-import { fetchChain, tradeAsLegacyEscrow, poolsById } from "./chain.js";
+import { fetchChain, tradeAsLegacyEscrow, poolsById, configFor } from "./chain.js";
 
 const T1 = 3600 * 1000, T2 = 4 * 3600 * 1000, T3 = 3600 * 1000;   // v10 deadlines: deposit, pay, release
 const SOON = { ACCEPTED: 15 * 60 * 1000, FUNDED: 30 * 60 * 1000, PAID: 15 * 60 * 1000 };
@@ -29,7 +29,7 @@ const DETAILS_WAIT_MS = 3 * 60 * 1000;
 const enabled = () => (process.env.NOTIFICATIONS_ENABLED || "true").toLowerCase() !== "false";
 const short = (w) => (w && w.length > 14 ? `${w.slice(0, 6)}…${w.slice(-4)}` : w || "someone");
 const kda = (n) => `${Number(n).toLocaleString("en-US", { maximumFractionDigits: 4 })} KDA`;
-const money = (n, cur) => isToken(cur) ? `${Number(Number(n).toFixed(12)).toLocaleString("en-US", { maximumFractionDigits: 12 })} ${String(cur).toUpperCase()}` : `${Math.abs(Number(n)) >= 1 || Number(n) === 0 ? Number(n).toLocaleString("en-US", { maximumFractionDigits: 2 }) : Number(n).toLocaleString("en-US", { maximumSignificantDigits: 3 })} ${cur || ""}`.trim();
+const money = (n, cur) => isToken(cur) ? `${Number(Number(n).toFixed(12)).toLocaleString("en-US", { maximumFractionDigits: 12 })} ${tokenSymbol(cur)}` : `${Math.abs(Number(n)) >= 1 || Number(n) === 0 ? Number(n).toLocaleString("en-US", { maximumFractionDigits: 2 }) : Number(n).toLocaleString("en-US", { maximumSignificantDigits: 3 })} ${cur || ""}`.trim();
 const parties = (e) => ({
   seller: e.side === "SELL" ? e.creator : e.buyer,
   buyer: e.side === "SELL" ? e.buyer : e.creator,
@@ -316,7 +316,8 @@ export async function runNotificationsOnce(pool, { chain, pools, tRelease, now =
   if (!offers) {
     const c = await fetchChain();
     const by = poolsById(c.pools);
-    offers = c.trades.map((t) => tradeAsLegacyEscrow(t, by, c.config.arbiter));
+    // each trade with its own chain's arbiter and release window (chains 1 and 2 each have a config row)
+    offers = c.trades.map((t) => tradeAsLegacyEscrow(t, by, configFor(c, t.chain)));
     openPools = pools || c.pools.filter((p) => p.state === "OPEN");
     release = tRelease ?? c.config.tRelease;
   }
@@ -339,9 +340,9 @@ export async function runNotificationsOnce(pool, { chain, pools, tRelease, now =
         const trade = isV11(e) ? { currency: e.currency, token: e.token, payAmount: e.payAmount, price: e.price, closedAt: e.closedAt } : undefined;
         try { completedHook({ offerId: e.id, amount: e.amount, wallets: [e.creator, e.buyer].filter(Boolean), ...(trade && { trade }) }); } catch (err) { console.warn("[notifications] completed hook:", err.message); }
       }
-      for (const n of eventsForChange(before, e, d.get(e.id), { tRelease: release })) { if ((await notify(pool, { ...n, offer_id: e.id }, { send, now })).created) created++; }
+      for (const n of eventsForChange(before, e, d.get(e.id), { tRelease: e.tRelease ?? release })) { if ((await notify(pool, { ...n, offer_id: e.id }, { send, now })).created) created++; }
     }
-    if (!first) for (const n of deadlineEvents(e, now, d.get(e.id), release)) { if ((await notify(pool, { ...n, offer_id: e.id }, { send, now })).created) created++; }
+    if (!first) for (const n of deadlineEvents(e, now, d.get(e.id), e.tRelease ?? release)) { if ((await notify(pool, { ...n, offer_id: e.id }, { send, now })).created) created++; }
   }
   // v11 pools: one shared "new offer" item when a pool appears; a pool that left the open list is CLOSED
   const openIds = new Set(openPools.map((p) => p.poolId));

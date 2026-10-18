@@ -2,14 +2,17 @@
  * Trade transaction history: every on-chain step of a trade, for both sides, on any device.
  *
  * After the site sends an escrow transaction it posts the signed command here. The command is checked
- * (its hash must be the request key, it must call the escrow contract on mainnet chain 1) and saved as
- * pending; a watcher asks the chain for the result and keeps it only if it succeeded. Nothing here is
- * taken on trust from the browser: the action and the offer come from the signed command itself.
+ * (its hash must be the request key, it must call the escrow contract on mainnet: v10 on chain 1, v11 on one
+ * of V11_CHAINS) and saved as pending; a watcher asks that chain for the result and keeps it only if it
+ * succeeded. Nothing here is taken on trust from the browser: the action, the offer and the chain come from the
+ * signed command itself. The offer is saved as a reference ("2:trade-…" on chain 2, see chain.js), which is also
+ * how the watcher knows which chain to poll.
  *
  *   POST /api/trade-txs              { cmd, requestKey }
  *   GET  /api/trades/:offerId/txs    -> [{ requestKey, action, fn, sender, status, at }]
  */
 import { hash as blakeHash } from "@kadena/cryptography-utils";
+import { chainConfig, parseRef, toRef } from "./chain.js";
 
 const env = (k, d) => (process.env[k] ?? d);
 const cfg = () => ({
@@ -47,19 +50,24 @@ export const ACTIONS = {
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** The escrow call in a signed command, or null when it is something else. `contract` = one module name or a list. */
-export function parseEscrowCall(cmd, contract = [cfg().contract, cfg().contractV11]) {
+/**
+ * The escrow call in a signed command, or null when it is something else. `contract` = one module name or a list.
+ * v10 is only on chain 1; v11 on any chain in V11_CHAINS. `offerId` is the reference on that chain.
+ */
+export function parseEscrowCall(cmd, contract = [cfg().contract, cfg().contractV11], v11Chains = chainConfig().chains) {
   let c;
   try { c = JSON.parse(cmd); } catch { return null; }
   if (c?.networkId !== "mainnet01" && c?.networkId !== env("TRADE_TXS_NETWORK", "mainnet01")) return null;
-  if (String(c?.meta?.chainId) !== "1") return null;
+  const chain = String(c?.meta?.chainId ?? "");
   const code = c?.payload?.exec?.code;
   if (typeof code !== "string" || code.length > 4000) return null;
   const modules = (Array.isArray(contract) ? contract : [contract]).map(escapeRe).join("|");
-  const m = code.match(new RegExp(`\\(\\s*(?:${modules})\\.([a-z-]+)\\s+"([^"]{1,255})"`));
-  if (!m || !ACTIONS[m[1]]) return null;
+  const m = code.match(new RegExp(`\\(\\s*(${modules})\\.([a-z-]+)\\s+"([^"]{1,255})"`));
+  if (!m || !ACTIONS[m[2]]) return null;
+  const isV11 = m[1] === cfg().contractV11;
+  if (!(chain === "1" || (isV11 && v11Chains.includes(chain)))) return null;
   const sender = typeof c.meta?.sender === "string" && /^k:[0-9a-f]{64}$/i.test(c.meta.sender) ? c.meta.sender : "";
-  return { fn: m[1], offerId: m[2], sender };
+  return { fn: m[2], offerId: toRef(chain, m[3]), sender, chain };
 }
 
 /** Save a just-sent escrow transaction as pending. Returns { ok } or { error }. */
@@ -77,12 +85,12 @@ export async function recordTradeTx(pool, { cmd, requestKey }) {
   return { ok: true, offerId: call.offerId, fn: call.fn };
 }
 
-/** Results for request keys from the chain: { key: { status: "success"|"failure", blockTime } } (missing = not mined yet). */
-export async function pollChain(keys) {
+/** Results for request keys from `chain`: { key: { status: "success"|"failure", blockTime } } (missing = not mined yet). */
+export async function pollChain(keys, chain = "1") {
   let last;
   for (const base of cfg().apis) {
     try {
-      const r = await fetch(`${base}/chainweb/0.0/mainnet01/chain/1/pact/api/v1/poll`, {
+      const r = await fetch(`${base}/chainweb/0.0/mainnet01/chain/${encodeURIComponent(chain)}/pact/api/v1/poll`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ requestKeys: keys }), signal: AbortSignal.timeout(10000),
       });
@@ -106,7 +114,11 @@ export async function settlePending(pool, poll = pollChain, onSettled = () => {}
     ? await pool.query(`SELECT request_key, offer_id, fn FROM trade_txs WHERE status = 'pending' AND request_key = ANY($1)`, [keys])
     : await pool.query(`SELECT request_key, offer_id, fn FROM trade_txs WHERE status = 'pending' ORDER BY created_at LIMIT 50`);
   if (!rows.length) return 0;
-  const res = await poll(rows.map((r) => r.request_key));
+  // ask each chain about its own transactions (the offer reference says which chain: "2:…" or chain 1)
+  const byChain = new Map();
+  for (const r of rows) { const ch = parseRef(r.offer_id).chain; byChain.set(ch, [...(byChain.get(ch) || []), r.request_key]); }
+  const res = {};
+  for (const [ch, ks] of byChain) Object.assign(res, await poll(ks, ch));
   let n = 0;
   for (const [key, v] of Object.entries(res)) {
     const upd = await pool.query(`UPDATE trade_txs SET status = $2, block_time = $3 WHERE request_key = $1 AND status = 'pending' RETURNING offer_id, fn, status`, [key, v.status === "success" ? "ok" : "failed", v.blockTime]);

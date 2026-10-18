@@ -7,8 +7,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useWallet } from "@/hooks/useWallet";
 import { useRefreshV11 } from "@/hooks/useV11";
-import { appChainShortfall, isInsufficientFunds, readCoinDetailsLocal, CHAIN_ID } from "@/lib/kadena";
-import { buildCreatePoolTx, newPoolId, poolVault } from "@/lib/v11";
+import { appChainShortfall, isInsufficientFunds, readCoinDetailsLocal, TX_GAS_KDA } from "@/lib/kadena";
+import { useAppChainBalance } from "@/hooks/useAppChainBalance";
+import { V11_CHAINS, buildCreatePoolTx, newPoolId, poolVault } from "@/lib/v11";
 import { sendV11 } from "@/lib/v11ui";
 import { txFinished } from "@/lib/txProgress";
 import { putPoolDetails } from "@/lib/poolsApi";
@@ -16,7 +17,7 @@ import { authProof } from "@/lib/session";
 import { useMarket, vsMarket, vsMarketText } from "@/lib/market";
 import { formatFiat } from "@/lib/utils";
 import {
-  DEFAULT_PAY_WINDOW, EXPIRY_DAYS, KADENA_TOKENS, PAY_WINDOWS, POOL_CURRENCIES, addressProblem, isKadenaToken, isStableCurrency, networksFor,
+  DEFAULT_PAY_WINDOW, EXPIRY_DAYS, KADENA_TOKENS, PAY_WINDOWS, POOL_CURRENCIES, addressProblem, chainForCurrency, chainLabel, isKadenaToken, isStableCurrency, networksFor,
 } from "@/lib/markets";
 import { TradeEmailGate, useNeedsTradeEmail } from "../TradeEmail";
 import { useMyCompletedTrades, useTermsGate } from "../Trust";
@@ -32,6 +33,8 @@ interface CreatePoolFormProps {
 }
 
 const num = (s: string) => { const n = parseFloat(s); return Number.isFinite(n) ? n : NaN; };
+/** Currencies whose chain this site uses (VITE_V11_CHAINS): a chain-2 currency is offered once chain 2 is on. */
+const CURRENCY_CHOICES = POOL_CURRENCIES.filter((c) => V11_CHAINS.includes(chainForCurrency(c) ?? ""));
 const fmt = (n: number) => String(Number(n.toFixed(6)));
 
 /**
@@ -60,6 +63,9 @@ export function CreatePoolForm({ onSuccess, role = "seller", compact = false }: 
   const instant = !free && isKadenaToken(currency);
   const stable = !free && isStableCurrency(currency);
   const token = KADENA_TOKENS.find((t) => t.symbol === currency);
+  // the currency decides the chain the pool lives on (shared/v11-chains.js); a giveaway goes on the default chain
+  const chain = (free ? chainForCurrency("FREE") : chainForCurrency(currency)) ?? "1";
+  const { data: chainBalance } = useAppChainBalance(account?.account, chain);
 
   const needsEmail = useNeedsTradeEmail();
   const [emailGateOpen, setEmailGateOpen] = useState(false);
@@ -108,14 +114,14 @@ export function CreatePoolForm({ onSuccess, role = "seller", compact = false }: 
     if (!(await terms.check())) return;
 
     setBusy(true);
-    const poolId = newPoolId();
+    const poolId = newPoolId(chain);
     try {
       const [shortfall, coin] = await Promise.all([
-        appChainShortfall(account.account, side === "SELL" ? totalN : 0),
-        readCoinDetailsLocal(account.account),
+        appChainShortfall(account.account, side === "SELL" ? totalN : 0, chain),
+        readCoinDetailsLocal(account.account, chain),
       ]);
       if (shortfall) { toast.error(shortfall.title, { description: shortfall.description, duration: 20000 }); return; }
-      if (!coin) throw new Error(`No coin account on chain ${CHAIN_ID} for ${account.account}. Fund this account on this chain first.`);
+      if (!coin) throw new Error(`No KDA account on chain ${chain} for ${account.account}. ${currency} offers live on chain ${chain}: move some KDA to chain ${chain} in Linx Wallet first.`);
 
       const vault = side === "SELL" ? await poolVault(poolId) : undefined;
       const expiresAt = expiryDays > 0 ? new Date(Date.now() + expiryDays * 86400000).toISOString() : null;
@@ -150,7 +156,7 @@ export function CreatePoolForm({ onSuccess, role = "seller", compact = false }: 
       console.error("Create pool error:", err);
       const msg = err instanceof Error ? err.message : "Unknown error";
       if (isInsufficientFunds(msg) && account) {
-        const s = await appChainShortfall(account.account, side === "SELL" ? totalN : 0).catch(() => null);
+        const s = await appChainShortfall(account.account, side === "SELL" ? totalN : 0, chain).catch(() => null);
         if (s) { toast.error(s.title, { description: s.description, duration: 20000 }); return; }
       }
       toast.error("Could not post the offer", { description: msg });
@@ -159,6 +165,9 @@ export function CreatePoolForm({ onSuccess, role = "seller", compact = false }: 
     }
   };
 
+  // KDA needed on the pool's chain: the total for a SELL pool, gas only for a BUY offer
+  const needOnChain = (side === "SELL" && totalN > 0 ? totalN : 0) + TX_GAS_KDA;
+  const lowOnChain = chainBalance !== undefined && chainBalance + 1e-9 < needOnChain;
   const lockText = side === "SELL"
     ? free ? `You'll approve one transaction that locks ${total ? fmt(totalN) : "the"} KDA for the giveaway.` : `You'll approve one transaction that locks ${total ? fmt(totalN) : "the"} KDA in your pool. Buyers take slices from it; the unsold part comes back when you close the pool.`
     : "You'll approve one transaction that posts the offer. Sellers who take it lock their KDA; you pay them and they release.";
@@ -217,15 +226,15 @@ export function CreatePoolForm({ onSuccess, role = "seller", compact = false }: 
               <Select value={currency} onValueChange={changeCurrency}>
                 <SelectTrigger id="currency" className="h-12"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {POOL_CURRENCIES.map((c) => (
-                    <SelectItem key={c} value={c}>{isKadenaToken(c) ? `${c} · instant` : c}</SelectItem>
+                  {CURRENCY_CHOICES.map((c) => (
+                    <SelectItem key={c} value={c}>{isKadenaToken(c) ? `${c} · instant` : c} <span className="text-muted-foreground">· {chainLabel(chainForCurrency(c))}</span></SelectItem>
                   ))}
                 </SelectContent>
               </Select>
               {instant && (
                 <p className="flex items-start gap-2 rounded-lg bg-muted p-3 text-sm">
                   <Zap className="mt-0.5 h-4 w-4 shrink-0 text-orange-600" />
-                  <span>Instant: the {side === "SELL" ? "buyer pays you" : "seller is paid"} {currency} on the Kadena chain and the KDA moves in the same transaction. No waiting, no release step.</span>
+                  <span>Instant: the {side === "SELL" ? "buyer pays you" : "seller is paid"} {currency} on Kadena chain {chain} and the KDA moves in the same transaction. No waiting, no release step.</span>
                 </p>
               )}
             </div>
@@ -298,6 +307,18 @@ export function CreatePoolForm({ onSuccess, role = "seller", compact = false }: 
             <div className="space-y-2">
               <Label htmlFor="notes">Note for traders (optional)</Label>
               <Input id="notes" value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={200} placeholder="e.g. I answer within minutes" className="h-11" />
+            </div>
+          )}
+
+          {account && chainBalance !== undefined && (
+            <div className={`rounded-xl border p-3 text-sm ${lowOnChain ? "border-amber-500/50 bg-amber-500/10" : "border-border"}`} role={lowOnChain ? "note" : undefined}>
+              <p className="tabular-nums text-muted-foreground">{chainLabel(chain)}: <b className="text-foreground">{chainBalance.toLocaleString("en-US", { maximumFractionDigits: 4 })} KDA</b></p>
+              {lowOnChain && (
+                <p className="mt-1">
+                  {free ? "A giveaway" : `An offer in ${currency}`} lives on chain {chain}, so the KDA {side === "SELL" ? "you lock" : "for gas"} must be on chain {chain}.
+                  {" "}You can move KDA to chain {chain} in Linx Wallet (a transfer to your same account on chain {chain}).
+                </p>
+              )}
             </div>
           )}
 

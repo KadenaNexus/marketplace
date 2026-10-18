@@ -1,11 +1,15 @@
 /**
- * What the Marketplace trades with (escrow v11, see docs/v11-site-spec.md "Payment methods"):
- *   - USDT on Tron (TRC20) or Ethereum (ERC20), USDC on Ethereum (ERC20): paid outside Kadena, released by the
- *     seller (or the pool's agent) once the money arrived.
- *   - Kadena tokens (kb-USDC, kb-ETH, FLUX, BRO): swapped for the KDA in one transaction (instant).
- *   - A free giveaway: a SELL pool at price 0, claimed with one tap.
+ * What the Marketplace trades with (escrow v11, see docs/v11-site-spec.md "Payment methods"). The currency decides
+ * the chain (one table for the site and the server: shared/v11-chains.js):
+ *   - chain 1: USDT on Tron (TRC20) or Ethereum (ERC20), USDC on Ethereum (ERC20), paid outside Kadena and released
+ *     by the seller (or the pool's agent) once the money arrived; BRO and FLUX, swapped for the KDA in one transaction.
+ *   - chain 2: kb-USDC, kb-ETH, kb-USDT, swapped for the KDA in one transaction (instant).
+ *   - A free giveaway: a SELL pool at price 0, claimed with one tap (chain 1).
  * No Wise, Revolut, bank transfers or PayPal-style methods. Offers made on v10 keep whatever they stored.
  */
+import { CURRENCIES, fitsTable, tokenInfo, type TokenInfo } from "../../shared/v11-chains.js";
+
+export { V11_CHAINS, chainForCurrency, fitsTable } from "../../shared/v11-chains.js";
 
 /* ---------------- stablecoins paid outside Kadena ---------------- */
 
@@ -59,25 +63,23 @@ export function addressProblem(networkId: string, address: string): string | nul
 /* ---------------- Kadena tokens, settled instantly ---------------- */
 
 /**
- * Tokens a pool can be priced in and paid with on the Kadena chain. `module` is the fungible-v2 module the
- * contract transfers; the names below are placeholders until they are verified on chain (one place to change
- * them). The UI shows the symbol only.
+ * Tokens a pool can be priced in and paid with on Kadena: `module` is the fungible-v2 module the contract transfers
+ * and `chain` the chain the pool (and the swap) is on. From the shared table; the UI shows the symbol.
  */
-export interface KadenaToken { symbol: string; name: string; module: string; precision: number }
-export const KADENA_TOKENS: readonly KadenaToken[] = [
-  { symbol: "kb-USDC", name: "Kadena-bridged USDC", module: "TODO-verify", precision: 12 },
-  { symbol: "kb-ETH", name: "Kadena-bridged ETH", module: "TODO-verify", precision: 12 },
-  { symbol: "FLUX", name: "Flux", module: "TODO-verify", precision: 12 },
-  { symbol: "BRO", name: "BRO", module: "TODO-verify", precision: 12 },
-] as const;
-export const kadenaToken = (symbol: string | null | undefined): KadenaToken | undefined => KADENA_TOKENS.find((t) => t.symbol === symbol);
+export type KadenaToken = TokenInfo;
+export const KADENA_TOKENS: readonly KadenaToken[] = CURRENCIES.filter((c): c is TokenInfo => c.kind === "token");
+export const kadenaToken = (symbol: string | null | undefined): KadenaToken | undefined => tokenInfo(symbol);
 export const isKadenaToken = (symbol: string | null | undefined): boolean => !!kadenaToken(symbol);
-/** All the currencies the new-offer form offers, stablecoins first. */
-export const POOL_CURRENCIES: readonly string[] = [...STABLE_CURRENCIES, ...KADENA_TOKENS.map((t) => t.symbol)];
+/** All the currencies the new-offer form offers, in table order (chain 1 first). */
+export const POOL_CURRENCIES: readonly string[] = CURRENCIES.map((c) => c.symbol);
+/** "Chain 2" */
+export const chainLabel = (chain: string | null | undefined) => `Chain ${chain || "1"}`;
 
 /* ---------------- pool helpers ---------------- */
 
 type PoolLike = { price: number; token: string; currency?: string };
+/** A pool whose chain, currency and token module match the table (see fitsTable); others stay out of the market. */
+export const poolFitsTable = (p: { chain: string; currency: string; token: string }): boolean => fitsTable(p.chain, p.currency, p.token);
 /** Paid in a Kadena token: the trade settles in the take transaction. */
 export const isInstant = (p: PoolLike): boolean => !!p.token;
 /** A free giveaway: SELL, price 0, no token. */

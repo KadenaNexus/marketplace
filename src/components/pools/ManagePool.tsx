@@ -11,7 +11,7 @@ import { buildClosePoolTx, buildTopUpTx, buildUpdatePoolTx, buildWithdrawTx, poo
 import { sendV11 } from "@/lib/v11ui";
 import { getPoolPayout, putPoolDetails, type PoolListing } from "@/lib/poolsApi";
 import { authProof } from "@/lib/session";
-import { EXPIRY_DAYS, PAY_WINDOWS, addressProblem, isGiveawayPool, isInstant, isStableCurrency, networkLabel, networksFor } from "@/lib/markets";
+import { EXPIRY_DAYS, PAY_WINDOWS, addressProblem, chainLabel, isGiveawayPool, isInstant, isStableCurrency, networkLabel, networksFor } from "@/lib/markets";
 import { TradeCode } from "../TradeCode";
 import { EscrowStatus } from "../EscrowStatus";
 import type { EscrowState } from "@/lib/kadena";
@@ -82,7 +82,7 @@ export function ManagePool({ pool: p, open, onOpenChange, trades, onOpenTrade }:
     const n = num(amount);
     if (!(n > 0)) throw new Error("Enter an amount");
     if (p.side === "SELL") {
-      const s = await appChainShortfall(account!.account, n).catch(() => null);
+      const s = await appChainShortfall(account!.account, n, p.chain).catch(() => null);
       if (s) throw new Error(s.description);
     }
     const vault = await poolVault(p.poolId);
@@ -139,8 +139,8 @@ export function ManagePool({ pool: p, open, onOpenChange, trades, onOpenTrade }:
           <SheetTitle className="flex items-center gap-2 font-display text-xl">Your {free ? "giveaway" : p.side === "SELL" ? "sell pool" : "buy offer"} <TradeCode offerId={p.poolId} copy /></SheetTitle>
           <SheetDescription>
             {kdaAmount(p.available)} KDA available · {kdaAmount(p.locked)} in trades · {p.takes} take{p.takes === 1 ? "" : "s"}
-            {!free && <> · {formatFiat(p.price, "USD")} {p.currency}/KDA</>}
-            {closed ? " · Closed" : isExpired(p) ? " · Expired" : ""}
+            {!free && <> · {formatFiat(p.price, p.currency)} {p.currency}/KDA</>}
+            {closed ? " · Closed" : isExpired(p) ? " · Expired" : ""} · {chainLabel(p.chain)}
           </SheetDescription>
         </SheetHeader>
 
@@ -159,7 +159,7 @@ export function ManagePool({ pool: p, open, onOpenChange, trades, onOpenTrade }:
                   <li key={t.tradeId}>
                     <button type="button" onClick={() => onOpenTrade(t.tradeId)} className="flex w-full items-center justify-between gap-3 rounded-xl border border-border p-3 text-left hover:border-primary">
                       <span className="min-w-0">
-                        <span className="block font-semibold">{kdaAmount(t.amount)} KDA{!free && <span className="font-normal text-muted-foreground"> for {formatFiat(t.payAmount, "USD")} {t.currency}</span>}</span>
+                        <span className="block font-semibold">{kdaAmount(t.amount)} KDA{!free && <span className="font-normal text-muted-foreground"> for {formatFiat(t.payAmount, t.currency)} {t.currency}</span>}</span>
                         <span className="block truncate text-xs text-muted-foreground">{p.side === "SELL" ? "Buyer" : "Seller"} {(p.side === "SELL" ? t.buyer : t.seller).slice(0, 10)}… · {t.fundedAt ? new Date(t.fundedAt).toLocaleString() : ""}</span>
                       </span>
                       <EscrowStatus state={t.state as EscrowState} />

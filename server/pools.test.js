@@ -12,7 +12,7 @@ import { registerPayoutRoutes } from "./payout.js";
 import { tradeAsLegacyEscrow, poolsById } from "./chain.js";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL || "postgresql://postgres:postgres@localhost:5432/kadena_nexus" });
-const SELLER = "k:" + "a".repeat(64), BUYER = "k:" + "b".repeat(64), OTHER = "k:" + "c".repeat(64), ARB = "k:" + "d".repeat(64);
+const SELLER = "k:" + "a".repeat(64), BUYER = "k:" + "b".repeat(64), OTHER = "k:" + "c".repeat(64), ARB = "k:" + "d".repeat(64), ARB2 = "k:" + "e".repeat(64);
 const TRON = "TQn9Y2khEsLJW1ChVWFMSMeRDow5KcbLSE", EVM = "0x52908400098527886E0F7030069857D2E4169EE7";
 const chainPools = new Map(), chainTrades = new Map(), freshTrades = new Map(); // freshTrades: on the chain but not in the cached list yet
 const P = (o) => ({ poolId: "pooltest-sell", creator: SELLER, side: "SELL", available: 900, locked: 100, min: 50, max: 500, price: 0.01, currency: "USDT", token: "", payWindow: 1800, agent: "", state: "OPEN", takes: 1, ...o });
@@ -20,9 +20,9 @@ const T = (o) => ({ tradeId: "pooltest-trade-1", poolId: "pooltest-sell", seller
 let server, base;
 
 const clean = async () => {
-  await pool.query("DELETE FROM pool_details WHERE pool_id LIKE 'pooltest-%'");
-  await pool.query("DELETE FROM hidden_offers WHERE offer_id LIKE 'pooltest-%'");
-  await pool.query("DELETE FROM trade_payouts WHERE offer_id LIKE 'pooltest-%'");
+  await pool.query("DELETE FROM pool_details WHERE pool_id LIKE 'pooltest-%' OR pool_id LIKE '2:pooltest-%'");
+  await pool.query("DELETE FROM hidden_offers WHERE offer_id LIKE 'pooltest-%' OR offer_id LIKE '2:pooltest-%'");
+  await pool.query("DELETE FROM trade_payouts WHERE offer_id LIKE 'pooltest-%' OR offer_id LIKE '2:pooltest-%'");
 };
 before(async () => {
   await clean();
@@ -33,7 +33,8 @@ before(async () => {
   const sendAuthError = (res, a) => res.status(a.status).json({ error: a.error });
   registerPoolRoutes(app, {
     getPool: () => pool, requireAuth, sendAuthError,
-    chain: async () => ({ pools: [...chainPools.values()], trades: [...chainTrades.values()], config: { arbiter: ARB, tRelease: 3600 } }),
+    // chain 2 has its own config row (here: another arbiter, to see that the pool's chain decides)
+    chain: async () => ({ pools: [...chainPools.values()], trades: [...chainTrades.values()], config: { arbiter: ARB, tRelease: 3600 }, configs: { "1": { arbiter: ARB, tRelease: 3600 }, "2": { arbiter: ARB2, tRelease: 3600 } } }),
     readPoolFn: async (id) => chainPools.get(id) ?? null,
     readTradeFn: async (id) => freshTrades.get(id) ?? chainTrades.get(id) ?? null,
   });
@@ -139,4 +140,26 @@ test("legacy payout route with a v11 trade id: a SELL trade answers with the poo
   assert.deepEqual([r.status, r.body.details[0].value, r.body.isMine], [200, EVM, false]);
   chainTrades.set("pooltest-trade-2", T({ tradeId: "pooltest-trade-2", poolId: "pooltest-buy", currency: "USDC", state: "PAID" }));
   assert.equal(await putP("pooltest-trade-2", SELLER, [{ method: "USDC", value: EVM, network: "ERC20" }]), 409, "locked once paid");
+});
+
+test("chain 2: the same pool id is another pool, with its own creator, details and arbiter", async () => {
+  // on chain 1 "pooltest-sell" is SELLER's (above); on chain 2 the same id is OTHER's kb-USDC pool
+  const ref = "2:pooltest-sell";
+  chainPools.set(ref, P({ poolId: ref, chain: "2", creator: OTHER, currency: "kb-USDC", token: "n_e595727b657fbbb3b8e362a05a7bb8d12865c1ff.kb-USDC" }));
+  assert.equal((await put(encodeURIComponent(ref), SELLER, { networks: [], payout: {}, notes: "x" })).status, 403, "SELLER created the chain-1 pool, not this one");
+  let r = await put(encodeURIComponent(ref), OTHER, { networks: [], payout: {}, notes: "Instant kb-USDC" });
+  assert.deepEqual([r.status, r.body.poolId], [200, ref]);
+  r = await getJson(`/api/pools/${ref}/details`);
+  assert.deepEqual([r.body.poolId, r.body.networks, r.body.notes], [ref, [], "Instant kb-USDC"]);
+  r = await getJson("/api/pools/pooltest-sell/details");
+  assert.deepEqual([r.body.networks, r.body.notes], [["USDT:TRC20", "USDC:ERC20"], "Fast release"], "the chain-1 pool's row is untouched");
+  const listed = (await getJson("/api/pools")).body.filter((p) => p.poolId.endsWith("pooltest-sell"));
+  assert.deepEqual(listed.map((p) => [p.poolId, p.chain ?? "1", p.creator, p.notes]).sort(), [["2:pooltest-sell", "2", OTHER, "Instant kb-USDC"], ["pooltest-sell", "1", SELLER, "Fast release"]]);
+  // payout: the chain-2 pool's creator and chain 2's arbiter; a party of the chain-1 pool is not a party here
+  assert.deepEqual((await getJson(`/api/pools/${encodeURIComponent(ref)}/payout?${q(OTHER)}`)).body.isMine, true);
+  assert.equal((await getJson(`/api/pools/${encodeURIComponent(ref)}/payout?${q(BUYER)}`)).status, 403, "BUYER's trade is on the chain-1 pool");
+  assert.equal((await getJson(`/api/pools/${encodeURIComponent(ref)}/payout?${q(ARB2)}`)).status, 200, "chain 2's arbiter");
+  assert.equal((await getJson(`/api/pools/${encodeURIComponent(ref)}/payout?${q(ARB)}`)).status, 403, "chain 1's arbiter is not chain 2's");
+  assert.equal((await getJson(`/api/pools/${encodeURIComponent("2:" + "x".repeat(129))}/details`)).status, 400, "the on-chain id is limited to 128 characters");
+  assert.equal((await getJson(`/api/pools/${encodeURIComponent("2:" + "x".repeat(128))}/details`)).status, 200);
 });
