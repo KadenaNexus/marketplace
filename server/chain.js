@@ -93,6 +93,13 @@ async function localOnce(code, { api, apis = api ? [api] : chainConfig().apis, g
   throw new Error(`All Chainweb nodes failed: ${last?.message}`);
 }
 const isPactError = (e) => String(e?.message || "").startsWith("Pact error");
+/**
+ * A Pact error that means "not there": no such row, or the contract is not on this chain. Anything else
+ * ("Unknown exception", gas, timeouts inside Pact) is a failed read, not an answer, and must not be
+ * mistaken for "no such trade" (that once hid a seller's address from the buyer, and could empty a
+ * chain's pools for a cycle).
+ */
+export const isAbsent = (e) => isPactError(e) && /not found|No value found|Cannot (find|resolve) module|has no such member|row not found|does not exist/i.test(String(e.message));
 
 /* ---------------- reads ---------------- */
 /** One chain: open pools, every trade, the config, and the closed pools that trades refer to. */
@@ -125,7 +132,7 @@ export async function fetchChain({ api, chains = chainConfig().chains } = {}) {
   for (const chain of chains) {
     let r;
     try { r = await fetchOneChain(chain, { api }); }
-    catch (e) { if (!isPactError(e)) throw e; console.warn(`[chain] v11 on chain ${chain}:`, e.message); lastPactError = e; continue; }
+    catch (e) { if (!isAbsent(e)) throw e; console.warn(`[chain] v11 on chain ${chain}:`, e.message); lastPactError = e; continue; }
     pools.push(...r.pools); trades.push(...r.trades); configs[chain] = r.config;
   }
   if (lastPactError && !Object.keys(configs).length) throw lastPactError; // not on any chain: a setup error, not "no trades"
@@ -139,12 +146,12 @@ export const configFor = (c, chain) => c?.configs?.[chain] ?? c?.config ?? toCon
 export async function readPool(ref, opts) {
   const { chain, id } = parseRef(ref);
   try { return toPool(id, await pactLocal(`(${chainConfig().contract}.get-offer ${q(id)})`, { ...opts, chain }), chain); }
-  catch (e) { if (isPactError(e)) return null; throw e; }
+  catch (e) { if (isAbsent(e)) return null; throw e; }
 }
 export async function readTrade(ref, opts) {
   const { chain, id } = parseRef(ref);
   try { return toTrade(id, await pactLocal(`(${chainConfig().contract}.get-trade ${q(id)})`, { ...opts, chain }), chain); }
-  catch (e) { if (isPactError(e)) return null; throw e; }
+  catch (e) { if (isAbsent(e)) return null; throw e; }
 }
 /** One call on the trade's chain: the trade, its pool and that chain's config (for the arbiter). null when there is no such trade. */
 export async function readTradeWithPool(ref, opts) {
@@ -154,7 +161,7 @@ export async function readTradeWithPool(ref, opts) {
     const d = await pactLocal(`(let ((t (${M}.get-trade ${q(id)}))) {"t": t, "o": (${M}.get-offer (at "offer" t)), "c": (${M}.get-config)})`, { ...opts, chain });
     const trade = toTrade(id, d.t, chain);
     return { trade, pool: toPool(parseRef(trade.poolId).id, d.o, chain), config: toConfig(d.c) };
-  } catch (e) { if (isPactError(e)) return null; throw e; }
+  } catch (e) { if (isAbsent(e)) return null; throw e; }
 }
 export async function readConfig(opts = {}) { return toConfig(await pactLocal(`(${chainConfig().contract}.get-config)`, { ...opts, chain: opts.chain ?? chainConfig().chains[0] ?? "1" })); }
 

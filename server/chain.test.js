@@ -174,3 +174,12 @@ test("single reads: a pool, a trade, a trade with its pool; a missing id is null
   await assert.rejects(readPool("pool-1"), /All Chainweb nodes failed/);
   process.env.ALERTS_CHAIN_API = `${base}/down,${base}`;
 });
+
+test("a failed read is not mistaken for 'no such trade'", async () => {
+  const { isAbsent } = await import("./chain.js");
+  assert.equal(isAbsent(new Error("Pact error: No value found in table free.p2p-escrow-v11_trades for key: x")), true);
+  assert.equal(isAbsent(new Error("Pact error: Module free.p2p-escrow-v11 has no such member: get-config")), true, "contract not on this chain");
+  assert.equal(isAbsent(new Error("Pact error: Cannot find module: free.p2p-escrow-v11")), true);
+  assert.equal(isAbsent(new Error("Pact error: Unknown exception")), false);
+  assert.equal(isAbsent(new Error("HTTP 502 from https://node")), false);
+});

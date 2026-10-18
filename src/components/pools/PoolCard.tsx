@@ -50,8 +50,9 @@ export function PoolCard({ pool: p, profileMap, ratingSummaryMap, completedMap, 
   return (
     <div id={`pool-card-${p.poolId}`} className={cn("relative scroll-mt-28 rounded-2xl border border-border bg-card p-4", (expired || closed || p.hidden) && "opacity-75", className)}>
       <div className="flex items-baseline justify-between gap-3">
-        <p className="flex items-center gap-2 font-display text-2xl font-bold">
-          {kdaAmount(p.available)} KDA <span className="text-base font-normal text-muted-foreground">left</span>
+        <p className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 font-display text-2xl font-bold">
+          {/* kept on one line: "300 KDA left" broke into three on phones */}
+          <span className="whitespace-nowrap">{kdaAmount(p.available)} KDA <span className="text-base font-normal text-muted-foreground">left</span></span>
           <TradeCode offerId={p.poolId} className="self-center" />
         </p>
         {free ? (

@@ -6,6 +6,10 @@ const PORT = Number(process.argv[2] || 4500), SPEC = String(process.argv[3] || "
 const routes = /^\d+$/.test(SPEC) ? null : Object.fromEntries(SPEC.split(",").map((r) => r.split("=")));
 const first = routes ? Object.values(routes)[0] : SPEC;
 const target = (chain) => (routes ? routes[chain] : SPEC);
+// One request at a time per Pact server: a single local Pact server answers overlapping /local calls with
+// "Unknown exception", which Chainweb nodes never do. Queuing here keeps the local chain honest.
+const queues = {};
+const inTurn = (port, fn) => { const r = (queues[port] || Promise.resolve()).then(fn, fn); queues[port] = r.catch(() => {}); return r; };
 http.createServer(async (req, res) => {
   const m = req.url.match(/^\/chainweb\/0\.0\/[^/]+\/chain\/([^/]+)\/pact/);
   const port = m ? target(m[1]) : first;
@@ -16,8 +20,8 @@ http.createServer(async (req, res) => {
   if (!port) { res.writeHead(404, { "content-type": "text/plain", ...cors }); return res.end(`chain ${m?.[1]} is not run locally`); }
   let body = ""; for await (const c of req) body += c;
   try {
-    const r = await fetch(`http://127.0.0.1:${port}${path}`, { method: req.method, headers: { "content-type": "application/json" }, body: req.method === "POST" ? body : undefined });
-    const t = await r.text();
+    const r = await inTurn(port, () => fetch(`http://127.0.0.1:${port}${path}`, { method: req.method, headers: { "content-type": "application/json" }, body: req.method === "POST" ? body : undefined }).then(async (x) => ({ status: x.status, t: await x.text() })));
+    const t = r.t;
     res.writeHead(r.status, { "content-type": "application/json", ...cors }); res.end(t);
   } catch (e) { res.writeHead(502, cors); res.end(String(e)); }
 }).listen(PORT, "127.0.0.1", () => console.log("pact proxy on", PORT, "->", routes ? JSON.stringify(routes) : first));
