@@ -5,6 +5,8 @@ import { Label } from "@/components/ui/label";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useWallet } from "@/hooks/useWallet";
 import { useRefreshV11 } from "@/hooks/useV11";
+import { useAutoRelease } from "@/hooks/useAutoRelease";
+import { autoPoolNote } from "@/lib/autoReleaseApi";
 import { appChainShortfall, isInsufficientFunds } from "@/lib/kadena";
 import { buildTakeAndSettleTx, buildTakeTx, newTradeId, payAmountFor, tokenBalance, tokenPayFor, tokenPrecision, tradeVault } from "@/lib/v11";
 import { sendV11 } from "@/lib/v11ui";
@@ -16,7 +18,7 @@ import { TradeEmailGate, useNeedsTradeEmail } from "../TradeEmail";
 import { ProfileSummaryView } from "../ProfileSummary";
 import { formatFiat, cn } from "@/lib/utils";
 import { kdaAmount } from "./PoolCard";
-import { Gift, Loader2, Zap } from "lucide-react";
+import { Gift, Loader2, Radar, Zap } from "lucide-react";
 import { toast } from "sonner";
 
 const round4 = (n: number) => Math.floor(n * 10000) / 10000;
@@ -50,6 +52,8 @@ export function TakeSheet({ pool: p, open, onOpenChange, profileMap = {}, onTake
 
   const free = !!p && isGiveawayPool(p);
   const instant = !!p && isInstant(p);
+  const isAuto = useAutoRelease().isAuto;
+  const auto = !!p && !free && isAuto(p);
   const token = p ? kadenaToken(p.currency) : undefined;
   const maxTake = p ? round4(Math.min(p.max, p.available)) : 0;
   const minTake = p ? p.min : 0;
@@ -190,6 +194,13 @@ export function TakeSheet({ pool: p, open, onOpenChange, profileMap = {}, onTake
                   </>
                 )}
               </div>
+
+              {auto && (
+                <p className="flex items-start gap-2 rounded-xl border border-primary/40 bg-primary/5 p-3 text-sm">
+                  <Radar className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+                  <span>{autoPoolNote(p.side, p.currency)}</span>
+                </p>
+              )}
 
               <p className="text-xs text-muted-foreground">
                 {free ? "One transaction, signed in your wallet."

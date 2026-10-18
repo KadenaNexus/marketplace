@@ -3,9 +3,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useWallet } from "@/hooks/useWallet";
-import { useRefreshV11 } from "@/hooks/useV11";
+import { useRefreshV11, useV11Config } from "@/hooks/useV11";
+import { useAutoRelease } from "@/hooks/useAutoRelease";
+import { watchedText } from "@/lib/autoReleaseApi";
 import { appChainShortfall } from "@/lib/kadena";
 import { buildClosePoolTx, buildTopUpTx, buildUpdatePoolTx, buildWithdrawTx, poolVault, type Trade } from "@/lib/v11";
 import { sendV11 } from "@/lib/v11ui";
@@ -17,7 +20,7 @@ import { EscrowStatus } from "../EscrowStatus";
 import type { EscrowState } from "@/lib/kadena";
 import { formatFiat, cn } from "@/lib/utils";
 import { kdaAmount, isExpired } from "./PoolCard";
-import { ArrowDownToLine, ArrowUpFromLine, Loader2, Pencil, XCircle } from "lucide-react";
+import { ArrowDownToLine, ArrowUpFromLine, Loader2, Pencil, Radar, XCircle } from "lucide-react";
 import { toast } from "sonner";
 
 const num = (s: string) => { const n = parseFloat(s); return Number.isFinite(n) ? n : NaN; };
@@ -43,7 +46,10 @@ export function ManagePool({ pool: p, open, onOpenChange, trades, onOpenTrade }:
   const [networks, setNetworks] = useState<string[]>([]);
   const [addresses, setAddresses] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState("");
+  const [autoOn, setAutoOn] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const auto = useAutoRelease();
+  const { data: cfg, isPlaceholderData: cfgLoading } = useV11Config();
 
   const free = !!p && isGiveawayPool(p);
   const instant = !!p && isInstant(p);
@@ -66,9 +72,15 @@ export function ManagePool({ pool: p, open, onOpenChange, trades, onOpenTrade }:
       })();
     }
   }, [open, p, account, stable]);
+  // its own effect: the platform's agent may load after the sheet opened, and must not reset the other fields
+  useEffect(() => { if (open && p) setAutoOn(!!p.agent && p.agent === auto.agent); }, [open, p, auto.agent]);
 
   if (!p) return null;
   const open_ = trades.filter((t) => ACTIVE.has(t.state)).length;
+  // auto-release: the switch shows when the platform runs its agent and the pool pays on a watched network
+  const canAuto = stable && auto.available && networks.some((n) => auto.networks.includes(n));
+  // the contract accepts only the current agent or none: an agent the platform no longer uses is dropped on save
+  const agentToSave = canAuto ? (autoOn ? auto.agent : "") : cfgLoading || p.agent === (cfg?.agent ?? "") ? p.agent : "";
 
   const run = async (name: string, fn: () => Promise<void>) => {
     if (!account) return toast.error("Connect your wallet");
@@ -102,10 +114,10 @@ export function ManagePool({ pool: p, open, onOpenChange, trades, onOpenTrade }:
     if (!free && !(pr > 0)) throw new Error("Enter the price");
     if (stable && p.side === "SELL") for (const n of networks) { const pb = addressProblem(n, addresses[n] ?? ""); if (pb) throw new Error(`${networkLabel(n)}: ${pb}`); }
     if (stable && networks.length === 0) throw new Error("Choose at least one network");
-    const changed = mn !== p.min || mx !== p.max || pr !== p.price || payWindow !== p.payWindow || expiryDays !== (p.expiresAt ? Math.max(1, Math.round((Date.parse(p.expiresAt) - Date.now()) / 86400000)) : 0);
+    const changed = mn !== p.min || mx !== p.max || pr !== p.price || payWindow !== p.payWindow || agentToSave !== p.agent || expiryDays !== (p.expiresAt ? Math.max(1, Math.round((Date.parse(p.expiresAt) - Date.now()) / 86400000)) : 0);
     if (changed) {
       const expiresAt = expiryDays > 0 ? new Date(Date.now() + expiryDays * 86400000).toISOString() : null;
-      await sendV11("Updating your pool", () => buildUpdatePoolTx(p.poolId, account!.account, account!.publicKey, { min: mn, max: mx, price: pr, payWindow, expiresAt, agent: p.agent }));
+      await sendV11("Updating your pool", () => buildUpdatePoolTx(p.poolId, account!.account, account!.publicKey, { min: mn, max: mx, price: pr, payWindow, expiresAt, agent: agentToSave }));
     }
     if (!free) {
       try {
@@ -229,6 +241,20 @@ export function ManagePool({ pool: p, open, onOpenChange, trades, onOpenTrade }:
                     );
                   })}
                   <p className="text-xs text-muted-foreground">Changes apply to new trades only: open trades keep the address they were shown.</p>
+                </div>
+              )}
+              {canAuto && (
+                <div className={cn("flex items-start justify-between gap-3 rounded-xl border p-3", autoOn ? "border-primary bg-primary/5" : "border-border")}>
+                  <div className="space-y-1">
+                    <Label htmlFor="edit-auto" className="flex items-center gap-1.5"><Radar className="h-4 w-4 text-primary" />Auto-release when the payment arrives</Label>
+                    <p className="text-sm text-muted-foreground">
+                      {p.side === "SELL"
+                        ? `Your KDA is released to the buyer automatically when the exact ${p.currency} arrives at your address. You can still release yourself.`
+                        : "Sellers who take your offer get the KDA released to you automatically when your exact payment reaches their address."}
+                    </p>
+                    <p className="text-xs text-muted-foreground">Works for {watchedText(p.currency, auto.networks)}. Applies to new trades; open trades keep what they started with.</p>
+                  </div>
+                  <Switch id="edit-auto" checked={autoOn} onCheckedChange={setAutoOn} className="mt-1 shrink-0" />
                 </div>
               )}
               {!free && <div className="space-y-1"><Label htmlFor="edit-notes">Note for traders</Label><Input id="edit-notes" value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={200} className="h-11" /></div>}

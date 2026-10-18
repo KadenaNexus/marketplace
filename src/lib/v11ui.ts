@@ -10,7 +10,7 @@ import { readConfigs, readPools, readTrades, tradeToEscrow, type Pool, type Trad
 import { getPoolDetails, getPoolsIndex } from "./poolsApi";
 import { isGiveawayPool, isInstant, kadenaToken, networkLabel } from "./markets";
 
-export const FALLBACK_CONFIG: V11Config = { arbiter: PLATFORM_ARBITER, tRelease: 3600, feeBps: 0, feeAccount: "", paused: false };
+export const FALLBACK_CONFIG: V11Config = { arbiter: PLATFORM_ARBITER, tRelease: 3600, feeBps: 0, feeAccount: "", paused: false, agent: "" };
 
 /** A v11 trade in the legacy shape, with the config's release window attached by the list that loaded it. */
 export type V11Escrow = ReturnType<typeof tradeToEscrow> & { tRelease?: number; networks?: string[] };
@@ -56,7 +56,11 @@ export const kda = (n: number) => `${n.toLocaleString("en-US", { maximumFraction
 /** "USDT 1.20" for the trade; the pool's token symbol for instant trades (with the token's decimals, kb-ETH up to 18). */
 export const payText = (t: Trade) => `${t.currency} ${t.payAmount.toLocaleString("en-US", { maximumFractionDigits: Math.min(20, kadenaToken(t.currency)?.precision ?? 6) })}`;
 
-/** The agent of the pool releases on its own once it sees the payment. */
+/**
+ * The trade names the platform's release agent (auto-release): it releases on its own once the exact payment arrives.
+ * The exact amount (pay-amount plus the identifying digits) comes from the server (useTradeAuto), so the copy below
+ * never quotes the bare pay-amount for these trades.
+ */
 export const hasAgent = (e: V11Escrow) => !!e.trade.agent;
 
 /**
@@ -78,10 +82,10 @@ export function v11NextStep(e: V11Escrow, me: string | undefined, expired: boole
         return "The payment window closed; the seller can take the KDA back.";
       }
       if (buyer) return agent
-        ? `Your turn: ${amount} is locked for you. Send exactly ${pay} to the address below. The agent releases the KDA as soon as it sees your payment; you don't need to press anything.`
+        ? `Your turn: ${amount} is locked for you. Send the exact amount shown below to the address below. The KDA is released automatically when it arrives.`
         : `Your turn: ${amount} is locked for you. Send exactly ${pay} to the address below, then press I paid before the time runs out.`;
       if (seller) return agent
-        ? `${amount} is locked in escrow. Waiting for the buyer's ${pay}; your agent releases when it arrives. Nothing to do.`
+        ? `${amount} is locked in escrow. Waiting for the buyer's payment; auto-release sends the KDA when the exact amount arrives. You can still release yourself.`
         : `${amount} is locked in escrow. Waiting for the buyer to send ${pay} and press I paid. Do not release before the money has arrived.`;
       return `${amount} is locked in escrow. Waiting for the buyer's payment.`;
     case "PAID":

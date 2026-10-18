@@ -74,7 +74,8 @@ export interface Trade {
   closedAt?: string;
 }
 
-export interface V11Config { arbiter: string; tRelease: number; feeBps: number; feeAccount: string; paused: boolean }
+/** `agent`: the platform's release agent ("" = none), the only account an offer may name as its agent (auto-release). */
+export interface V11Config { arbiter: string; tRelease: number; feeBps: number; feeAccount: string; paused: boolean; agent: string }
 
 export interface V11Reputation { totalTrades: number; successfulTrades: number; disputesCount: number; cancelsCount: number; volumeKda: number }
 
@@ -173,7 +174,7 @@ export async function readTrade(ref: string): Promise<Trade | null> {
 /** One chain's config (default: the first v11 chain; same governance everywhere, but each chain has its own row). */
 export async function readConfig(chain: string = V11_CHAINS[0] ?? DEFAULT_CHAIN): Promise<V11Config> {
   const c = (await local(`(${V11_FQN}.get-config)`, chain)) as Record<string, unknown>;
-  return { arbiter: String(c.arbiter ?? PLATFORM_ARBITER), tRelease: pactNumber(c["t-release"]) || 3600, feeBps: pactNumber(c["fee-bps"]), feeAccount: String(c["fee-account"] ?? ""), paused: c.paused === true };
+  return { arbiter: String(c.arbiter ?? PLATFORM_ARBITER), tRelease: pactNumber(c["t-release"]) || 3600, feeBps: pactNumber(c["fee-bps"]), feeAccount: String(c["fee-account"] ?? ""), paused: c.paused === true, agent: String(c.agent ?? "") };
 }
 /** The config of every v11 chain that answers, by chain. */
 export async function readConfigs(): Promise<Record<string, V11Config>> {

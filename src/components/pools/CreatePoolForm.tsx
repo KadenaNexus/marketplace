@@ -4,11 +4,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useWallet } from "@/hooks/useWallet";
 import { useRefreshV11 } from "@/hooks/useV11";
 import { appChainShortfall, isInsufficientFunds, readCoinDetailsLocal, TX_GAS_KDA } from "@/lib/kadena";
 import { useAppChainBalance } from "@/hooks/useAppChainBalance";
+import { useAutoRelease } from "@/hooks/useAutoRelease";
+import { watchedText } from "@/lib/autoReleaseApi";
 import { V11_CHAINS, buildCreatePoolTx, newPoolId, poolVault } from "@/lib/v11";
 import { sendV11 } from "@/lib/v11ui";
 import { txFinished } from "@/lib/txProgress";
@@ -22,7 +25,7 @@ import {
 import { TradeEmailGate, useNeedsTradeEmail } from "../TradeEmail";
 import { useMyCompletedTrades, useTermsGate } from "../Trust";
 import { NEW_TRADER_MAX_KDA, NEW_TRADER_TRADES, isNewTrader, newTraderProblem } from "@/lib/trust";
-import { Gift, Loader2, Lock, Plus, ShoppingCart, Store, Zap } from "lucide-react";
+import { Gift, Loader2, Lock, Plus, Radar, ShoppingCart, Store, Zap } from "lucide-react";
 import { toast } from "sonner";
 
 interface CreatePoolFormProps {
@@ -58,6 +61,7 @@ export function CreatePoolForm({ onSuccess, role = "seller", compact = false }: 
   const [expiryDays, setExpiryDays] = useState(0);
   const [giveaway, setGiveaway] = useState(false);
   const [notes, setNotes] = useState("");
+  const [autoRelease, setAutoRelease] = useState(true);
   const [busy, setBusy] = useState(false);
   const free = giveaway && side === "SELL";
   const instant = !free && isKadenaToken(currency);
@@ -66,6 +70,11 @@ export function CreatePoolForm({ onSuccess, role = "seller", compact = false }: 
   // the currency decides the chain the pool lives on (shared/v11-chains.js); a giveaway goes on the default chain
   const chain = (free ? chainForCurrency("FREE") : chainForCurrency(currency)) ?? "1";
   const { data: chainBalance } = useAppChainBalance(account?.account, chain);
+  // auto-release: offered when the platform runs its agent and one of the chosen networks is watched
+  const auto = useAutoRelease();
+  const canAuto = stable && auto.available && networks.some((n) => auto.networks.includes(n));
+  const autoOn = canAuto && autoRelease;
+  const manualNets = networks.filter((n) => !auto.networks.includes(n));
 
   const needsEmail = useNeedsTradeEmail();
   const [emailGateOpen, setEmailGateOpen] = useState(false);
@@ -131,6 +140,7 @@ export function CreatePoolForm({ onSuccess, role = "seller", compact = false }: 
           poolId, creator: account.account, pubKey: account.publicKey, side, total: totalN, min: minN, max: maxN,
           // the contract wants a currency even for a giveaway (price 0, no token); "FREE" is what the lists show
           price: priceN, currency: free ? "FREE" : currency, token: instant ? token?.module ?? "" : "", payWindow, expiresAt, vault,
+          agent: autoOn ? auto.agent : "",
         }),
         { hold: true },
       );
@@ -280,6 +290,24 @@ export function CreatePoolForm({ onSuccess, role = "seller", compact = false }: 
                     </div>
                   );
                 })}
+              </div>
+            )}
+
+            {canAuto && (
+              <div className={`flex items-start justify-between gap-3 rounded-xl border p-3 ${autoOn ? "border-primary bg-primary/5" : "border-border"}`}>
+                <div className="space-y-1">
+                  <Label htmlFor="auto-release" className="flex items-center gap-1.5 text-base"><Radar className="h-4 w-4 text-primary" />Auto-release when the payment arrives</Label>
+                  <p className="text-sm text-muted-foreground">
+                    {side === "SELL"
+                      ? `Your KDA is released to the buyer automatically when the exact ${currency} arrives at your address. You can still release yourself.`
+                      : "Sellers who take your offer get the KDA released to you automatically when your exact payment reaches their address."}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Works for {watchedText(currency, auto.networks)}.
+                    {manualNets.length > 0 && ` On ${manualNets.map((n) => networksFor(currency).find((x) => x.id === n)?.networkLabel ?? n).join(" and ")} the seller releases as usual.`}
+                  </p>
+                </div>
+                <Switch id="auto-release" checked={autoRelease} onCheckedChange={setAutoRelease} className="mt-1 shrink-0" />
               </div>
             )}
 

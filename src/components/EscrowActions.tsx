@@ -74,8 +74,11 @@ import {
   buildMarkPaidTx as buildV11MarkPaidTx, buildReleaseTx as buildV11ReleaseTx, buildCancelTx as buildV11CancelTx,
   buildTimeoutRefundTx as buildV11TimeoutRefundTx, buildOpenDisputeTx as buildV11OpenDisputeTx,
 } from "@/lib/v11";
-import { isV11, toV11Escrow, hasAgent, payText, loadV11Escrows, type V11Escrow } from "@/lib/v11ui";
+import { isV11, toV11Escrow, payText, loadV11Escrows, type V11Escrow } from "@/lib/v11ui";
 import { PoolPayoutCard } from "./pools/PoolPayoutCard";
+import { AutoReleaseCard } from "./pools/AutoReleaseCard";
+import { useTradeAuto } from "@/hooks/useAutoRelease";
+import { isAutoActive } from "@/lib/autoReleaseApi";
 import { chainLabel, isGiveawayPool, isInstant, windowLabel } from "@/lib/markets";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -995,8 +998,9 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
   const canV11CancelFinal = canV11Cancel && !isInDisputeForParty;
   const canV11RefundFinal = canV11Refund && !isInDisputeForParty;
   const canV11DisputeFinal = canV11Dispute && !isInDisputeForParty;
-  // the pool's agent releases on its own once it sees the payment: "I paid" stays as a fallback only
-  const agentReleases11 = !!v11 && hasAgent(v11);
+  // auto-release: the platform's agent releases once it sees the exact payment, so "I paid" stays as a fallback only
+  const { data: auto11 } = useTradeAuto(v11);
+  const agentReleases11 = !!v11 && isAutoActive(auto11);
 
   const isTerminal = !!selectedEscrow && PAST_TERMINAL_STATES.includes(selectedEscrow.state as (typeof PAST_TERMINAL_STATES)[number]) || selectedEscrow?.state === "DELETED";
 
@@ -1049,7 +1053,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
   /** v11 buttons, by role and state (the one in the phone's bottom bar is left out there) */
   const v11Buttons = !v11 || isTerminal || !isConnected ? [] : [
     canMarkPaidFinal && (!isMobile || agentReleases11) ? { key: "paid", label: "I paid", busy: "Mark Paid", Icon: DollarSign, run: handleMarkPaid, variant: agentReleases11 ? "outline" as const : "default" as const,
-      note: agentReleases11 ? "Usually not needed: the agent releases when it sees your payment." : undefined } : null,
+      note: agentReleases11 ? "Not needed with auto-release: the KDA is released when your exact payment arrives." : undefined } : null,
     canReleaseFinal && (!isMobile || t11?.state !== "PAID") ? { key: "release", label: t11?.state === "FUNDED" ? "Release now (buyer paid)" : "Release", busy: "Release", Icon: Unlock, run: handleRelease, variant: t11?.state === "PAID" ? "default" as const : "outline" as const,
       note: t11?.state === "FUNDED" ? "Only if the money is already in your account." : undefined } : null,
     canV11RefundFinal && !isMobile ? { key: "refund", label: "Take KDA back", busy: "Take KDA back", Icon: RotateCcw, run: handleV11Refund, variant: "outline" as const, note: "The payment window closed." } : null,
@@ -1112,13 +1116,13 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                 <Label className="text-muted-foreground">{v11 ? (v11.side === "SELL" ? "The buyer pays" : "You get paid") : "Total Value"}</Label>
                 <div className="mt-1 rounded-lg border-2 border-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 dark:border-emerald-700 px-4 py-3">
                   <p className="font-mono text-2xl font-bold text-emerald-800 dark:text-emerald-200">
-                    {tradeTotal(selectedEscrow)}
+                    {agentReleases11 ? `${auto11?.amount} ${v11?.trade.currency}` : tradeTotal(selectedEscrow)}
                   </p>
                   <p className="mt-3 text-sm text-muted-foreground leading-snug">
                     {v11 ? (
                       isGiveawayPool(v11.trade) ? "Free giveaway: the KDA went straight to the receiver when they claimed it."
                       : isInstant(v11.trade) ? `Instant: ${payText(v11.trade)} and the KDA moved in the same transaction.`
-                      : agentReleases11 ? "The buyer sends exactly this amount to the address below. The pool's agent releases the KDA when it sees the payment arrive."
+                      : agentReleases11 ? `Auto-release: the buyer sends exactly ${auto11?.amount} ${v11.trade.currency} (the last digits identify the payment) and the KDA is released when it arrives.`
                       : "The buyer sends exactly this amount to the address below from a wallet they control, then presses I paid. The seller checks their own account and releases."
                     ) : isGiveaway(selectedEscrow)
                       ? "Free giveaway: there is nothing to pay. Once the seller has locked the KDA, the receiver taps Mark as Paid (no screenshot needed) and the seller releases the KDA."
@@ -1129,10 +1133,11 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
               <div className="sm:col-span-2 space-y-4">
                 {!isGiveaway(selectedEscrow) && <>
                 <ProofCard escrow={selectedEscrow} />
+                {v11 && !isInstant(v11.trade) && <AutoReleaseCard escrow={v11} />}
                 {v11 && v11.side === "SELL" ? <PoolPayoutCard escrow={v11} /> : (!v11 || !isInstant(v11.trade)) && (
                 <PayoutCard
                   escrow={selectedEscrow}
-                  total={tradeTotal(selectedEscrow)}
+                  total={agentReleases11 ? `${auto11?.amount} ${v11?.trade.currency}` : tradeTotal(selectedEscrow)}
                 />
                 )}
                 </>}

@@ -7,7 +7,8 @@ import { getPoolPayout, tradeNetwork } from "@/lib/poolsApi";
 import { isGiveawayPool, isInstant, networkLabel, paymentNetwork } from "@/lib/markets";
 import { formatFiat } from "@/lib/utils";
 import type { V11Escrow } from "@/lib/v11ui";
-import { hasAgent } from "@/lib/v11ui";
+import { useTradeAuto } from "@/hooks/useAutoRelease";
+import { isAutoActive } from "@/lib/autoReleaseApi";
 
 function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
   const [done, setDone] = useState(false);
@@ -39,15 +40,18 @@ export function PoolPayoutCard({ escrow: e }: { escrow: V11Escrow }) {
     staleTime: 60 * 1000,
     retry: 0,
   });
+  // auto-release: the buyer sends the exact amount with the identifying digits (AutoReleaseCard explains them)
+  const { data: auto } = useTradeAuto(e);
   if (!me || !involved || isInstant(t) || isGiveawayPool(t)) return null;
   if (isLoading) return <p className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Loading payment details…</p>;
 
   const networks = e.networks?.length ? e.networks : Object.keys(payout ?? {});
   const chosen = tradeNetwork(t.tradeId);
   const ordered = chosen && networks.includes(chosen) ? [chosen, ...networks.filter((n) => n !== chosen)] : networks;
-  const amount = `${formatFiat(t.payAmount, "USD")} ${t.currency}`;
+  const agent = isAutoActive(auto);
+  const amountText = agent ? auto.amount : String(t.payAmount);
+  const amount = agent ? `${auto.amount} ${t.currency}` : `${formatFiat(t.payAmount, "USD")} ${t.currency}`;
   const buyer = me === t.buyer;
-  const agent = hasAgent(e);
   const live = t.state === "FUNDED";
 
   return (
@@ -56,7 +60,7 @@ export function PoolPayoutCard({ escrow: e }: { escrow: V11Escrow }) {
         <h3 className="flex items-center gap-2 font-semibold"><Landmark className="h-4 w-4 text-primary" />{buyer ? "Where to send the payment" : me === t.seller ? "Where you get paid" : "Seller's payment details"}</h3>
         {buyer && (
           <p className="text-sm text-muted-foreground">
-            {live ? <>The KDA is locked for you. Send <b className="text-foreground">exactly {amount}</b>{agent ? "; the agent releases the KDA when it sees it arrive." : ", then press I paid."}</> : "The address you were given for this trade."}
+            {live ? <>The KDA is locked for you. Send <b className="text-foreground">exactly {amount}</b>{agent ? "; the KDA is released automatically when it arrives." : ", then press I paid."}</> : "The address you were given for this trade."}
           </p>
         )}
       </div>
@@ -66,7 +70,7 @@ export function PoolPayoutCard({ escrow: e }: { escrow: V11Escrow }) {
           <span className="block text-xs text-muted-foreground">Amount to send</span>
           <span className="block font-mono text-xl font-bold tabular-nums">{amount}</span>
         </span>
-        <CopyButton text={String(t.payAmount)} />
+        <CopyButton text={amountText} />
       </div>
 
       {ordered.length === 0 ? (

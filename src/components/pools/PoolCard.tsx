@@ -4,12 +4,14 @@ import { TradeCode } from "../TradeCode";
 import { ProfileSummaryView } from "../ProfileSummary";
 import { RatingDisplay } from "../RatingDisplay";
 import { useWallet } from "@/hooks/useWallet";
+import { useAutoRelease } from "@/hooks/useAutoRelease";
+import { autoPoolNote } from "@/lib/autoReleaseApi";
 import type { PoolListing } from "@/lib/poolsApi";
 import type { RatingSummary } from "@/lib/ratingApi";
 import { chainLabel, isGiveawayPool, isInstant, networkLabel, windowLabel } from "@/lib/markets";
 import { NEW_TRADER_TRADES, isNewTrader } from "@/lib/trust";
 import { formatFiat, cn } from "@/lib/utils";
-import { Gift, Lock, Settings2, Zap } from "lucide-react";
+import { Gift, Lock, Radar, Settings2, Zap } from "lucide-react";
 
 export const kdaAmount = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 4 });
 export const isExpired = (p: { expiresAt?: string }) => !!p.expiresAt && Date.parse(p.expiresAt) <= Date.now();
@@ -46,6 +48,7 @@ export function PoolCard({ pool: p, profileMap, ratingSummaryMap, completedMap, 
   const who = p.side === "SELL" ? "Seller" : "Buyer";
   const nets = p.networks.length ? p.networks : instant || free ? [] : [p.currency];
   const action = free ? "Claim" : p.side === "SELL" ? "Buy KDA" : "Sell KDA";
+  const auto = useAutoRelease().isAuto(p) && !free;
 
   return (
     <div id={`pool-card-${p.poolId}`} className={cn("relative scroll-mt-28 rounded-2xl border border-border bg-card p-4", (expired || closed || p.hidden) && "opacity-75", className)}>
@@ -87,6 +90,11 @@ export function PoolCard({ pool: p, profileMap, ratingSummaryMap, completedMap, 
 
       <div className="mt-3 flex flex-wrap gap-1.5 text-xs">
         {instant && <span className="rounded-full bg-orange-500/15 px-2.5 py-1 font-medium text-orange-700 dark:text-orange-300"><Zap className="mr-1 inline h-3 w-3" />Instant</span>}
+        {auto && (
+          <span className="rounded-full bg-primary/10 px-2.5 py-1 font-medium text-primary" title={mine ? "Your trades on this offer are released automatically when the exact payment arrives." : autoPoolNote(p.side, p.currency)}>
+            <Radar className="mr-1 inline h-3 w-3" aria-hidden="true" />Auto-release
+          </span>
+        )}
         {nets.map((n) => <span key={n} className="rounded-full bg-muted px-2.5 py-1">{networkLabel(n)}</span>)}
         {instant && <span className="rounded-full bg-muted px-2.5 py-1">{p.currency} on Kadena</span>}
         <span className="rounded-full px-2 py-1 text-muted-foreground" title={`This offer and its trades are on Kadena chain ${p.chain}`}>{chainLabel(p.chain)}</span>

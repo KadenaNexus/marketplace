@@ -48,8 +48,8 @@ export function turnInfo(e: Escrow, me?: string): { mine: boolean; label: string
     const agent = hasAgent(e);
     const pay = payText(e.trade);
     if (e.state === "FUNDED") return buyer
-      ? { mine: true, label: agent ? `Your turn: send ${pay} (the agent releases)` : `Your turn: send ${pay}, then tap I paid`, remaining }
-      : { mine: false, label: agent ? `Waiting for the buyer's ${pay}; your agent releases` : `Waiting for the buyer's ${pay}`, remaining };
+      ? { mine: true, label: agent ? "Your turn: send the exact amount (auto-release)" : `Your turn: send ${pay}, then tap I paid`, remaining }
+      : { mine: false, label: agent ? "Waiting for the buyer's payment (auto-release)" : `Waiting for the buyer's ${pay}`, remaining };
     if (e.state === "PAID") return seller
       ? { mine: true, label: `Your turn: check ${pay} arrived, then release`, remaining }
       : { mine: false, label: "Waiting for the seller to release", remaining };
@@ -165,7 +165,7 @@ export function TradeSteps({ escrow: e, me }: { escrow: Escrow; me?: string }) {
     steps = [
       `${kda} locked in escrow`,
       side === "buyer" ? (agent ? "You pay" : "You pay and tap I paid") : (agent ? "Buyer pays" : "Buyer pays and taps I paid"),
-      agent ? "The agent releases the KDA when it sees the payment" : side === "buyer" ? "Seller releases the KDA to you" : side === "seller" ? "You release the KDA to the buyer" : "Seller releases the KDA",
+      agent ? "The KDA is released automatically when the payment arrives" : side === "buyer" ? "Seller releases the KDA to you" : side === "seller" ? "You release the KDA to the buyer" : "Seller releases the KDA",
     ];
     // the first step is done the moment the trade exists
     const at = order.indexOf(e.state);
