@@ -19,6 +19,7 @@ import { registerNotificationRoutes, startNotificationWatcher, notifyMessage, no
 import { registerTradeTxRoutes, startTradeTxWatcher } from "./tradeTxs.js";
 import { registerPayoutRoutes, readEscrowFromChain, sidesOf } from "./payout.js";
 import { registerPoolRoutes } from "./pools.js";
+import { createAutoRelease, registerAutoReleaseRoutes, startAutoReleaseWatcher } from "./autoRelease.js";
 import { fetchChain, readTradeWithPool } from "./chain.js";
 import { createChainCache } from "./trust.js";
 import { registerProofRoutes } from "./proofs.js";
@@ -343,6 +344,9 @@ registerOfferModerationRoutes(app, { getPool: () => pool, requireAuth: (...a) =>
 registerPayoutRoutes(app, { getPool: () => pool, requireAuth: (...a) => requireAuth(...a), sendAuthError: (...a) => sendAuthError(...a) });
 // escrow v11 pools: the market list and the per-pool payment details (server/pools.js)
 registerPoolRoutes(app, { getPool: () => pool, requireAuth: (...a) => requireAuth(...a), sendAuthError: (...a) => sendAuthError(...a), chain: chainCache });
+// auto-release of USDT/USDC trades by the platform's release agent (off unless AUTO_RELEASE_SECRET is set)
+const autoRelease = createAutoRelease({ getPool: () => pool, chain: chainCache, onChange: (offerId, status) => { io.emit("trade-changed", { offerId }); if (status === "released") notifyTradeChangeSoon(); } });
+registerAutoReleaseRoutes(app, { getPool: () => pool, requireAuth: (...a) => requireAuth(...a), sendAuthError: (...a) => sendAuthError(...a), auto: autoRelease });
 registerProofRoutes(app, {
   getPool: () => pool,
   requireAuth: (...a) => requireAuth(...a),
@@ -2580,6 +2584,7 @@ async function start() {
     startTradeTxWatcher(() => pool, 15000, (x) => onTradeStepSettled(x));
     // v11 pools expire on the chain; the server only reminds the creator a day before
     startPoolExpiryWatcher(() => pool);
+    startAutoReleaseWatcher(autoRelease);
     // once: drop rating registrations from before they were checked against the chain (kept in *_removed)
     setTimeout(() => recheckCompletedOffers(pool)
       .then((r) => { if (!r.skipped) console.log("[trust] rating registrations re-checked:", JSON.stringify(r)); })

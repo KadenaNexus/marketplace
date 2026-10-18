@@ -1,5 +1,6 @@
 // Local chain for development: loads coin (demo build where anyone can mint), namespace free and
-// p2p-escrow-v11 into a Pact 5 server, then funds the demo accounts in keys.json (created if missing).
+// p2p-escrow-v11 into a Pact 5 server, then funds the demo accounts in keys.json (created if missing) and names the
+// demo release agent (keys.json "agent") with set-agent, so auto-release works locally (server: AUTO_RELEASE_SECRET).
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -12,7 +13,7 @@ const CHAIN = process.env.CHAIN_ID || "1"; // reset.sh runs one Pact server per 
 const V = path.join(HERE, "../../contracts");
 const keysPath = process.env.DEMO_KEYS || path.join(HERE, "keys.json");
 const keys = fs.existsSync(keysPath) ? JSON.parse(fs.readFileSync(keysPath, "utf8")) : {};
-for (const who of ["seller", "buyer", "arbiter"]) if (!keys[who]) { keys[who] = genKeyPair(); keys[who].account = "k:" + keys[who].publicKey; }
+for (const who of ["seller", "buyer", "arbiter", "agent"]) if (!keys[who]) { keys[who] = genKeyPair(); keys[who].account = "k:" + keys[who].publicKey; }
 if (!keys.gov) { keys.gov = genKeyPair(); keys.gov.account = "k:" + keys.gov.publicKey; }
 fs.writeFileSync(keysPath, JSON.stringify(keys, null, 1));
 const ARBITER = process.env.DEMO_ARBITER || keys.arbiter?.account;
@@ -46,5 +47,7 @@ if (!contract.includes("demo-now")) throw new Error("now() patch did not apply")
 await send(contract + `\n(create-table free.p2p-escrow-v11.config)(create-table free.p2p-escrow-v11.offers)(create-table free.p2p-escrow-v11.trades)(create-table free.p2p-escrow-v11.reputation)(free.p2p-escrow-v11.init-config "${ARBITER}" "${FEE}")`, { "gov-keyset": ks }, gov);
 const fund = async (k, amt) => send(`(coin.coinbase "${k.account}" (read-keyset "ks") ${amt})`, { ks: { keys: [k.publicKey], pred: "keys-all" } });
 for (const [who, k] of Object.entries(keys)) if (k.account) await fund(k, who === "seller" ? "5000.5" : "50.0");
-console.log(`bootstrapped v11 on chain ${CHAIN} at`, SRV, "arbiter", ARBITER, "gov", gov.account);
+// the platform's release agent (it pays its own gas for release, so it is funded above)
+await send(`(free.p2p-escrow-v11.set-agent "${keys.agent.account}")`, {}, gov);
+console.log(`bootstrapped v11 on chain ${CHAIN} at`, SRV, "arbiter", ARBITER, "gov", gov.account, "agent", keys.agent.account);
 console.log(await send('(free.p2p-escrow-v11.get-config)'));

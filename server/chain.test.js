@@ -25,7 +25,8 @@ const trades = {
   "trade-2": { offer: "pool-2", seller: S, buyer: B, amount: 20, price: 0.012, currency: "USDC", token: "", "pay-amount": 0.24, fee: 0, "pay-window": 3600, agent: "", state: "PAID", "funded-at": time("2026-10-15T11:00:00Z"), "paid-at": time("2026-10-15T11:20:00Z"), "closed-at": EPOCH },
   "trade-3": { offer: "pool-closed", seller: S, buyer: B, amount: 5, price: 0.5, currency: "kb-USDC", token: "n_x.kb-usdc", "pay-amount": 2.5, fee: 0, "pay-window": 900, agent: ARB, state: "COMPLETED", "funded-at": time("2026-10-14T12:00:00Z"), "paid-at": time("2026-10-14T12:00:00Z"), "closed-at": time("2026-10-14T12:00:00Z") },
 };
-const config = { arbiter: ARB, "t-release": { int: 1800 }, "fee-bps": { int: 0 }, "fee-account": ARB, paused: false };
+const AGENT = "k:" + "9".repeat(64);
+const config = { arbiter: ARB, "t-release": { int: 1800 }, "fee-bps": { int: 0 }, "fee-account": ARB, paused: false, agent: AGENT };
 // chain 2: the same contract with its own tables. "pool-1" and "trade-1" exist on both chains on purpose.
 const KB_ETH = "n_e595727b657fbbb3b8e362a05a7bb8d12865c1ff.kb-ETH";
 const offers2 = {
@@ -118,7 +119,7 @@ test("fetchChain: open pools, every trade, the config, and the closed pools that
   assert.ok(firstNodeDown);
   assert.deepEqual(c.pools.map((p) => [p.poolId, p.chain, p.state]), [["pool-1", "1", "OPEN"], ["pool-2", "1", "OPEN"], ["pool-closed", "1", "CLOSED"], ["2:pool-1", "2", "OPEN"]]);
   assert.deepEqual(c.trades.map((t) => t.tradeId), ["trade-1", "trade-2", "trade-3", "2:trade-1"]);
-  assert.deepEqual(c.config, { arbiter: ARB, tRelease: 1800, feeBps: 0, feeAccount: ARB, paused: false });
+  assert.deepEqual(c.config, { arbiter: ARB, tRelease: 1800, feeBps: 0, feeAccount: ARB, paused: false, agent: AGENT });
   assert.deepEqual([c.configs["1"].tRelease, c.configs["2"].tRelease, configFor(c, "2").tRelease], [1800, 7200, 7200], "each chain has its own config row");
   assert.equal(calls.length, 7, "chain 1: pools, trades, config, the missing pools; chain 2: pools, trades, config");
   assert.match(calls[3], /\["pool-closed"\]/);

@@ -23,7 +23,8 @@
     "test:moderation": "node --test server/offerModeration.test.js",
     "test:feed": "node --test server/completedFeed.test.js",
     "test:chain": "node --test server/chain.test.js",
-    "test:pools": "node --test server/pools.test.js"
+    "test:pools": "node --test server/pools.test.js",
+    "test:auto-release": "node --test server/autoRelease.test.js"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

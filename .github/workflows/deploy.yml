@@ -63,6 +63,8 @@ jobs:
         run: npm run test:moderation
       - name: Run completed-trade feed tests
         run: npm run test:feed
+      - name: Run auto-release tests
+        run: npm run test:auto-release
   deploy:
     name: deploy
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

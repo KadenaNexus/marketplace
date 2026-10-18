@@ -64,7 +64,7 @@ export function toTrade(id, t = {}, chain = "1") {
   };
 }
 export function toConfig(c = {}) {
-  return { arbiter: String(c.arbiter ?? ""), tRelease: pactNumber(c["t-release"]) || 3600, feeBps: pactNumber(c["fee-bps"]), feeAccount: String(c["fee-account"] ?? ""), paused: c.paused === true };
+  return { arbiter: String(c.arbiter ?? ""), tRelease: pactNumber(c["t-release"]) || 3600, feeBps: pactNumber(c["fee-bps"]), feeAccount: String(c["fee-account"] ?? ""), paused: c.paused === true, agent: String(c.agent ?? "") };
 }
 
 /* ---------------- /local with node failover ---------------- */

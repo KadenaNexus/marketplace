@@ -434,3 +434,47 @@ CREATE TABLE IF NOT EXISTS pool_details (
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Auto-release (server/autoRelease.js): USDT/USDC trades whose offer chose the platform's release agent. The buyer
+-- is asked for the trade's pay-amount plus a small extra of 1-999 micro-units (`amount_offset`), so each payment to
+-- one receiving address can be told apart; when that exact transfer arrives, the agent calls `release` on chain.
+-- One row per trade; the receiving addresses are a snapshot taken when the row is made (auto_release_watch), so a
+-- later edit of the pool or payout details never changes where the agent looks. Amounts are in base units (6 decimals).
+CREATE TABLE IF NOT EXISTS auto_release (
+    trade_ref TEXT PRIMARY KEY,
+    chain TEXT NOT NULL,
+    pool_ref TEXT NOT NULL,
+    agent TEXT NOT NULL,
+    currency TEXT NOT NULL,
+    pay_units TEXT NOT NULL,
+    amount_offset INTEGER NOT NULL CHECK (amount_offset BETWEEN 1 AND 999),
+    expected_units TEXT NOT NULL,
+    funded_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    deadline TIMESTAMP WITH TIME ZONE NOT NULL,
+    status TEXT NOT NULL DEFAULT 'watching' CHECK (status IN ('watching', 'matched', 'releasing', 'released', 'manual', 'expired')),
+    matched_tx TEXT UNIQUE,
+    matched_network TEXT,
+    matched_at TIMESTAMP WITH TIME ZONE,
+    release_request_key TEXT,
+    release_expires_at TIMESTAMP WITH TIME ZONE,
+    release_attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_auto_release_status ON auto_release(status);
+-- The receiving address per network of an auto-release trade (snapshot). `address_key` is the address as compared
+-- (lowercase for Ethereum). While `open`, no two trades paying one address on one network share an offset or an
+-- expected amount, so one transfer can only ever fit one trade.
+CREATE TABLE IF NOT EXISTS auto_release_watch (
+    trade_ref TEXT NOT NULL REFERENCES auto_release(trade_ref) ON DELETE CASCADE,
+    network TEXT NOT NULL,
+    address TEXT NOT NULL,
+    address_key TEXT NOT NULL,
+    amount_offset INTEGER NOT NULL,
+    expected_units TEXT NOT NULL,
+    open BOOLEAN NOT NULL DEFAULT true,
+    PRIMARY KEY (trade_ref, network)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_auto_release_watch_offset ON auto_release_watch(network, address_key, amount_offset) WHERE open;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_auto_release_watch_amount ON auto_release_watch(network, address_key, expected_units) WHERE open;

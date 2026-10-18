@@ -154,3 +154,31 @@ Authenticated calls use the usual `wallet, publicKey, signedCmd` (body for PUT/P
 - Trade view: states above; buttons by role: buyer → Mark as paid / Cancel / Dispute; seller → Release /
   Refund (after window) / Dispute (after PAID); arbiter → Resolve with a split (admin board).
 - Countdown overlay, notifications, chat, proofs, emails, trade feed: unchanged, through `tradeToEscrow`.
+
+## Auto-release (USDT/USDC)
+
+The contract's config names one release agent (`set-agent`, governance); an offer's `agent` is that account or "",
+and its trades snapshot it at take. `server/autoRelease.js` runs that agent (off unless `AUTO_RELEASE_SECRET` is set;
+env in `.env.example`).
+
+- Amount: the buyer sends `pay-amount` plus 1–999 micro-units (0.533 → 0.533017). The offset and the resulting amount
+  are unique among open auto trades paying the same address on the same network (unique indexes on
+  `auto_release_watch`), so one transfer can only fit one trade.
+- Where: the receiving address per network is a snapshot taken when the trade's row is made (SELL pool:
+  `pool_details`; BUY pool: the taker's `trade_payouts`). A later edit never moves where the agent looks; it stops
+  watching that network instead (and the trade goes manual if none is left).
+- Match: the official token contract (USDT TRC20 `TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t`, USDT ERC20 `0xdAC1…1ec7`,
+  USDC ERC20 `0xA0b8…eB48`), recipient = the snapshot address, value = the expected base units exactly, stamped from
+  funded-at − 2 min to the deadline + 15 min (pay window while FUNDED, release window after mark-paid), Tron confirmed
+  / Ethereum ≥ 12 confirmations, and a tx hash no other row used. Anything else: nothing happens, manual flow.
+- Release: re-read the trade on chain (FUNDED or PAID, its agent = ours), sign `release` as the agent
+  (`coin.GAS` + `ACCOUNT_AUTH agent`, agent pays gas), record the request key before `/send`, poll; never send again
+  while that request can still land (its TTL), at most 5 attempts.
+- Routes: `GET /api/v11/auto-release` → `{ enabled, agent, networks }` (public); `GET /api/v11/trades/:ref/auto`
+  (the two sides and the arbiter) → `{ enabled, amount, currency, networks: [{ id, address }], notWatched, status,
+  matchedTx, matchedNetwork, releaseRequestKey }`, the row made on first request if the trade qualifies (the watcher
+  also makes rows for open trades nobody opened).
+- UI: the "Auto-release when the payment arrives" switch (new offer, Manage) sets `agent`; an "Auto-release" chip on
+  pool cards and a line in the take sheet; in the trade, the payer sees "Send exactly 0.533017 USDT" with the live
+  status, the KDA holder what the agent waits for and the matched tx. All hidden when the chain names no agent or the
+  server's agent differs.
