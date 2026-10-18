@@ -7,12 +7,12 @@ The same contract goes on **chain 1** and **chain 2** of Kadena mainnet as `free
 
 You deploy it from Chainweaver with the same two wallets that govern v10. It takes two transactions, one per chain, and each costs well under 0.001 KDA in gas.
 
-## Checked against the live chain on 2026-10-18 (simulation, nothing sent)
+## Checked against the live chain on 2026-10-18 (simulation, nothing sent; re-run after the release-agent rule)
 
 | | Chain 1 | Chain 2 |
 |---|---|---|
 | Name `free.p2p-escrow-v11` free | yes | yes |
-| Deploy + tables + config in one transaction | **Write succeeded**, 45,201 gas | **Write succeeded**, 45,223 gas |
+| Deploy + tables + config in one transaction | **Write succeeded**, 46,171 gas | **Write succeeded**, 46,192 gas |
 | Gas payer `k:18368d2e…004e` has KDA | yes (71.8 KDA) | **no account yet**, so do step 1 first |
 | Arbiter / fee account exists | yes | yes |
 
@@ -49,7 +49,17 @@ In Chainweaver, send **1 KDA** from `k:18368d2e…004e` on **chain 1** to the **
 
 Repeat step 2 with **Chain 2**. Everything else is the same.
 
-## Step 4: send me the two request keys
+## Step 4: set the release agent (chain 1, once the agent key exists)
+
+Auto-release for USDT/USDC needs the platform's release agent named in the contract. Only governance can do this, and offers can name no other agent; this is what stops someone naming an account of their own.
+
+In Chainweaver, run this on **chain 1**, signed by **both** governance keys, with gas payer `k:18368d2e…004e` and gas limit 5000. Use the agent account I give you (public, starts with `k:`):
+
+    (free.p2p-escrow-v11.set-agent "k:<agent account>")
+
+Chain 2 has only instant token pools, so it needs no agent. You can turn auto-release off at any time with `(free.p2p-escrow-v11.set-agent "")`; trades that are already open keep the agent they started with.
+
+## Step 5: send me the request keys
 
 I will then:
 - check on both chains that the module, tables and config are exactly as above;

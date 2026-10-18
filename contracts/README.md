@@ -17,7 +17,7 @@
 | Steps for a sell offer | accept → deposit (1 h) → pay → mark paid → release | take (already funded) → pay → release (agent or seller) |
 | Instant settlement | no | yes, any Kadena token (kb-USDC, kb-ETH, FLUX, BRO…) via `take-and-settle` |
 | Payment window | fixed 4 h | per offer, 15 min to 24 h |
-| Who can release | seller, arbiter | seller, the offer's agent; arbiter only in a dispute (with a split) |
+| Who can release | seller, arbiter | seller, or the platform's release agent if the offer chose it (governance sets that one account with `set-agent`; offers can name no other); arbiter only in a dispute (with a split) |
 | Buyer cancel | no | yes, before paying |
 | Fee | none | basis points, hard cap 1%, **0 at launch**; per-trade snapshot |
 | Pause | no | yes; never blocks releases, refunds or withdrawals |

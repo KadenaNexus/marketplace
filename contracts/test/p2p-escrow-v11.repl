@@ -131,6 +131,14 @@
 ;; ---- Agent release: an offer names an agent; the agent can release but nothing else
 (begin-tx "agent")
 (env-sigs [{ "key": tst.KA, "caps": [(free.p2p-escrow-v11.ACCOUNT_AUTH tst.ALICE)] }])
+(expect-failure "no platform agent yet: an offer cannot name one" "platform's release agent" (free.p2p-escrow-v11.update-offer "o1" 50.0 500.0 0.0105 1800 free.p2p-escrow-v11.EPOCH tst.AGENT))
+(expect-failure "only governance sets the agent" "Keyset failure" (free.p2p-escrow-v11.set-agent tst.AGENT))
+(env-sigs [{ "key": "0000000000000000000000000000000000000000000000000000000000000001", "caps": [] }])
+(expect-failure "agent must not be the arbiter" "cannot be the arbiter" (free.p2p-escrow-v11.set-agent (free.p2p-escrow-v11.get-arbiter)))
+(free.p2p-escrow-v11.set-agent tst.AGENT)
+(expect "platform agent set" tst.AGENT (free.p2p-escrow-v11.get-agent))
+(env-sigs [{ "key": tst.KA, "caps": [(free.p2p-escrow-v11.ACCOUNT_AUTH tst.ALICE)] }])
+(expect-failure "an offer cannot name its own account as agent" "platform's release agent" (free.p2p-escrow-v11.update-offer "o1" 50.0 500.0 0.0105 1800 free.p2p-escrow-v11.EPOCH tst.CAROL))
 (free.p2p-escrow-v11.update-offer "o1" 50.0 500.0 0.0105 1800 free.p2p-escrow-v11.EPOCH tst.AGENT)
 (expect "price updated" 0.0105 (at "price" (free.p2p-escrow-v11.get-offer "o1")))
 (env-sigs [{ "key": tst.KB, "caps": [(free.p2p-escrow-v11.ACCOUNT_AUTH tst.BOB)] }])
@@ -142,6 +150,18 @@
 (free.p2p-escrow-v11.release "t4")
 (expect "agent released to bob" "COMPLETED" (at "state" (free.p2p-escrow-v11.get-trade "t4")))
 (expect "bob balance" 1300.0 (tst.bal tst.BOB))
+(commit-tx)
+
+;; ---- The attack the platform-agent rule closes: a BUY offer's creator (the payer) names an account of their
+;; own as agent, a seller takes, and that "agent" releases the seller's KDA to the creator without any payment.
+(begin-tx "agent-attack")
+(env-sigs [{ "key": tst.KC, "caps": [(free.p2p-escrow-v11.ACCOUNT_AUTH tst.CAROL)] }])
+(expect-failure "BUY offer cannot name its own agent" "platform's release agent"
+  (free.p2p-escrow-v11.create-offer "ob-attack" tst.CAROL "BUY" 100.0 10.0 100.0 0.01 "USDT" "" 1800 free.p2p-escrow-v11.EPOCH tst.BOB))
+(env-sigs [{ "key": tst.KE, "caps": [(free.p2p-escrow-v11.ACCOUNT_AUTH tst.AGENT)] }])
+(expect-failure "the release agent cannot post offers" "release agent cannot trade"
+  (free.p2p-escrow-v11.create-offer "o-agent" tst.AGENT "BUY" 100.0 10.0 100.0 0.01 "USDT" "" 1800 free.p2p-escrow-v11.EPOCH ""))
+(expect-failure "the release agent cannot take" "release agent cannot trade" (free.p2p-escrow-v11.take-offer "t-agent" "o1" tst.AGENT 50.0))
 (commit-tx)
 
 ;; ---- Disputes: buyer disputes, arbiter splits 60/40
