@@ -33,7 +33,7 @@ APP_DIR=$APP_HOME/apps/marketplace-advanced
 as_app() { sudo -u "$APP_USER" -H bash -lc "$1"; }
 
 say "Checks"
-for c in nginx certbot psql curl git openssl ss visudo; do command -v "$c" >/dev/null || die "$c is not installed."; done
+for c in nginx certbot psql curl git openssl ss visudo ssh-keygen; do command -v "$c" >/dev/null || die "$c is not installed."; done
 as_app "command -v node >/dev/null && command -v npm >/dev/null && command -v pm2 >/dev/null" || die "node, npm or pm2 is missing for $APP_USER."
 id deployer >/dev/null 2>&1 || die "the deployer account (used by GitHub Actions) does not exist."
 dns=$(getent ahostsv4 "$DOMAIN" | awk 'NR==1{print $1}' || true)
@@ -138,7 +138,7 @@ else
 fi
 as_app "pm2 save --force >/dev/null"
 for _ in $(seq 1 20); do
-  code=$(curl -s -o /dev/null -m 5 -w '%{http_code}' "http://127.0.0.1:$API_PORT/api/profiles" || true)
+  code=$(curl --noproxy '*' -s -o /dev/null -m 5 -w '%{http_code}' "http://127.0.0.1:$API_PORT/api/profiles" || true)
   [ "$code" != 000 ] && [ "$code" -lt 500 ] && break
   sleep 2
 done

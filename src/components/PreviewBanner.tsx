@@ -10,7 +10,7 @@ export function PreviewBanner() {
   return (
     <div
       dir={ar ? "rtl" : "ltr"}
-      className="sticky top-0 z-[60] bg-amber-400 px-3 py-1.5 text-center text-xs font-medium text-black"
+      className="relative z-[60] bg-amber-400 px-3 py-1.5 text-center text-xs font-medium text-black"
       role="note"
     >
       {ar

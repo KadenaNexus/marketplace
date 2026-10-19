@@ -29,7 +29,7 @@ as_app() { sudo -u "$APP_USER" -H bash -lc "cd '$APP_DIR' && $1"; }
 api_ok() {
   local code
   for _ in $(seq 1 20); do
-    code=$(curl -s -o /dev/null -m 5 -w '%{http_code}' "http://127.0.0.1:$API_PORT/api/profiles" || true)
+    code=$(curl --noproxy '*' -s -o /dev/null -m 5 -w '%{http_code}' "http://127.0.0.1:$API_PORT/api/profiles" || true)
     if [ "$code" != 000 ] && [ "$code" -lt 500 ]; then return 0; fi
     sleep 2
   done
@@ -38,7 +38,7 @@ api_ok() {
 }
 site_ok() {
   local code
-  code=$(curl -s -o /dev/null -m 10 -w '%{http_code}' --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/" || true)
+  code=$(curl --noproxy '*' -s -o /dev/null -m 10 -w '%{http_code}' --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/" || true)
   [ "$code" = 200 ] || { echo "https://$DOMAIN/ answered HTTP $code on this server."; return 1; }
 }
 pm2_online() { as_app "pm2 jlist" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const p=JSON.parse(s.slice(s.indexOf("["))).find(x=>x.name===process.argv[1]);process.exit(p&&p.pm2_env.status==="online"?0:1)})' "$PM2_NAME"; }
