@@ -1,5 +1,9 @@
 # Deploying escrow v11 (chains 1 and 2)
 
+**Done on 2026-10-19.** Chain 1: `YTs6LIPeRZnB5GVmnR0Z_19Ii4XeKGLIFkyR75QSxSc`; chain 2: `IXEJiZjNzWxMH9n9H1pk-IT5MptudEKyeHiPYdSMjjQ`. Checked on chain; see `deployed/p2p-escrow-v11.pact`. Still to do: `set-agent` on chain 1 (USDT/USDC pools live there) once the server's release agent exists (docs/AUTO-RELEASE-SETUP.md).
+
+Tip from the deployment: type the gas price and gas limit, then press Tab, and check that Max Transaction Fee shows 0.0006 before Preview.
+
 The same contract goes on **chain 1** and **chain 2** of Kadena mainnet as `free.p2p-escrow-v11`.
 
 - **Chain 1:** USDT, USDC, BRO and FLUX pools.

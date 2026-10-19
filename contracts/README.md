@@ -2,9 +2,10 @@
 
 | Path | What it is |
 |---|---|
-| `p2p-escrow-v11.pact` | **The advanced Marketplace escrow (v11).** Pool offers with a min/max per trade, trades start funded, instant Kadena-token settlement, USDT/USDC flows with agent release, fee, pause, events. Deployed on **chains 1 and 2** (same code, same governance; not deployed yet). |
+| `p2p-escrow-v11.pact` | **The advanced Marketplace escrow (v11).** Pool offers with a min/max per trade, trades start funded, instant Kadena-token settlement, USDT/USDC flows with agent release, fee, pause, events. Deployed on **chains 1 and 2** (same code, same governance) on 2026-10-19; see `deployed/p2p-escrow-v11.pact`. |
 | `test/p2p-escrow-v11.repl` | Tests for v11 (Pact 5.4). Run `contracts/test/run.sh`. |
 | `test/vendor/` | `coin`, `fungible-v2`, `fungible-xchain-v1` as on mainnet, for the tests only. |
+| `deployed/p2p-escrow-v11.pact` | Copy of what is live as `free.p2p-escrow-v11` on mainnet01, chains 1 and 2, with both request keys. Verified identical on chain on 2026-10-19. |
 | `deployed/p2p-escrow-v10.pact` | Copy of what is live as `free.p2p-escrow-v10` on mainnet01, chain 1. Verified identical to the on-chain module on 2026-10-15 (module explorer vs this file). Reference only; v10 keeps running for its open trades and history. |
 | `../p2p-escrow.pact` | The v10 working copy inherited from the public marketplace repo. Kept until the site is fully on v11. |
 | `drafts/` | Old drafts. Not used. |
