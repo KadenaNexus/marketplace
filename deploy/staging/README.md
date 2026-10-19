@@ -25,8 +25,10 @@ Nothing here changes the live site, its database, its PM2 processes or its nginx
 
 **2. Server (whoever has sudo on the server; about 10 minutes).** On the server:
 
-    git clone https://github.com/KadenaNexus/marketplace-advanced.git /tmp/ma-setup   # or copy deploy/staging/ there
-    sudo bash /tmp/ma-setup/deploy/staging/setup.sh <pm2-account> <path-to-the-live-marketplace-.env>
+    # from a computer that has this repository (it is private, so the server can't fetch it yet):
+    scp -r deploy/staging <you>@89.167.14.58:/tmp/ma-setup
+    # then on the server:
+    sudo bash /tmp/ma-setup/setup.sh <pm2-account> <path-to-the-live-marketplace-.env>
 
 - `<pm2-account>`: the Linux account that runs the existing PM2 apps.
 - The second argument is optional. It copies only the email (Resend), web-push and WalletConnect lines from the live
