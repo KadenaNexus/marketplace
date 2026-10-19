@@ -2577,7 +2577,8 @@ async function start() {
     process.exit(1);
   }
 
-  httpServer.listen(PORT, () => {
+  // HOST=127.0.0.1 keeps the API reachable only through nginx (the preview site uses it); unset = all interfaces, as before.
+  httpServer.listen(PORT, process.env.HOST || undefined, () => {
     console.log(`Profile API listening on http://localhost:${PORT}`);
     startAlertWatcher(() => pool);
     startNotificationWatcher(() => pool);

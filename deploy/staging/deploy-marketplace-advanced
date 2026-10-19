@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# deploy-marketplace-advanced – deploys origin/main of KadenaNexus/marketplace-advanced to
+# https://marketplace-advanced.kadena.ws (the v11 preview).
+#
+# Installed by setup.sh as /usr/local/bin/deploy-marketplace-advanced (root-owned) and run by GitHub Actions
+# as `sudo -n deploy-marketplace-advanced` (the deployer user may run only this). It takes no arguments.
+#
+# What it does: fetch origin/main, npm ci, build, publish dist/ to the web root, restart only
+# kadena-advanced-server, check health, and put back the previous build if anything fails.
+# It never runs database migrations, contract or key commands, and never touches marketplace.kadena.ws.
+set -euo pipefail
+umask 022
+
+LABEL="Marketplace Advanced"
+CONF=/etc/marketplace-advanced.conf
+[ "$(id -u)" = 0 ] || { echo "Run as root (sudo)."; exit 1; }
+[ "$#" = 0 ] || { echo "This script takes no arguments."; exit 1; }
+[ -f "$CONF" ] && [ "$(stat -c %u "$CONF")" = 0 ] || { echo "$CONF is missing or not owned by root."; exit 1; }
+# shellcheck disable=SC1090
+. "$CONF"
+: "${APP_USER:?}" "${APP_DIR:?}" "${WEB_ROOT:?}" "${PM2_NAME:?}" "${API_PORT:?}" "${DOMAIN:?}"
+
+exec 9>/run/lock/deploy-marketplace-advanced.lock
+flock -n 9 || { echo "Another $LABEL deployment is running."; exit 1; }
+
+# Fixed commands only; nothing from outside is passed in.
+as_app() { sudo -u "$APP_USER" -H bash -lc "cd '$APP_DIR' && $1"; }
+
+api_ok() {
+  local code
+  for _ in $(seq 1 20); do
+    code=$(curl -s -o /dev/null -m 5 -w '%{http_code}' "http://127.0.0.1:$API_PORT/api/profiles" || true)
+    if [ "$code" != 000 ] && [ "$code" -lt 500 ]; then return 0; fi
+    sleep 2
+  done
+  echo "API on port $API_PORT did not answer (last HTTP $code)."
+  return 1
+}
+site_ok() {
+  local code
+  code=$(curl -s -o /dev/null -m 10 -w '%{http_code}' --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/" || true)
+  [ "$code" = 200 ] || { echo "https://$DOMAIN/ answered HTTP $code on this server."; return 1; }
+}
+pm2_online() { as_app "pm2 jlist" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const p=JSON.parse(s.slice(s.indexOf("["))).find(x=>x.name===process.argv[1]);process.exit(p&&p.pm2_env.status==="online"?0:1)})' "$PM2_NAME"; }
+
+prev=$(as_app "git rev-parse HEAD")
+as_app "git fetch --quiet origin main"
+target=$(as_app "git rev-parse origin/main")
+short=${target:0:7}
+
+if [ "$prev" = "$target" ] && [ -f "$WEB_ROOT/index.html" ] && pm2_online && api_ok && site_ok; then
+  echo "$LABEL is already at origin/main ($short)."
+  exit 0
+fi
+
+rollback() {
+  echo "Deployment of $short failed; restoring ${prev:0:7}."
+  if [ "$swapped" = 1 ] && [ -d "$WEB_ROOT.prev" ]; then rm -rf "$WEB_ROOT.failed"; mv "$WEB_ROOT" "$WEB_ROOT.failed" 2>/dev/null || true; mv "$WEB_ROOT.prev" "$WEB_ROOT"; fi
+  as_app "git -c advice.detachedHead=false checkout --quiet --force $prev && npm ci --no-audit --no-fund --loglevel=error" || true
+  as_app "pm2 restart $PM2_NAME --update-env" >/dev/null || true
+  exit 1
+}
+
+swapped=0
+echo "Deploying $LABEL ${prev:0:7} -> $short"
+as_app "git -c advice.detachedHead=false checkout --quiet --force $target" || rollback
+as_app "npm ci --no-audit --no-fund --loglevel=error" || rollback
+as_app "npm run build --silent" || rollback
+[ -f "$APP_DIR/dist/index.html" ] || { echo "The build produced no dist/index.html."; rollback; }
+
+# Publish the new build next to the old one, then swap, so visitors never see a half-copied site.
+rm -rf "$WEB_ROOT.new"
+cp -a "$APP_DIR/dist" "$WEB_ROOT.new"
+chown -R root:root "$WEB_ROOT.new"
+chmod -R a+rX,go-w "$WEB_ROOT.new"
+rm -rf "$WEB_ROOT.prev"
+[ -d "$WEB_ROOT" ] && mv "$WEB_ROOT" "$WEB_ROOT.prev"
+mv "$WEB_ROOT.new" "$WEB_ROOT"
+swapped=1
+
+as_app "pm2 restart $PM2_NAME --update-env" >/dev/null || rollback
+api_ok || rollback
+site_ok || rollback
+pm2_online || { echo "$PM2_NAME is not online after the restart."; rollback; }
+as_app "pm2 save --force" >/dev/null || true
+
+echo "$LABEL deployment succeeded at $short."
