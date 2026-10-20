@@ -24,6 +24,7 @@ import { fetchChain, readTradeWithPool } from "./chain.js";
 import { createChainCache } from "./trust.js";
 import { registerProofRoutes } from "./proofs.js";
 import { createDisputeAuthz } from "./authz.js";
+import { ownedFilename, mayUseAvatar, shouldDeleteOld, AVATAR_URL_PREFIX } from "./avatars.js";
 import { initSessionSecret, isSessionToken, issueSessionToken, verifySessionToken } from "./session.js";
 import express from "express";
 import rateLimit from "express-rate-limit";
@@ -766,7 +767,10 @@ app.post("/api/profiles/upload-avatar", (req, res, next) => {
       try { fs.unlinkSync(req.file.path); } catch (e) { /* ignore */ }
       return sendAuthError(res, auth);
     }
-    const url = "/uploads/profiles/" + req.file.filename;
+    // the file is named after its uploader (server/avatars.js): only that wallet can show or delete it
+    const filename = ownedFilename(auth.wallet);
+    fs.renameSync(req.file.path, path.join(UPLOADS_DIR, filename));
+    const url = AVATAR_URL_PREFIX + filename;
     console.log(`Avatar uploaded: ${url} for wallet ${auth.wallet}`);
     return res.json({ url });
   } catch (err) {
@@ -834,9 +838,20 @@ app.put("/api/profiles", validateBody(profilePutBodySchema), async (req, res) =>
     // Check for existing profile to handle old avatar deletion
     const existingResult = await pool.query("SELECT avatar FROM profiles WHERE wallet = $1", [wallet]);
     const existing = existingResult.rows[0];
-    
-    if (existing?.avatar && existing.avatar.startsWith("/uploads/profiles/") && existing.avatar !== av) {
-      const oldPath = path.join(UPLOADS_DIR, path.basename(existing.avatar));
+    const current = existing?.avatar || null;
+
+    // an uploaded picture can only be shown by the wallet that uploaded it (server/avatars.js)
+    if (!mayUseAvatar(av, current, wallet)) {
+      return res.status(403).json({ error: "That picture was not uploaded by this wallet" });
+    }
+    // and only that wallet's own pictures are deleted when it stops showing them; a picture from before uploads
+    // were tagged with their owner goes only when no other profile still shows it
+    let stillShownElsewhere = false;
+    if (current && current !== av) {
+      stillShownElsewhere = (await pool.query("SELECT 1 FROM profiles WHERE avatar = $1 AND wallet <> $2 LIMIT 1", [current, wallet])).rows.length > 0;
+    }
+    if (shouldDeleteOld(current, av, wallet, stillShownElsewhere)) {
+      const oldPath = path.join(UPLOADS_DIR, path.basename(current));
       try {
         fs.unlinkSync(oldPath);
       } catch (e) {

@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import pg from "pg";
 import express from "express";
 import { createDisputeAuthz } from "./authz.js";
+import { ownedFilename, ownerTag, uploadedBy, mayUseAvatar, shouldDeleteOld } from "./avatars.js";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL || "postgresql://postgres:postgres@localhost:5432/kadena_nexus" });
 const SELLER = "k:" + "a".repeat(64), BUYER = "k:" + "b".repeat(64), OTHER = "k:" + "c".repeat(64), ARB = "k:" + "d".repeat(64);
@@ -99,4 +100,35 @@ test("arbiter actions: the arbiter of that trade only, with a fresh signature", 
   escrows.set("authztest-6", { creator: SELLER, buyer: BUYER, arbiter: OTHER, side: "SELL", state: "DISPUTED" });
   assert.equal((await post("/arbiter/authztest-6", { wallet: ARB })).status, 403, "another trade's arbiter");
   assert.equal((await post("/arbiter/authztest-6", { wallet: OTHER })).status, 200);
+});
+
+test("profile pictures: a wallet can show and delete only the pictures it uploaded", () => {
+  const mine = `/uploads/profiles/${ownedFilename(SELLER)}`, theirs = `/uploads/profiles/${ownedFilename(BUYER)}`;
+  const legacy = "/uploads/profiles/0b3f6d2a-1c4e-4f7a-9b8d-2e5f6a7b8c9d.jpg";
+  assert.match(mine, new RegExp(`^/uploads/profiles/${ownerTag(SELLER)}-[0-9a-f-]{36}\\.jpg$`));
+  assert.equal(ownerTag(SELLER).length, 16);
+  assert.notEqual(ownerTag(SELLER), ownerTag(BUYER));
+  assert.ok(!ownerTag(SELLER).includes(SELLER.slice(2, 10)), "the tag is a hash, not the wallet");
+  assert.equal(uploadedBy(mine, SELLER), true);
+  assert.equal(uploadedBy(mine, BUYER), false);
+  assert.equal(uploadedBy(legacy, SELLER), false);
+  assert.equal(uploadedBy("https://example.com/a.png", SELLER), false);
+  // what a profile may point at
+  assert.equal(mayUseAvatar(mine, null, SELLER), true, "own upload");
+  assert.equal(mayUseAvatar(theirs, null, SELLER), false, "someone else's upload");
+  assert.equal(mayUseAvatar(theirs, theirs, SELLER), true, "already showing it (from before owner tags): keep");
+  assert.equal(mayUseAvatar(legacy, legacy, SELLER), true);
+  assert.equal(mayUseAvatar(legacy, null, SELLER), false, "an untagged file nobody linked to this profile before");
+  assert.equal(mayUseAvatar("https://example.com/a.png", null, SELLER), true, "external pictures are just links");
+  assert.equal(mayUseAvatar(null, theirs, SELLER), true, "clearing is always allowed");
+  // what gets deleted from disk when the profile changes picture
+  assert.equal(shouldDeleteOld(mine, null, SELLER, false), true, "own old picture, cleared");
+  assert.equal(shouldDeleteOld(mine, "https://example.com/a.png", SELLER, false), true);
+  assert.equal(shouldDeleteOld(mine, mine, SELLER, false), false, "unchanged");
+  assert.equal(shouldDeleteOld(theirs, null, SELLER, false), false, "another wallet's picture is never deleted by this one");
+  assert.equal(shouldDeleteOld(theirs, null, SELLER, true), false);
+  assert.equal(shouldDeleteOld(legacy, null, SELLER, true), false, "an untagged picture another profile still shows stays");
+  assert.equal(shouldDeleteOld(legacy, null, SELLER, false), true, "an untagged picture nobody else shows goes");
+  assert.equal(shouldDeleteOld("https://example.com/a.png", null, SELLER, false), false);
+  assert.equal(shouldDeleteOld(null, mine, SELLER, false), false);
 });
