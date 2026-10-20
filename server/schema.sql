@@ -478,3 +478,6 @@ CREATE TABLE IF NOT EXISTS auto_release_watch (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_auto_release_watch_offset ON auto_release_watch(network, address_key, amount_offset) WHERE open;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_auto_release_watch_amount ON auto_release_watch(network, address_key, expected_units) WHERE open;
+-- all rows (open or closed) of one address: offsets used in the last 48 hours are not drawn again, and a payment
+-- that also fits a closed trade's window is left to the manual flow (server/autoRelease.js)
+CREATE INDEX IF NOT EXISTS idx_auto_release_watch_address ON auto_release_watch(network, address_key);

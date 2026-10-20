@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import pg from "pg";
 import express from "express";
 import { base64UrlDecodeArr, genKeyPair, hexToBin, verifySig } from "@kadena/cryptography-utils";
-import { AUTO_NETWORKS, autoReleaseConfig, createAutoRelease, registerAutoReleaseRoutes, transferMatches, addressKey } from "./autoRelease.js";
+import { AUTO_NETWORKS, autoReleaseConfig, createAutoRelease, registerAutoReleaseRoutes, transferMatches, addressKey, inWindow } from "./autoRelease.js";
 import { toPool, toTrade } from "./chain.js";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL || "postgresql://postgres:postgres@localhost:5432/kadena_nexus" });
@@ -404,4 +404,79 @@ test("a send every node rejects is tried again next round, at most a few times",
   const x = await row("arttest-r");
   assert.equal(x.status, "manual");
   assert.match(x.last_error, /Gave up/);
+});
+
+test("a closed trade's offset is not drawn again on that address for 48 hours; with none free the trade is manual", async () => {
+  await sellDetails({ "USDT:TRC20": TRON });
+  // trade A: funded at T0, no payment, the window and the grace pass: expired, its watch closed
+  trades.set("arttest-a", rawTrade());
+  NOW = T0 + 60e3; await auto.tick();
+  NOW = T0 + 1800e3 + 16 * 60e3; await auto.tick();
+  const a = await row("arttest-a");
+  assert.equal(a.status, "expired");
+  assert.equal((await pool.query("SELECT open FROM auto_release_watch WHERE trade_ref = 'arttest-a'")).rows[0].open, false);
+  // every other offset was used by a closed trade on this address in the last two days: only A's would be free, and it is not drawn
+  await pool.query(`INSERT INTO auto_release (trade_ref, chain, pool_ref, agent, currency, pay_units, amount_offset, expected_units, funded_at, deadline, status)
+    SELECT 'arttest-old-' || o, '1', 'arttest-pool', $1, 'USDT', '533000', o, (533000 + o)::text, $2, $3, 'expired' FROM generate_series(1, 999) AS o WHERE o <> $4`,
+    [AGENT, new Date(T0 - 20 * 3600e3), new Date(T0 - 19 * 3600e3), a.amount_offset]);
+  await pool.query(`INSERT INTO auto_release_watch (trade_ref, network, address, address_key, amount_offset, expected_units, open)
+    SELECT 'arttest-old-' || o, 'USDT:TRC20', $1, $1, o, (533000 + o)::text, false FROM generate_series(1, 999) AS o WHERE o <> $2`, [TRON, a.amount_offset]);
+  trades.set("arttest-b", rawTrade({ buyer: OTHER, "funded-at": { timep: iso(NOW) } }));
+  let r = await auto.ensureRow(toTrade("arttest-b", trades.get("arttest-b"), "1"), toPool("arttest-pool", pools.get("arttest-pool"), "1"), { tRelease: 3600 });
+  assert.equal(r.row.status, "manual", "no offset is free: the seller releases by hand");
+  assert.match(r.row.last_error, /release by hand/);
+  assert.equal((await getAuto("arttest-b", OTHER)).body.status, "manual");
+  // two days later A's old neighbours no longer count (A's own deadline is still recent): B2 gets any offset but A's
+  NOW = T0 + 45 * 3600e3;
+  await pool.query("UPDATE auto_release SET deadline = $1 WHERE trade_ref LIKE 'arttest-old-%'", [new Date(NOW - 49 * 3600e3)]);
+  trades.set("arttest-b2", rawTrade({ buyer: OTHER, "funded-at": { timep: iso(NOW) } }));
+  r = await auto.ensureRow(toTrade("arttest-b2", trades.get("arttest-b2"), "1"), toPool("arttest-pool", pools.get("arttest-pool"), "1"), { tRelease: 3600 });
+  assert.equal(r.row.status, "watching");
+  assert.notEqual(r.row.amount_offset, a.amount_offset, "A's offset is still out of use");
+  // and once A's deadline is more than 48 hours old its offset may come back (999 draws cannot all miss the one free offset)
+  await pool.query("DELETE FROM auto_release WHERE trade_ref LIKE 'arttest-old-%'");
+  await pool.query(`INSERT INTO auto_release (trade_ref, chain, pool_ref, agent, currency, pay_units, amount_offset, expected_units, funded_at, deadline, status)
+    SELECT 'arttest-old-' || o, '1', 'arttest-pool', $1, 'USDT', '533000', o, (533000 + o)::text, $2, $2, 'expired' FROM generate_series(1, 999) AS o WHERE o <> $3`, [AGENT, new Date(NOW), a.amount_offset]);
+  await pool.query(`INSERT INTO auto_release_watch (trade_ref, network, address, address_key, amount_offset, expected_units, open)
+    SELECT 'arttest-old-' || o, 'USDT:TRC20', $1, $1, o, (533000 + o)::text, false FROM generate_series(1, 999) AS o WHERE o <> $2`, [TRON, a.amount_offset]);
+  await pool.query("DELETE FROM auto_release WHERE trade_ref = 'arttest-b2'");
+  NOW = T0 + 1800e3 + 49 * 3600e3;
+  trades.set("arttest-b3", rawTrade({ buyer: OTHER, "funded-at": { timep: iso(NOW) } }));
+  r = await auto.ensureRow(toTrade("arttest-b3", trades.get("arttest-b3"), "1"), toPool("arttest-pool", pools.get("arttest-pool"), "1"), { tRelease: 3600 });
+  assert.deepEqual([r.row.status, r.row.amount_offset], ["watching", a.amount_offset]);
+});
+
+test("a payment that also fits a closed trade's window on the same address is ambiguous: nothing is released, the trade goes manual", async () => {
+  await sellDetails({ "USDT:TRC20": TRON });
+  // trade A expires without a payment (the seller has not refunded; the trade is still FUNDED on the chain)
+  trades.set("arttest-a", rawTrade());
+  NOW = T0 + 60e3; await auto.tick();
+  NOW = T0 + 46 * 60e3; await auto.tick();
+  const a = await row("arttest-a");
+  assert.equal(a.status, "expired");
+  // trade B on the same address, funded now, somehow holding A's amount (a row made before offsets were kept apart)
+  trades.set("arttest-b", rawTrade({ buyer: OTHER, "funded-at": { timep: iso(NOW) } }));
+  await auto.tick();
+  await pin("arttest-b", a.expected_units);
+  assert.equal(inWindow(a, T0 + 45 * 60e3), true, "A's grace still holds that minute");
+  // buyer A pays A's exact amount, late, at a time inside both windows
+  tron = [tronTx({ transaction_id: "tx-late-a", value: a.expected_units, block_timestamp: T0 + 45 * 60e3 })];
+  NOW = T0 + 47 * 60e3;
+  const r = await auto.tick();
+  assert.deepEqual(r.matched, [], "A's payment is not taken as B's");
+  assert.equal(sent.length, 0, "no release was signed");
+  const b = await row("arttest-b");
+  assert.deepEqual([b.status, b.matched_tx], ["manual", null]);
+  assert.match(b.last_error, /^Ambiguous payment: tx-late-a on USDT:TRC20 also fits arttest-a/);
+  assert.equal((await row("arttest-a")).status, "expired", "A stays as it was");
+  const v = await getAuto("arttest-b", OTHER);
+  assert.deepEqual([v.body.status, v.body.reason?.startsWith("Ambiguous payment")], ["manual", true]);
+  // the same amount on another address is not ambiguous
+  await sellDetails({ "USDT:TRC20": TRON2 }, "arttest-pool2");
+  pools.set("arttest-pool2", rawPool());
+  trades.set("arttest-c", rawTrade({ offer: "arttest-pool2", buyer: OTHER, "funded-at": { timep: iso(NOW) } }));
+  await auto.tick();
+  await pin("arttest-c", a.expected_units);
+  tron = [tronTx({ transaction_id: "tx-c", value: a.expected_units, to: TRON2, block_timestamp: NOW })];
+  assert.deepEqual((await auto.tick()).matched, ["arttest-c"]);
 });

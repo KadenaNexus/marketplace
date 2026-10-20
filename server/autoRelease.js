@@ -42,6 +42,7 @@ export const RELEASE_TTL = 600;               // seconds a release transaction c
 const FETCH_TIMEOUT_MS = 10000;
 const MAX_SEND_ATTEMPTS = 5;
 const OFFSET_TRIES = 25;
+export const OFFSET_REUSE_MS = 48 * 60 * 60 * 1000;   // an offset used by a trade whose deadline was within this long ago is not drawn again
 const ACTIVE = ["FUNDED", "PAID"];
 const CLOSED = ["COMPLETED", "REFUNDED", "CANCELLED", "SPLIT"];
 
@@ -100,10 +101,20 @@ export function tradeDeadline(trade, tRelease = 3600) {
   return Date.parse(trade.fundedAt) + trade.payWindow * 1000;
 }
 
+/** Is a transfer stamped at `timeMs` inside a row's window (funded_at − 2 min to deadline + 15 min)? */
+export function inWindow(row, timeMs) {
+  const t = Number(timeMs);
+  if (!Number.isFinite(t)) return false;
+  if (t < new Date(row.funded_at).getTime() - EARLY_MS) return false;
+  if (t > new Date(row.deadline).getTime() + GRACE_MS) return false;
+  return true;
+}
+
 /**
  * Does one incoming transfer pay one watched trade? Every condition must hold: the official token contract, the
  * snapshot address, exactly the expected base units, stamped from funded_at − 2 min to deadline + 15 min, and on
- * Ethereum at least 12 confirmations. (The tx hash being unused is checked by the caller and the DB.)
+ * Ethereum at least 12 confirmations. (The tx hash being unused, and the amount fitting no other trade's window
+ * on that address, are checked by the caller and the DB.)
  *   row: { funded_at, deadline }, watch: { network, address_key, expected_units }
  *   tr:  { network, txid, contract, to, value (string|bigint), timeMs, confirmations?, confirmed? }
  */
@@ -114,10 +125,7 @@ export function transferMatches(row, watch, tr) {
   let value;
   try { value = BigInt(String(tr.value)); } catch { return false; }
   if (value !== BigInt(watch.expected_units)) return false;
-  const t = Number(tr.timeMs);
-  if (!Number.isFinite(t)) return false;
-  if (t < new Date(row.funded_at).getTime() - EARLY_MS) return false;
-  if (t > new Date(row.deadline).getTime() + GRACE_MS) return false;
+  if (!inWindow(row, tr.timeMs)) return false;
   if (AUTO_NETWORKS[watch.network].kind === "erc20" && !(Number(tr.confirmations) >= ERC20_CONFIRMATIONS)) return false;
   if (AUTO_NETWORKS[watch.network].kind === "tron" && tr.confirmed === false) return false;
   return !!tr.txid;
@@ -303,8 +311,23 @@ export function createAutoRelease({
   }
 
   /**
+   * Offsets not to draw for a trade paying these addresses: every offset any trade (open or closed) on the same
+   * network and address used whose deadline was within the last 48 hours. A closed trade's late payment could
+   * otherwise be the exact amount a newer trade on the same address is waiting for.
+   */
+  async function recentOffsets(nets, addrs) {
+    const r = await db().query(
+      `SELECT DISTINCT w.amount_offset FROM auto_release_watch w JOIN auto_release a ON a.trade_ref = w.trade_ref
+        WHERE (w.network, w.address_key) IN (SELECT * FROM unnest($1::text[], $2::text[])) AND a.deadline > $3`,
+      [nets, nets.map((n) => addressKey(n, addrs[n])), new Date(now() - OFFSET_REUSE_MS)]);
+    return new Set(r.rows.map((x) => x.amount_offset));
+  }
+
+  /**
    * The trade's row, made now if the trade qualifies: a random offset unique among the open trades paying the same
-   * address on the same network (enforced by the unique indexes; a clash picks again). { row } or { reason }.
+   * address on the same network (enforced by the unique indexes; a clash picks again) and not used by any trade
+   * there in the last 48 hours. { row } or { reason }. When no offset is free the trade gets a `manual` row (the
+   * seller releases by hand) with the reason, logged once.
    */
   async function ensureRow(trade, pool, cfg) {
     const existing = await loadRow(trade.tradeId);
@@ -318,8 +341,20 @@ export function createAutoRelease({
     }
     const payUnits = toUnits6(trade.payAmount);
     const deadline = new Date(tradeDeadline(trade, cfg?.tRelease));
+    const taken = await recentOffsets(nets, addrs);
+    const free = [];
+    for (let o = 1; o <= 999; o++) if (!taken.has(o)) free.push(o);
+    if (!free.length) {
+      const reason = "No unused payment amount is free on this address right now: release by hand";
+      log.warn?.(`[auto-release] ${trade.tradeId}: every offset on ${nets.join(", ")} was used in the last 48 hours; manual`);
+      await db().query(
+        `INSERT INTO auto_release (trade_ref, chain, pool_ref, agent, currency, pay_units, amount_offset, expected_units, funded_at, deadline, status, last_error)
+         VALUES ($1, $2, $3, $4, $5, $6, 1, $6, $7, $8, 'manual', $9) ON CONFLICT (trade_ref) DO NOTHING`,
+        [trade.tradeId, trade.chain, trade.poolId, trade.agent, trade.currency, payUnits.toString(), new Date(trade.fundedAt), deadline, reason]);
+      return { row: await loadRow(trade.tradeId) };
+    }
     for (let i = 0; i < OFFSET_TRIES; i++) {
-      const offset = crypto.randomInt(1, 1000);
+      const offset = free[crypto.randomInt(0, free.length)];
       const expected = (payUnits + BigInt(offset)).toString();
       const client = await db().connect();
       try {
@@ -452,6 +487,20 @@ export function createAutoRelease({
         if (!hit) continue;
         const used = (await db().query("SELECT 1 FROM auto_release WHERE matched_tx = $1", [tr.txid])).rowCount > 0;
         if (used) continue;
+        // the same amount to the same address could also be a (late) payment for another trade, open or closed,
+        // whose window holds this transfer: nobody can tell which trade was paid, so neither is released by us
+        const others = (await db().query(
+          `SELECT a.trade_ref, a.funded_at, a.deadline FROM auto_release a JOIN auto_release_watch w ON w.trade_ref = a.trade_ref
+            WHERE w.network = $1 AND w.address_key = $2 AND w.expected_units = $3 AND a.trade_ref <> $4`,
+          [g.network, hit.w.address_key, hit.w.expected_units, hit.row.trade_ref])).rows.filter((o) => inWindow(o, tr.timeMs));
+        if (others.length) {
+          const msg = `Ambiguous payment: ${tr.txid} on ${g.network} also fits ${others.map((o) => o.trade_ref).join(", ")}`;
+          log.warn?.(`[auto-release] ${hit.row.trade_ref}: ${msg}; manual`);
+          await finish(hit.row.trade_ref, "manual", { last_error: msg.slice(0, 300) });
+          hit.row.status = "manual";
+          onChange(hit.row.trade_ref, "manual");
+          continue;
+        }
         try {
           const u = await db().query(
             "UPDATE auto_release SET status = 'matched', matched_tx = $2, matched_network = $3, matched_at = now(), updated_at = now() WHERE trade_ref = $1 AND status = 'watching'",
