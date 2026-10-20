@@ -8,10 +8,10 @@ import { useRefreshV11 } from "@/hooks/useV11";
 import { useAutoRelease } from "@/hooks/useAutoRelease";
 import { autoPoolNote } from "@/lib/autoReleaseApi";
 import { appChainShortfall, isInsufficientFunds } from "@/lib/kadena";
-import { buildTakeAndSettleTx, buildTakeTx, newTradeId, payAmountFor, tokenBalance, tokenPayFor, tokenPrecision, tradeVault } from "@/lib/v11";
-import { sendV11 } from "@/lib/v11ui";
+import { GAS_V11_SETTLE, GAS_V11_TAKE, buildTakeAndSettleTx, buildTakeTx, gasKda, newTradeId, payAmountFor, tokenBalance, tokenPayFor, tokenPrecision, tradeVault } from "@/lib/v11";
+import { exactPay, sendV11 } from "@/lib/v11ui";
 import { rememberTradeNetwork, type PoolListing } from "@/lib/poolsApi";
-import { chainLabel, isGiveawayPool, isInstant, kadenaToken, networkLabel, paymentNetwork, windowLabel } from "@/lib/markets";
+import { chainLabel, isGiveawayPool, isInstant, kadenaToken, missingReceivingAddress, networkLabel, paymentNetwork, windowLabel } from "@/lib/markets";
 import { NEW_TRADER_MAX_KDA, newTraderProblem } from "@/lib/trust";
 import { useMyCompletedTrades, useTermsGate } from "../Trust";
 import { TradeEmailGate, useNeedsTradeEmail } from "../TradeEmail";
@@ -75,7 +75,9 @@ export function TakeSheet({ pool: p, open, onOpenChange, profileMap = {}, onTake
     try { return tokenPayFor(n, p.price, precision ?? token?.precision ?? 12); } catch { return ""; }
   }, [p, valid, n, instant, precision, token?.precision]);
   const pay = !p || !valid ? 0 : instant ? Number(tokenPay || 0) : payAmountFor(n, p.price);
+  const noAddress = !!p && missingReceivingAddress(p);
   const problem = !p ? null
+    : noAddress ? "The seller has not added a receiving address yet"
     : !valid ? "Enter an amount"
     : n < minTake ? `At least ${kdaAmount(minTake)} KDA`
     : n > maxTake ? `At most ${kdaAmount(maxTake)} KDA${p.available < p.max ? " (what is left)" : ""}`
@@ -90,7 +92,8 @@ export function TakeSheet({ pool: p, open, onOpenChange, profileMap = {}, onTake
 
   const verb = !p ? "" : free ? "Claim" : instant ? "Swap now" : p.side === "SELL" ? "Buy" : "Sell";
   const buttonText = !p ? "" : free ? `Claim ${valid ? kdaAmount(n) : ""} KDA` : instant ? "Swap now" : `${verb} ${valid ? kdaAmount(n) : ""} KDA`;
-  const payText = !p ? "" : instant ? `${tokenText(tokenPay || "0")} ${p.currency}` : `${formatFiat(pay, "USD")} ${p.currency}`;
+  // the exact amount the buyer must send (what the contract records), never rounded for display
+  const payText = !p ? "" : instant ? `${tokenText(tokenPay || "0")} ${p.currency}` : `${exactPay(pay)} ${p.currency}`;
 
   async function submit() {
     if (!p || !account) return;
@@ -101,6 +104,11 @@ export function TakeSheet({ pool: p, open, onOpenChange, profileMap = {}, onTake
     const tradeId = newTradeId(p.chain); // a trade lives on its pool's chain
     try {
       let requestKey: string;
+      // Every take pays gas on the pool's chain (a BUY take also locks `n` KDA there). Wallets show the total
+      // across all chains, so say where the KDA is missing before anything is signed.
+      const lockKda = p.side === "BUY" && !instant ? n : 0;
+      const shortfall = await appChainShortfall(account.account, lockKda, p.chain, gasKda(instant ? GAS_V11_SETTLE : GAS_V11_TAKE)).catch(() => null);
+      if (shortfall) { toast.error(shortfall.title, { description: shortfall.description, duration: 20000 }); return; }
       if (instant) {
         const bal = await tokenBalance(p.token, account.account, p.chain);
         if (bal < pay) { toast.error(`Not enough ${p.currency} on chain ${p.chain}`, { description: `This swap needs ${payText} on chain ${p.chain}; your account has ${bal.toLocaleString("en-US", { maximumFractionDigits: token?.precision ?? 12 })} ${p.currency} there.` }); return; }
@@ -108,8 +116,6 @@ export function TakeSheet({ pool: p, open, onOpenChange, profileMap = {}, onTake
           buildTakeAndSettleTx(tradeId, p.poolId, account.account, account.publicKey, n, p.token, p.creator, tokenPay));
       } else if (p.side === "BUY") {
         // the taker is the KDA holder: it locks `n` KDA in the trade's vault
-        const shortfall = await appChainShortfall(account.account, n, p.chain).catch(() => null);
-        if (shortfall) { toast.error(shortfall.title, { description: shortfall.description, duration: 20000 }); return; }
         const vault = await tradeVault(tradeId);
         requestKey = await sendV11(`Locking ${kdaAmount(n)} KDA for the buyer`, () =>
           buildTakeTx(tradeId, p.poolId, account.account, account.publicKey, n, "BUY", vault));
@@ -124,8 +130,8 @@ export function TakeSheet({ pool: p, open, onOpenChange, profileMap = {}, onTake
       onTaken(tradeId, p);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error";
-      if (isInsufficientFunds(msg) && p.side === "BUY") {
-        const s = await appChainShortfall(account.account, n, p.chain).catch(() => null);
+      if (isInsufficientFunds(msg)) {
+        const s = await appChainShortfall(account.account, p.side === "BUY" && !instant ? n : 0, p.chain, gasKda(instant ? GAS_V11_SETTLE : GAS_V11_TAKE)).catch(() => null);
         if (s) { toast.error(s.title, { description: s.description, duration: 20000 }); return; }
       }
       toast.error(`${verb} failed`, { description: msg });
@@ -162,7 +168,7 @@ export function TakeSheet({ pool: p, open, onOpenChange, profileMap = {}, onTake
                     </button>
                   ))}
                 </div>
-                {problem && valid && <p className="text-sm text-destructive">{problem}</p>}
+                {problem && (valid || noAddress) && <p className="text-sm text-destructive">{problem}</p>}
               </div>
 
               {p.networks.length > 1 && (
