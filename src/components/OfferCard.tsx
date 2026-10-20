@@ -13,6 +13,8 @@ import { RatingDisplay } from "./RatingDisplay";
 import type { Escrow } from "@/lib/kadena";
 import type { RatingSummary } from "@/lib/ratingApi";
 import { formatFiat } from "@/lib/utils";
+import { exactPay, isV11 } from "@/lib/v11ui";
+import { isInstant } from "@/lib/markets";
 import { ShoppingCart, Store, ArrowRight, CreditCard, MessageCircle, X, Loader2, RotateCcw } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { useState } from "react";
@@ -68,6 +70,8 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, completedMap, 
   }
 
   const totalPrice = escrow.amount * escrow.price;
+  // a v11 trade paid outside Kadena: the contract's exact pay-amount, the number the buyer must send
+  const totalText = isV11(escrow) && !isInstant(escrow.trade) ? exactPay(escrow.trade.payAmount) : formatFiat(totalPrice, escrow.fiatCurrency);
   const currencySymbol = currencyPrefix(escrow.fiatCurrency);
   const free = isGiveaway(escrow);
 
@@ -142,7 +146,7 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, completedMap, 
             <span key={m} className="rounded-full bg-muted px-2.5 py-1">{m}</span>
           ))}
           {paymentMethods.length > 2 && <span className="rounded-full bg-muted px-2.5 py-1">+{paymentMethods.length - 2}</span>}
-          {!free && <span className="rounded-full bg-muted px-2.5 py-1">Total {currencySymbol}{formatFiat(totalPrice, escrow.fiatCurrency)}</span>}
+          {!free && <span className="rounded-full bg-muted px-2.5 py-1">Total {currencySymbol}{totalText}</span>}
           {otherName && !isMyOffer && (
             <span className="rounded-full bg-muted px-2.5 py-1">
               {otherLabel}: {trades ? `${trades} trade${trades === 1 ? "" : "s"}` : otherName}
@@ -251,7 +255,7 @@ export function OfferCard({ escrow, profileMap, ratingSummaryMap, completedMap, 
             )}
             <div className="flex items-center gap-4 text-sm text-muted-foreground">
               <span>Available: <span className="font-medium text-foreground">{escrow.amount.toFixed(4)} KDA</span></span>
-              <span>Total: <span className="font-medium text-foreground">{free ? "Free" : `${currencySymbol}${formatFiat(totalPrice, escrow.fiatCurrency)}`}</span></span>
+              <span>Total: <span className="font-medium text-foreground">{free ? "Free" : `${currencySymbol}${totalText}`}</span></span>
             </div>
           </div>
 

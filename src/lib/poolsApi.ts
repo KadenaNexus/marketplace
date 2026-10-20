@@ -46,10 +46,13 @@ export async function putPoolDetails(poolId: string, body: { networks: string[];
 
 /**
  * GET /api/pools/:id/payout: the receiving address per network. The server answers only the creator and the
- * parties of a trade on this pool; null when not allowed or not known.
+ * parties of a trade on this pool; null when not allowed or not known. Pass `tradeId` for a trade taken a moment
+ * ago: the server's cached chain read (15 s) may not list it yet, and with the id it checks that one trade on the
+ * chain instead of answering 403.
  */
-export async function getPoolPayout(poolId: string, a: Auth): Promise<Record<string, string> | null> {
+export async function getPoolPayout(poolId: string, a: Auth, tradeId?: string): Promise<Record<string, string> | null> {
   const q = new URLSearchParams({ wallet: a.wallet, publicKey: a.publicKey, signedCmd: proof(a.signedCmd) });
+  if (tradeId) q.set("tradeId", tradeId);
   const r = await fetch(`/api/pools/${encodeURIComponent(poolId)}/payout?${q}`);
   if (r.status === 403 || r.status === 404) return null;
   if (!r.ok) throw new Error(await errorOf(r, "Could not load the payment details"));

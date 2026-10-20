@@ -6,13 +6,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useWallet } from "@/hooks/useWallet";
 import { useRefreshV11 } from "@/hooks/useV11";
-import { appChainShortfall, isInsufficientFunds, readCoinDetailsLocal, TX_GAS_KDA } from "@/lib/kadena";
+import { TxUnresolvedError, appChainShortfall, checkPendingTx, isInsufficientFunds, readCoinDetailsLocal, readPendingTx, type PendingTx } from "@/lib/kadena";
 import { useAppChainBalance } from "@/hooks/useAppChainBalance";
 import { useAutoRelease } from "@/hooks/useAutoRelease";
 import { watchedText } from "@/lib/autoReleaseApi";
-import { V11_CHAINS, buildCreatePoolTx, newPoolId, poolVault } from "@/lib/v11";
+import { GAS_V11_CREATE, V11_CHAINS, buildCreatePoolTx, gasKda, newPoolId, poolVault } from "@/lib/v11";
 import { sendV11 } from "@/lib/v11ui";
 import { txFinished } from "@/lib/txProgress";
 import { putPoolDetails } from "@/lib/poolsApi";
@@ -20,12 +21,12 @@ import { authProof } from "@/lib/session";
 import { useMarket, vsMarket, vsMarketText } from "@/lib/market";
 import { formatFiat } from "@/lib/utils";
 import {
-  DEFAULT_PAY_WINDOW, EXPIRY_DAYS, KADENA_TOKENS, PAY_WINDOWS, POOL_CURRENCIES, addressProblem, chainForCurrency, chainLabel, isKadenaToken, isStableCurrency, networksFor,
+  DEFAULT_PAY_WINDOW, EXPIRY_DAYS, KADENA_TOKENS, PAY_WINDOWS, POOL_CURRENCIES, addressProblem, chainForCurrency, chainLabel, currenciesForSide, isKadenaToken, isStableCurrency, networksFor,
 } from "@/lib/markets";
 import { TradeEmailGate, useNeedsTradeEmail } from "../TradeEmail";
 import { useMyCompletedTrades, useTermsGate } from "../Trust";
 import { NEW_TRADER_MAX_KDA, NEW_TRADER_TRADES, isNewTrader, newTraderProblem } from "@/lib/trust";
-import { Gift, Loader2, Lock, Plus, Radar, ShoppingCart, Store, Zap } from "lucide-react";
+import { AlertTriangle, Gift, Loader2, Lock, Plus, Radar, ShoppingCart, Store, Zap } from "lucide-react";
 import { toast } from "sonner";
 
 interface CreatePoolFormProps {
@@ -39,6 +40,11 @@ const num = (s: string) => { const n = parseFloat(s); return Number.isFinite(n) 
 /** Currencies whose chain this site uses (VITE_V11_CHAINS): a chain-2 currency is offered once chain 2 is on. */
 const CURRENCY_CHOICES = POOL_CURRENCIES.filter((c) => V11_CHAINS.includes(chainForCurrency(c) ?? ""));
 const fmt = (n: number) => String(Number(n.toFixed(6)));
+/** How often the form asks the chain about a transaction it is still waiting for (after a reload). */
+const PENDING_CHECK_MS = 10000;
+
+/** The details save after the pool went on chain (where buyers pay), to try again when the first save failed. */
+type DetailsRetry = { poolId: string; save: () => Promise<void> };
 
 /**
  * Post a pool (escrow v11): a total with a min and max per trade. A SELL pool locks the whole total when it is
@@ -63,6 +69,11 @@ export function CreatePoolForm({ onSuccess, role = "seller", compact = false }: 
   const [notes, setNotes] = useState("");
   const [autoRelease, setAutoRelease] = useState(true);
   const [busy, setBusy] = useState(false);
+  // the pool is live but the server has no receiving address for it: a blocking dialog, with Retry, until it is saved
+  const [detailsRetry, setDetailsRetry] = useState<DetailsRetry | null>(null);
+  const [retrying, setRetrying] = useState(false);
+  // a transaction this browser sent and never saw answered (page closed, or polling gave up): no new post until it settles
+  const [pendingTx, setPendingTx] = useState<PendingTx | null>(() => readPendingTx());
   const free = giveaway && side === "SELL";
   const instant = !free && isKadenaToken(currency);
   const stable = !free && isStableCurrency(currency);
@@ -96,6 +107,31 @@ export function CreatePoolForm({ onSuccess, role = "seller", compact = false }: 
     setCurrency(c);
     setNetworks(isStableCurrency(c) ? [networksFor(c)[0].id] : []);
   };
+  // A BUY offer is paid outside Kadena only (the contract refuses a token BUY after signing): switching to BUY with
+  // a token chosen falls back to the first off-chain currency.
+  const currencyChoices = useMemo(() => currenciesForSide(CURRENCY_CHOICES, side), [side]);
+  useEffect(() => {
+    if (currencyChoices.includes(currency) || !currencyChoices.length) return;
+    const c = currencyChoices[0];
+    setCurrency(c);
+    setNetworks(isStableCurrency(c) ? [networksFor(c)[0].id] : []);
+  }, [currencyChoices, currency]);
+
+  // After a reload with a transaction still unanswered: ask the chain every few seconds until it is
+  useEffect(() => {
+    if (!pendingTx) return;
+    let stop = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const tick = async () => {
+      if (stop) return;
+      const r = await checkPendingTx(pendingTx);
+      if (stop) return;
+      if (r === "done") setPendingTx(null);
+      else timer = setTimeout(tick, PENDING_CHECK_MS);
+    };
+    void tick();
+    return () => { stop = true; if (timer) clearTimeout(timer); };
+  }, [pendingTx]);
   const toggleNetwork = (id: string, on: boolean) => setNetworks((ns) => (on ? [...ns, id] : ns.filter((n) => n !== id)));
 
   // The reference price: USDT and USDC track the USD market price; a token has its own
@@ -110,6 +146,7 @@ export function CreatePoolForm({ onSuccess, role = "seller", compact = false }: 
   if (minN > 0 && maxN > 0 && minN > maxN) problems.push("The minimum is larger than the maximum");
   if (maxN > 0 && totalN > 0 && maxN > totalN) problems.push("The maximum per trade is larger than the total");
   if (!free && !(priceN > 0)) problems.push("Enter the price per KDA");
+  if (side === "BUY" && instant) problems.push("A buy offer cannot be paid in a Kadena token; choose USDT or USDC");
   if (stable && networks.length === 0) problems.push("Choose at least one network");
   if (stable && side === "SELL") for (const n of networks) { const p = addressProblem(n, addresses[n] ?? ""); if (p) problems.push(`${n.replace(":", " ")}: ${p}`); }
   const limitProblem = maxN > 0 ? newTraderProblem(maxN, myCompleted) : null;
@@ -121,12 +158,13 @@ export function CreatePoolForm({ onSuccess, role = "seller", compact = false }: 
     if (problems.length) return toast.error("Check the form", { description: problems[0] });
     if (limitProblem) return toast.error(`Up to ${NEW_TRADER_MAX_KDA} KDA per trade for now`, { description: limitProblem });
     if (!(await terms.check())) return;
+    if (pendingTx) return toast.error("Still checking your last transaction", { description: "Wait until it is confirmed before posting another offer." });
 
     setBusy(true);
     const poolId = newPoolId(chain);
     try {
       const [shortfall, coin] = await Promise.all([
-        appChainShortfall(account.account, side === "SELL" ? totalN : 0, chain),
+        appChainShortfall(account.account, side === "SELL" ? totalN : 0, chain, gasKda(GAS_V11_CREATE)),
         readCoinDetailsLocal(account.account, chain),
       ]);
       if (shortfall) { toast.error(shortfall.title, { description: shortfall.description, duration: 20000 }); return; }
@@ -145,15 +183,21 @@ export function CreatePoolForm({ onSuccess, role = "seller", compact = false }: 
         { hold: true },
       );
 
-      // Then the off-chain part: the networks and where you get paid (the buyer sees the address after taking)
+      // Then the off-chain part: the networks and where you get paid (the buyer sees the address after taking).
+      // A SELL pool paid outside Kadena is not listed until this is saved, so a failure here blocks with Retry.
       if (!free) {
-        try {
+        const payout = side === "SELL" ? Object.fromEntries(networks.map((n) => [n, (addresses[n] ?? "").trim()])) : {};
+        const body = { networks: stable ? networks : [], payout, notes: notes.trim() };
+        const save = async () => {
           const signedCmd = await authProof(account.account, account.publicKey);
-          const payout = side === "SELL" ? Object.fromEntries(networks.map((n) => [n, (addresses[n] ?? "").trim()])) : {};
-          await putPoolDetails(poolId, { networks: stable ? networks : [], payout, notes: notes.trim() }, { wallet: account.account, publicKey: account.publicKey, signedCmd });
+          await putPoolDetails(poolId, body, { wallet: account.account, publicKey: account.publicKey, signedCmd });
+        };
+        try {
+          await save();
         } catch (err) {
           console.warn("Pool details save failed:", err);
-          toast.warning("Posted on chain. The server could not save your payment details; add them from Manage.");
+          if (stable && side === "SELL") setDetailsRetry({ poolId, save });
+          else toast.warning("Posted on chain. The server could not save the offer's details; add them from Manage.");
         }
       }
       txFinished();
@@ -165,6 +209,8 @@ export function CreatePoolForm({ onSuccess, role = "seller", compact = false }: 
       txFinished();
       console.error("Create pool error:", err);
       const msg = err instanceof Error ? err.message : "Unknown error";
+      // polling gave up before the chain answered: keep the form closed until it does (the pool may well be live)
+      if (err instanceof TxUnresolvedError) { setPendingTx(readPendingTx()); toast.error("Still confirming on the chain", { description: msg, duration: 30000 }); return; }
       if (isInsufficientFunds(msg) && account) {
         const s = await appChainShortfall(account.account, side === "SELL" ? totalN : 0, chain).catch(() => null);
         if (s) { toast.error(s.title, { description: s.description, duration: 20000 }); return; }
@@ -175,8 +221,16 @@ export function CreatePoolForm({ onSuccess, role = "seller", compact = false }: 
     }
   };
 
+  const retryDetails = async () => {
+    if (!detailsRetry) return;
+    setRetrying(true);
+    try { await detailsRetry.save(); setDetailsRetry(null); toast.success("Receiving address saved. Your pool is in the market."); }
+    catch (err) { toast.error("Still could not save the address", { description: err instanceof Error ? err.message : "The server did not answer. Try again in a moment." }); }
+    finally { setRetrying(false); }
+  };
+
   // KDA needed on the pool's chain: the total for a SELL pool, gas only for a BUY offer
-  const needOnChain = (side === "SELL" && totalN > 0 ? totalN : 0) + TX_GAS_KDA;
+  const needOnChain = (side === "SELL" && totalN > 0 ? totalN : 0) + gasKda(GAS_V11_CREATE);
   const lowOnChain = chainBalance !== undefined && chainBalance + 1e-9 < needOnChain;
   const lockText = side === "SELL"
     ? free ? `You'll approve one transaction that locks ${total ? fmt(totalN) : "the"} KDA for the giveaway.` : `You'll approve one transaction that locks ${total ? fmt(totalN) : "the"} KDA in your pool. Buyers take slices from it; the unsold part comes back when you close the pool.`
@@ -236,7 +290,7 @@ export function CreatePoolForm({ onSuccess, role = "seller", compact = false }: 
               <Select value={currency} onValueChange={changeCurrency}>
                 <SelectTrigger id="currency" className="h-12"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {CURRENCY_CHOICES.map((c) => (
+                  {currencyChoices.map((c) => (
                     <SelectItem key={c} value={c}>{isKadenaToken(c) ? `${c} · instant` : c} <span className="text-muted-foreground">· {chainLabel(chainForCurrency(c))}</span></SelectItem>
                   ))}
                 </SelectContent>
@@ -355,7 +409,14 @@ export function CreatePoolForm({ onSuccess, role = "seller", compact = false }: 
             <span>{lockText}</span>
           </p>
 
-          <Button type="submit" className={compact ? "h-12 w-full text-base" : "w-full"} disabled={!isConnected || busy}>
+          {pendingTx && (
+            <p className="flex items-start gap-2 rounded-xl border border-amber-500/50 bg-amber-500/10 p-3 text-sm" role="status">
+              <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />
+              <span>Checking your last transaction ({pendingTx.label})… Do not send it again. You can post once the chain has answered.</span>
+            </p>
+          )}
+
+          <Button type="submit" className={compact ? "h-12 w-full text-base" : "w-full"} disabled={!isConnected || busy || !!pendingTx}>
             {busy ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Posting…</> : free ? "Post giveaway" : side === "SELL" ? `Lock ${total ? fmt(totalN) : ""} KDA and post` : "Post buy offer"}
           </Button>
           {!isConnected && <p className="text-center text-sm text-muted-foreground">Connect your wallet to post an offer</p>}
@@ -363,6 +424,26 @@ export function CreatePoolForm({ onSuccess, role = "seller", compact = false }: 
           <TradeEmailGate open={emailGateOpen} onOpenChange={setEmailGateOpen} />
           {terms.gate}
         </form>
+
+        {/* The pool is on the chain but the server has no receiving address: nobody can take it until this is saved */}
+        <Dialog open={!!detailsRetry} onOpenChange={() => { /* stays open until the address is saved or Later is pressed */ }}>
+          <DialogContent className="max-w-md" onInteractOutside={(ev) => ev.preventDefault()} onEscapeKeyDown={(ev) => ev.preventDefault()}>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 font-display text-xl"><AlertTriangle className="h-5 w-5 text-amber-500" />Your pool is live but has no receiving address yet</DialogTitle>
+              <DialogDescription>
+                The KDA is locked on the chain, but the server could not save where buyers should pay you. Until it is saved, your pool stays out of the market and nobody can take it. Add it now.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="flex-col gap-2 sm:flex-col">
+              <Button type="button" className="h-12 w-full gap-2" disabled={retrying} onClick={() => void retryDetails()}>
+                {retrying ? <Loader2 className="h-4 w-4 animate-spin" /> : null}Save the receiving address again
+              </Button>
+              <Button type="button" variant="outline" className="h-11 w-full" disabled={retrying} onClick={() => { setDetailsRetry(null); toast.warning("Your pool is not in the market yet. Add the receiving address from Manage, then Edit."); }}>
+                Later, from Manage
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </CardContent>
     </Card>
   );

@@ -165,6 +165,29 @@ export function MarkPaidDialog({ escrow, total, open, onOpenChange, onConfirm }:
 }
 
 /**
+ * One question before a step that moves KDA or ends a trade (Cancel, Take KDA back, Close pool): the app's own
+ * dialog, in place of the browser's confirm() box, which some phone browsers and in-app views hide or auto-dismiss.
+ */
+export function ConfirmDialog({ open, onOpenChange, title, body, confirmLabel, destructive = false, onConfirm }: {
+  open: boolean; onOpenChange: (o: boolean) => void; title: string; body: string; confirmLabel: string; destructive?: boolean; onConfirm: () => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 font-display text-xl"><AlertTriangle className="h-5 w-5 text-amber-500" />{title}</DialogTitle>
+          <DialogDescription>{body}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="flex-col gap-2 sm:flex-col">
+          <Button type="button" variant={destructive ? "destructive" : "default"} className="h-12 w-full" onClick={() => { onOpenChange(false); onConfirm(); }}>{confirmLabel}</Button>
+          <Button type="button" variant="outline" className="h-11 w-full" onClick={() => onOpenChange(false)}>Not now</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
  * Release: the step that cannot be undone. The seller confirms they checked their own account, not a
  * screenshot, before the KDA goes to the buyer.
  */

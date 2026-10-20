@@ -8,7 +8,7 @@ import { useAutoRelease } from "@/hooks/useAutoRelease";
 import { autoPoolNote } from "@/lib/autoReleaseApi";
 import type { PoolListing } from "@/lib/poolsApi";
 import type { RatingSummary } from "@/lib/ratingApi";
-import { chainLabel, isGiveawayPool, isInstant, networkLabel, windowLabel } from "@/lib/markets";
+import { chainLabel, isGiveawayPool, isInstant, missingReceivingAddress, networkLabel, windowLabel } from "@/lib/markets";
 import { NEW_TRADER_TRADES, isNewTrader } from "@/lib/trust";
 import { formatFiat, cn } from "@/lib/utils";
 import { Gift, Lock, Radar, Settings2, Zap } from "lucide-react";
@@ -42,7 +42,9 @@ export function PoolCard({ pool: p, profileMap, ratingSummaryMap, completedMap, 
   const instant = isInstant(p);
   const expired = isExpired(p);
   const closed = p.state === "CLOSED";
-  const takeable = isTakeable(p);
+  const noAddress = missingReceivingAddress(p);
+  // a sell pool paid outside Kadena with no receiving address: not takeable until the creator adds one
+  const takeable = isTakeable(p) && !noAddress;
   const trades = completedMap?.[p.creator] ?? ratingSummaryMap?.[p.creator]?.completedTrades;
   const creatorNew = !mine && isNewTrader(completedMap?.[p.creator]);
   const who = p.side === "SELL" ? "Seller" : "Buyer";
@@ -83,6 +85,10 @@ export function PoolCard({ pool: p, profileMap, ratingSummaryMap, completedMap, 
         <p className="mt-2 rounded-lg border border-amber-500/50 bg-amber-500/10 p-2.5 text-sm">Expired: nobody can take from it any more.{mine ? " Close it to get the unsold KDA back." : ""}</p>
       ) : p.hidden && mine ? (
         <p className="mt-2 rounded-lg border border-amber-500/50 bg-amber-500/10 p-2.5 text-sm">Hidden from the market by the Marketplace. Open trades continue; close it or contact support.</p>
+      ) : noAddress ? (
+        <p className="mt-2 rounded-lg border border-amber-500/50 bg-amber-500/10 p-2.5 text-sm" role="note">
+          {mine ? "Add your receiving address: your pool is not in the market until buyers know where to pay. Open Manage, then Edit." : "The seller has not added a receiving address yet."}
+        </p>
       ) : mine && !takeable ? (
         <p className="mt-2 rounded-lg bg-muted p-2.5 text-sm text-muted-foreground">{p.available > 0 ? `Less than the minimum (${kdaAmount(p.min)} KDA) is left, so it is not in the market. Top it up or close it.` : "Sold out. Top it up or close it."}</p>
       ) : null}
@@ -121,7 +127,7 @@ export function PoolCard({ pool: p, profileMap, ratingSummaryMap, completedMap, 
           </Button>
         ) : (
           <Button className="h-12 flex-1 text-base" disabled={!takeable} onClick={() => onTake(p)}>
-            {takeable ? action : closed ? "Closed" : expired ? "Expired" : "Nothing left"}
+            {takeable ? action : closed ? "Closed" : expired ? "Expired" : noAddress ? "No address yet" : "Nothing left"}
           </Button>
         )}
       </div>

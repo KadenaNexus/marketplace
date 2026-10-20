@@ -7,7 +7,7 @@
  *   - A free giveaway: a SELL pool at price 0, claimed with one tap (chain 1).
  * No Wise, Revolut, bank transfers or PayPal-style methods. Offers made on v10 keep whatever they stored.
  */
-import { CURRENCIES, fitsTable, tokenInfo, type TokenInfo } from "../../shared/v11-chains.js";
+import { CURRENCIES, currencyInfo, fitsTable, tokenInfo, type TokenInfo } from "../../shared/v11-chains.js";
 
 export { V11_CHAINS, chainForCurrency, fitsTable } from "../../shared/v11-chains.js";
 
@@ -40,6 +40,16 @@ export const PAYMENT_NETWORKS: readonly PaymentNetwork[] = [
 /** The stablecoins a pool can be priced in (each has one or more networks above). */
 export const STABLE_CURRENCIES = ["USDT", "USDC"] as const;
 export const isStableCurrency = (c: string | null | undefined): c is "USDT" | "USDC" => c === "USDT" || c === "USDC";
+/** Paid outside Kadena (the shared table's "offchain" kind): the seller must give a receiving address and release by hand. */
+export const isOffchainCurrency = (c: string | null | undefined): boolean => currencyInfo(c)?.kind === "offchain";
+/** The currencies the new-offer form can show for a side: a BUY offer cannot be settled instantly (the contract refuses a token BUY). */
+export const currenciesForSide = (choices: readonly string[], side: "SELL" | "BUY"): string[] => choices.filter((c) => side === "SELL" || isOffchainCurrency(c));
+/**
+ * A SELL pool paid outside Kadena with no receiving address saved on the server: nobody can pay it, so it stays
+ * out of the market and cannot be taken (the creator sees it, with a warning, and adds the address from Manage).
+ */
+export const missingReceivingAddress = (p: { side: "SELL" | "BUY"; currency: string; token: string; networks?: string[] }): boolean =>
+  p.side === "SELL" && !p.token && isOffchainCurrency(p.currency) && !(p.networks && p.networks.length > 0);
 export const networksFor = (currency: string): readonly PaymentNetwork[] => PAYMENT_NETWORKS.filter((n) => n.currency === currency);
 export const paymentNetwork = (id: string | null | undefined): PaymentNetwork | undefined => PAYMENT_NETWORKS.find((n) => n.id === id);
 /** "USDT (TRC20)" for a network id; unknown ids are shown as they are. */

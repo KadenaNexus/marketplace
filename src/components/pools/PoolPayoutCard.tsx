@@ -5,8 +5,7 @@ import { useWallet } from "@/hooks/useWallet";
 import { authProof } from "@/lib/session";
 import { getPoolPayout, tradeNetwork } from "@/lib/poolsApi";
 import { isGiveawayPool, isInstant, networkLabel, paymentNetwork } from "@/lib/markets";
-import { formatFiat } from "@/lib/utils";
-import type { V11Escrow } from "@/lib/v11ui";
+import { exactPay, type V11Escrow } from "@/lib/v11ui";
 import { useTradeAuto } from "@/hooks/useAutoRelease";
 import { isAutoActive } from "@/lib/autoReleaseApi";
 
@@ -21,6 +20,11 @@ function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) 
   );
 }
 
+/** A take from a moment ago: the server may answer 403 until its chain read catches up. Ask again this many times, this far apart. */
+const PAYOUT_TRIES = 6;
+const PAYOUT_RETRY_MS = 5000;
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 /**
  * Payment instructions for a v11 trade on a SELL pool: the pool's receiving address for the chosen network,
  * the exact amount, and the rules. The seller sees the same addresses as a reminder of what the buyer was shown.
@@ -30,15 +34,22 @@ export function PoolPayoutCard({ escrow: e }: { escrow: V11Escrow }) {
   const me = account?.account;
   const t = e.trade;
   const involved = !!me && (me === t.seller || me === t.buyer || me === e.arbiter);
+  const active = ["FUNDED", "PAID", "DISPUTED"].includes(t.state);
   const { data: payout, isLoading } = useQuery({
-    queryKey: ["pool-payout", t.poolId, me],
+    queryKey: ["pool-payout", t.poolId, t.tradeId, me],
     queryFn: async () => {
       const signedCmd = await authProof(account!.account, account!.publicKey);
-      return getPoolPayout(t.poolId, { wallet: account!.account, publicKey: account!.publicKey, signedCmd });
+      const auth = { wallet: account!.account, publicKey: account!.publicKey, signedCmd };
+      // the trade id lets the server check a just-taken trade on the chain; a null (403) on a live trade is asked again
+      for (let i = 1; ; i++) {
+        const p = await getPoolPayout(t.poolId, auth, t.tradeId);
+        if (p || !active || i >= PAYOUT_TRIES) return p;
+        await wait(PAYOUT_RETRY_MS);
+      }
     },
     enabled: involved && isConnected && !isInstant(t) && !isGiveawayPool(t),
     staleTime: 60 * 1000,
-    retry: 0,
+    retry: 1,
   });
   // auto-release: the buyer sends the exact amount with the identifying digits (AutoReleaseCard explains them)
   const { data: auto } = useTradeAuto(e);
@@ -49,8 +60,9 @@ export function PoolPayoutCard({ escrow: e }: { escrow: V11Escrow }) {
   const chosen = tradeNetwork(t.tradeId);
   const ordered = chosen && networks.includes(chosen) ? [chosen, ...networks.filter((n) => n !== chosen)] : networks;
   const agent = isAutoActive(auto);
-  const amountText = agent ? auto.amount : String(t.payAmount);
-  const amount = agent ? `${auto.amount} ${t.currency}` : `${formatFiat(t.payAmount, "USD")} ${t.currency}`;
+  // what is shown is exactly what Copy copies: the contract's pay-amount, never rounded
+  const amountText = agent ? auto.amount : exactPay(t.payAmount);
+  const amount = `${amountText} ${t.currency}`;
   const buyer = me === t.buyer;
   const live = t.state === "FUNDED";
   // a closed trade whose addresses the server no longer gives out: nothing useful to show
@@ -76,7 +88,7 @@ export function PoolPayoutCard({ escrow: e }: { escrow: V11Escrow }) {
       </div>
 
       {ordered.length === 0 ? (
-        <p className="text-sm text-muted-foreground">{buyer ? "The seller's address could not be loaded. Ask for it in the chat, and pay only to an address the seller confirms there." : "No receiving address is saved for this pool. Add it from Manage."}</p>
+        <p className="text-sm text-muted-foreground">{buyer ? "Address not available yet. Do not pay. Reload in a moment, or cancel the trade." : "No receiving address is saved for this pool. Add it from Manage."}</p>
       ) : (
         <ul className="space-y-2">
           {ordered.map((n) => {
@@ -90,7 +102,7 @@ export function PoolPayoutCard({ escrow: e }: { escrow: V11Escrow }) {
                   <span className="my-1 block rounded-md bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-950 dark:bg-amber-950 dark:text-amber-100">
                     Send {t.currency} on {net?.networkLabel ?? n.split(":")[1] ?? n} only. Another network loses the money.
                   </span>
-                  {addr ? <span className="block break-all font-mono text-sm">{addr}</span> : <span className="block text-sm text-muted-foreground">Address not available from the server; ask in the chat.</span>}
+                  {addr ? <span className="block break-all font-mono text-sm">{addr}</span> : <span className="block text-sm text-muted-foreground">Address not available yet. Do not pay. Reload in a moment, or cancel the trade.</span>}
                 </span>
                 {addr && <CopyButton text={addr} />}
               </li>

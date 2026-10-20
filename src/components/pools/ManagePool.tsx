@@ -10,13 +10,14 @@ import { useRefreshV11, useV11Config } from "@/hooks/useV11";
 import { useAutoRelease } from "@/hooks/useAutoRelease";
 import { watchedText } from "@/lib/autoReleaseApi";
 import { appChainShortfall } from "@/lib/kadena";
-import { buildClosePoolTx, buildTopUpTx, buildUpdatePoolTx, buildWithdrawTx, poolVault, type Trade } from "@/lib/v11";
-import { sendV11 } from "@/lib/v11ui";
+import { GAS_V11, buildClosePoolTx, buildTopUpTx, buildUpdatePoolTx, buildWithdrawTx, gasKda, poolVault, type Trade } from "@/lib/v11";
+import { exactPay, sendV11 } from "@/lib/v11ui";
 import { getPoolPayout, putPoolDetails, type PoolListing } from "@/lib/poolsApi";
 import { authProof } from "@/lib/session";
 import { EXPIRY_DAYS, PAY_WINDOWS, addressProblem, chainLabel, isGiveawayPool, isInstant, isStableCurrency, networkLabel, networksFor } from "@/lib/markets";
 import { TradeCode } from "../TradeCode";
 import { EscrowStatus } from "../EscrowStatus";
+import { ConfirmDialog } from "../TradeSafety";
 import type { EscrowState } from "@/lib/kadena";
 import { formatFiat, cn } from "@/lib/utils";
 import { kdaAmount, isExpired } from "./PoolCard";
@@ -48,6 +49,7 @@ export function ManagePool({ pool: p, open, onOpenChange, trades, onOpenTrade }:
   const [notes, setNotes] = useState("");
   const [autoOn, setAutoOn] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const [confirmClose, setConfirmClose] = useState(false);
   const auto = useAutoRelease();
   const { data: cfg, isPlaceholderData: cfgLoading } = useV11Config();
 
@@ -93,12 +95,11 @@ export function ManagePool({ pool: p, open, onOpenChange, trades, onOpenTrade }:
   const topUp = () => run("Top-up", async () => {
     const n = num(amount);
     if (!(n > 0)) throw new Error("Enter an amount");
-    if (p.side === "SELL") {
-      const s = await appChainShortfall(account!.account, n, p.chain).catch(() => null);
-      if (s) throw new Error(s.description);
-    }
-    const vault = await poolVault(p.poolId);
-    await sendV11(`Adding ${kdaAmount(n)} KDA to your pool`, () => buildTopUpTx(p.poolId, account!.account, account!.publicKey, n, vault));
+    // a SELL pool locks the KDA (plus gas); a BUY offer only raises the amount wanted and pays gas
+    const s = await appChainShortfall(account!.account, p.side === "SELL" ? n : 0, p.chain, gasKda(GAS_V11)).catch(() => null);
+    if (s) throw new Error(s.description);
+    const vault = p.side === "SELL" ? await poolVault(p.poolId) : undefined;
+    await sendV11(`Adding ${kdaAmount(n)} KDA to your pool`, () => buildTopUpTx(p.poolId, account!.account, account!.publicKey, n, p.side, vault));
     toast.success(`${kdaAmount(n)} KDA added`); setAmount(""); setTab("trades");
   });
   const withdraw = () => run("Withdraw", async () => {
@@ -130,8 +131,8 @@ export function ManagePool({ pool: p, open, onOpenChange, trades, onOpenTrade }:
     }
     toast.success("Pool updated"); setTab("trades");
   });
-  const close = () => {
-    if (!window.confirm(`Close this pool? ${p.side === "SELL" ? `${kdaAmount(p.available)} unsold KDA comes back to your wallet.` : "Nothing is locked."} ${open_ ? `${open_} open trade${open_ === 1 ? "" : "s"} continue until they finish.` : ""}`)) return;
+  const close = () => setConfirmClose(true);
+  const doClose = () => {
     void run("Close", async () => {
       await sendV11("Closing your pool", () => buildClosePoolTx(p.poolId, account!.account, account!.publicKey));
       toast.success("Pool closed"); onOpenChange(false);
@@ -171,7 +172,7 @@ export function ManagePool({ pool: p, open, onOpenChange, trades, onOpenTrade }:
                   <li key={t.tradeId}>
                     <button type="button" onClick={() => onOpenTrade(t.tradeId)} className="flex w-full items-center justify-between gap-3 rounded-xl border border-border p-3 text-left hover:border-primary">
                       <span className="min-w-0">
-                        <span className="block font-semibold">{kdaAmount(t.amount)} KDA{!free && <span className="font-normal text-muted-foreground"> for {formatFiat(t.payAmount, t.currency)} {t.currency}</span>}</span>
+                        <span className="block font-semibold">{kdaAmount(t.amount)} KDA{!free && <span className="font-normal text-muted-foreground"> for {instant ? formatFiat(t.payAmount, t.currency) : exactPay(t.payAmount)} {t.currency}</span>}</span>
                         <span className="block truncate text-xs text-muted-foreground">{p.side === "SELL" ? "Buyer" : "Seller"} {(p.side === "SELL" ? t.buyer : t.seller).slice(0, 10)}… · {t.fundedAt ? new Date(t.fundedAt).toLocaleString() : ""}</span>
                       </span>
                       <EscrowStatus state={t.state as EscrowState} />
@@ -272,6 +273,8 @@ export function ManagePool({ pool: p, open, onOpenChange, trades, onOpenTrade }:
             </div>
           )}
         </div>
+        <ConfirmDialog open={confirmClose} onOpenChange={setConfirmClose} title="Close this pool?" confirmLabel="Close the pool" destructive onConfirm={doClose}
+          body={`${p.side === "SELL" ? `${kdaAmount(p.available)} unsold KDA comes back to your wallet.` : "Nothing is locked."} ${open_ ? `${open_} open trade${open_ === 1 ? "" : "s"} continue until they finish.` : "No trade is open on it."}`} />
       </SheetContent>
     </Sheet>
   );
