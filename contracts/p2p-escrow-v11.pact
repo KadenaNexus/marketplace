@@ -51,6 +51,8 @@
   ;; can move KDA out of a vault.
   (defcap OFFER_VAULT (id:string) true)
   (defcap TRADE_VAULT (id:string) true)
+  ;; Marks a helper as module-internal: it can only run inside a public function that acquired INTERNAL.
+  (defcap INTERNAL () true)
   (defun require-OFFER_VAULT (id:string) (require-capability (OFFER_VAULT id)))
   (defun require-TRADE_VAULT (id:string) (require-capability (TRADE_VAULT id)))
   (defun offer-vault-guard:guard (id:string) (create-user-guard (require-OFFER_VAULT id)))
@@ -128,17 +130,22 @@
 
   ;; The release agent: a server account that releases a trade once the payment is seen arriving (USDT/USDC).
   ;; Offers can only name this account (or none), so nobody can name an account of their own: on a BUY offer the
-  ;; creator is the payer, and their own "agent" could release the seller's KDA without paying. Changing it applies
-  ;; to offers that choose it from then on; open trades keep the agent they were taken with.
+  ;; creator is the payer, and their own "agent" could release the seller's KDA without paying. Revoking or rotating
+  ;; it takes effect at once, open trades included: an agent can only release while it is still the platform's agent
+  ;; (a trade taken with an older agent is then released by its seller, or through a dispute).
   (defun set-agent (agent:string)
     (with-capability (GOVERNANCE)
       (enforce (or (= (length agent) 0) (and (= (take 2 agent) "k:") (= (length agent) 66))) "Agent must be a k: account or empty")
       (enforce (!= agent (get-arbiter)) "The agent cannot be the arbiter")
       (update config "global" { "agent": agent })))
 
+  ;; The arbiter can be a k: account or a w: multi-signature account (for example two of three keys), which must
+  ;; already exist on this chain.
   (defun set-arbiter (arbiter:string)
     (with-capability (GOVERNANCE)
-      (enforce (> (length arbiter) 0) "Arbiter required")
+      (enforce (contains (take 2 arbiter) ["k:" "w:"]) "Arbiter must be a k: or w: (multi-signature) account")
+      (coin.details arbiter)
+      (enforce (!= arbiter (get-agent)) "The arbiter cannot be the agent")
       (update config "global" { "arbiter": arbiter })))
 
   (defun set-release-window (seconds:integer)
@@ -150,7 +157,8 @@
   (defun set-fee (bps:integer account:string)
     (with-capability (GOVERNANCE)
       (enforce (and (>= bps 0) (<= bps FEE_MAX_BPS)) "Fee must be 0 to 100 basis points")
-      (enforce (or (= bps 0) (> (length account) 0)) "Fee account required")
+      (enforce (> (length account) 0) "Fee account required")
+      (coin.details account) ; must exist on this chain, or every release with a fee would fail
       (update config "global" { "fee-bps": bps, "fee-account": account })))
 
   ;; Pause stops new offers, top-ups and takes. Releases, refunds, cancels, withdrawals and
@@ -192,6 +200,7 @@
     (round (* amount price) 6))
 
   (defun bump (wallet:string success:bool dispute:bool cancel:bool volume:decimal)
+    (require-capability (INTERNAL))
     (with-default-read reputation wallet
       { "totalTrades": 0, "successfulTrades": 0, "disputesCount": 0, "cancelsCount": 0, "volumeKda": 0.0 }
       { "totalTrades" := total, "successfulTrades" := ok, "disputesCount" := disputes, "cancelsCount" := cancels, "volumeKda" := vol }
@@ -210,6 +219,7 @@
 
   ;; Pays `amount` KDA from a trade vault to `to`, keeping `fee` for the platform.
   (defun pay-from-trade (id:string to:string amount:decimal fee:decimal)
+    (require-capability (INTERNAL))
     (with-capability (TRADE_VAULT id)
       (with-read config "global" { "fee-account" := fee-account }
         (let ((vault (trade-vault id))
@@ -226,7 +236,10 @@
               (coin.transfer vault fee-account fee)))))))
 
   ;; Returns `amount` KDA from a trade vault to its offer's pool (if still open) or to the seller.
+  ;; Either way an open offer gets the amount back as available: a SELL pool holds it again, and a BUY
+  ;; offer can be taken again for it (the seller of a BUY trade always gets their KDA back).
   (defun return-from-trade (trade-id:string offer-id:string seller:string amount:decimal)
+    (require-capability (INTERNAL))
     (with-read offers offer-id { "state" := ostate, "available" := available, "locked" := locked, "side" := side }
       (with-capability (TRADE_VAULT trade-id)
         (let ((vault (trade-vault trade-id)))
@@ -238,9 +251,13 @@
             (let ((x 0))
               (install-capability (coin.TRANSFER vault seller amount))
               (coin.transfer vault seller amount)
-              (update offers offer-id { "locked": (- locked amount) })))))))
+              (update offers offer-id
+                (if (= ostate "OPEN")
+                  { "available": (+ available amount), "locked": (- locked amount) }
+                  { "available": available, "locked": (- locked amount) }))))))))
 
   (defun settle-locked (offer-id:string amount:decimal)
+    (require-capability (INTERNAL))
     (with-read offers offer-id { "locked" := locked }
       (update offers offer-id { "locked": (- locked amount) })))
 
@@ -350,6 +367,7 @@
       (enforce (!= taker creator) "Cannot take your own offer")
       (enforce (!= taker (get-arbiter)) "The arbiter cannot trade")
       (enforce (!= taker (get-agent)) "The release agent cannot trade")
+      (enforce (!= taker (at "agent" (read offers offer-id))) "The offer's agent cannot take it")
       (valid-account taker)
       (valid-amount amount "Amount")
       (enforce (>= amount min) "Below the minimum for this offer")
@@ -365,6 +383,7 @@
   ;; trade starts FUNDED (a free giveaway goes straight to the taker). BUY: the taker locks the
   ;; KDA themselves in the same transaction.
   (defun take-offer (trade-id:string offer-id:string taker:string amount:decimal)
+    (with-capability (INTERNAL)
     (not-paused)
     (new-trade-id trade-id)
     (check-take offer-id taker amount)
@@ -374,7 +393,8 @@
         , "price" := price, "currency" := currency, "token" := token, "pay-window" := pay-window
         , "agent" := agent, "takes" := takes }
         (enforce (= (length token) 0) "This offer settles instantly: use take-and-settle")
-        (let* ((sell     (= side "SELL"))
+        (let* ((agent    (if (= agent (get-agent)) agent "")) ; a revoked agent never reaches a new trade
+               (sell     (= side "SELL"))
                (seller   (if sell creator taker))
                (buyer    (if sell taker creator))
                (giveaway (= price 0.0))
@@ -410,11 +430,13 @@
               (bump buyer true false false amount))
             "funded")
           (emit-event (TRADE_EVENT trade-id offer-id (if giveaway "COMPLETED" "FUNDED") seller buyer amount))
-          trade-id))))
+          trade-id)))))
 
   ;; Instant swap: the buyer pays `pay` of the token and receives the KDA in one transaction.
-  ;; `pay` must cover amount * price (rounded to the token's precision); the buyer signs the token's
-  ;; TRANSFER capability (buyer -> seller, pay), so the site computes `pay` and the chain only checks it.
+  ;; `pay` must cover amount * price (rounded to the token's precision) and not exceed it rounded up; the buyer
+  ;; signs the token's TRANSFER capability (buyer -> seller, pay), so the site computes `pay` and the chain checks it.
+  ;; The token module is outside code chosen by the seller, so INTERNAL is not held while it runs: a token that
+  ;; calls back into this module cannot reach the money-moving helpers.
   (defun take-and-settle (trade-id:string offer-id:string taker:string amount:decimal token:module{fungible-v2} pay:decimal)
     (not-paused)
     (new-trade-id trade-id)
@@ -427,7 +449,8 @@
         (enforce (= side "SELL") "Instant settlement is for SELL offers")
         (enforce (> (length token-name) 0) "This offer is paid outside Kadena: use take-offer")
         (enforce (= (format "{}" [token]) token-name) "Wrong token module for this offer")
-        (let* ((fee  (fee-for amount))
+        (let* ((agent (if (= agent (get-agent)) agent ""))
+               (fee  (fee-for amount))
                (prec (token::precision))
                (due  (round (* amount price) prec))
                (net  (- amount fee))
@@ -435,25 +458,30 @@
           (enforce (> due 0.0) "Payment rounds to zero")
           (enforce (= pay (floor pay prec)) "Payment has too many decimals for this token")
           (enforce (>= pay due) (format "Payment must be at least {} {}" [due currency]))
+          (enforce (<= pay (ceiling (* amount price) prec)) (format "Payment is more than the {} {} due" [due currency]))
           ;; token: buyer -> seller
           (token::transfer taker creator pay)
           ;; KDA: pool -> buyer (and fee)
           (with-capability (OFFER_VAULT offer-id)
-            (install-capability (coin.TRANSFER pool taker net))
-            (coin.transfer pool taker net)
-            (if (> fee 0.0)
-              (with-read config "global" { "fee-account" := fee-account }
-                (install-capability (coin.TRANSFER pool fee-account fee))
-                (coin.transfer pool fee-account fee))
-              "no fee"))
+            (with-read config "global" { "fee-account" := fee-account }
+              (if (or (= fee 0.0) (= taker fee-account))
+                (let ((x 0))
+                  (install-capability (coin.TRANSFER pool taker amount))
+                  (coin.transfer pool taker amount))
+                (let ((x 0))
+                  (install-capability (coin.TRANSFER pool taker net))
+                  (coin.transfer pool taker net)
+                  (install-capability (coin.TRANSFER pool fee-account fee))
+                  (coin.transfer pool fee-account fee)))))
           (insert trades trade-id
             { "offer": offer-id, "seller": creator, "buyer": taker, "amount": amount
             , "price": price, "currency": currency, "token": token-name
             , "pay-amount": pay, "fee": fee, "pay-window": pay-window, "agent": agent
             , "state": "COMPLETED", "funded-at": (now), "paid-at": (now), "closed-at": (now) })
           (update offers offer-id { "available": (- available amount), "takes": (+ takes 1) })
-          (bump creator true false false amount)
-          (bump taker true false false amount)
+          (with-capability (INTERNAL)
+            (bump creator true false false amount)
+            (bump taker true false false amount))
           (emit-event (TRADE_EVENT trade-id offer-id "COMPLETED" creator taker amount))
           trade-id))))
 
@@ -469,24 +497,29 @@
         trade-id)))
 
   ;; The seller (any time while FUNDED or PAID) or the offer's agent sends the KDA to the buyer.
-  ;; An agent can do nothing else: no refund, no other recipient, no other amount.
+  ;; An agent can do nothing else: no refund, no other recipient, no other amount, and only while it is still
+  ;; the platform's agent (revoking it in config stops it on open trades too).
   (defun release (trade-id:string)
+    (with-capability (INTERNAL)
     (with-read trades trade-id
       { "offer" := offer, "seller" := seller, "buyer" := buyer, "amount" := amount, "fee" := fee, "state" := state, "agent" := agent }
       (enforce (contains state ["FUNDED" "PAID"]) "Trade cannot be released from this state")
       (enforce-one "Only the seller or the offer's agent can release"
         [ (with-capability (ACCOUNT_AUTH seller) true)
-          (and (enforce (> (length agent) 0) "No agent") (with-capability (ACCOUNT_AUTH agent) true)) ])
+          (and (enforce (> (length agent) 0) "No agent")
+               (and (enforce (= agent (get-agent)) "This trade's agent has been revoked")
+                    (with-capability (ACCOUNT_AUTH agent) true))) ])
       (pay-from-trade trade-id buyer amount fee)
       (settle-locked offer amount)
       (update trades trade-id { "state": "COMPLETED", "closed-at": (now) })
       (bump seller true false false amount)
       (bump buyer true false false amount)
       (emit-event (TRADE_EVENT trade-id offer "COMPLETED" seller buyer amount))
-      trade-id))
+      trade-id)))
 
   ;; The buyer backs out before paying. The KDA goes back to the pool.
   (defun cancel (trade-id:string)
+    (with-capability (INTERNAL)
     (with-read trades trade-id { "offer" := offer, "seller" := seller, "buyer" := buyer, "amount" := amount, "state" := state }
       (with-capability (ACCOUNT_AUTH buyer)
         (enforce (= state "FUNDED") "Only an unpaid trade can be cancelled")
@@ -494,10 +527,11 @@
         (update trades trade-id { "state": "CANCELLED", "closed-at": (now) })
         (bump buyer false false true 0.0)
         (emit-event (TRADE_EVENT trade-id offer "CANCELLED" seller buyer amount))
-        trade-id)))
+        trade-id))))
 
   ;; The buyer never marked paid within the window: the seller takes the KDA back.
   (defun timeout-refund (trade-id:string)
+    (with-capability (INTERNAL)
     (with-read trades trade-id
       { "offer" := offer, "seller" := seller, "buyer" := buyer, "amount" := amount, "state" := state, "funded-at" := funded-at, "pay-window" := window }
       (with-capability (ACCOUNT_AUTH seller)
@@ -507,18 +541,18 @@
         (update trades trade-id { "state": "REFUNDED", "closed-at": (now) })
         (bump buyer false false true 0.0)
         (emit-event (TRADE_EVENT trade-id offer "REFUNDED" seller buyer amount))
-        trade-id)))
+        trade-id))))
 
   ;; Buyer: any time before completion (for example "I paid but the seller is silent").
-  ;; Seller: once the buyer claims to have paid. Either: after the release window has passed.
+  ;; Seller: as soon as the buyer has marked paid (for example "nothing arrived"). The config's t-release is not a
+  ;; gate here; the site uses it to show when a seller is late to release.
   (defun open-dispute (trade-id:string)
     (with-read trades trade-id
-      { "offer" := offer, "seller" := seller, "buyer" := buyer, "amount" := amount, "state" := state, "paid-at" := paid-at }
+      { "offer" := offer, "seller" := seller, "buyer" := buyer, "amount" := amount, "state" := state }
       (enforce (contains state ["FUNDED" "PAID"]) "Trade cannot be disputed from this state")
-      (let ((late (and (= state "PAID") (> (now) (add-time paid-at (at "t-release" (read config "global")))))))
-        (enforce-one "Only the buyer, or the seller after mark-paid, can dispute"
-          [ (with-capability (ACCOUNT_AUTH buyer) true)
-            (and (enforce (or (= state "PAID") late) "Seller can dispute after mark-paid") (with-capability (ACCOUNT_AUTH seller) true)) ]))
+      (enforce-one "Only the buyer, or the seller after mark-paid, can dispute"
+        [ (with-capability (ACCOUNT_AUTH buyer) true)
+          (and (enforce (= state "PAID") "Seller can dispute after mark-paid") (with-capability (ACCOUNT_AUTH seller) true)) ])
       (update trades trade-id { "state": "DISPUTED" })
       (emit-event (TRADE_EVENT trade-id offer "DISPUTED" seller buyer amount))
       trade-id))
@@ -526,6 +560,7 @@
   ;; The arbiter settles a dispute: `to-buyer` KDA to the buyer, the rest back to the seller.
   ;; The arbiter has no power over a trade that is not disputed.
   (defun resolve (trade-id:string to-buyer:decimal)
+    (with-capability (INTERNAL)
     (with-read trades trade-id
       { "offer" := offer, "seller" := seller, "buyer" := buyer, "amount" := amount, "fee" := fee, "state" := state }
       (with-capability (ACCOUNT_AUTH (get-arbiter))
@@ -534,20 +569,26 @@
         (enforce (= to-buyer (floor to-buyer 12)) "Split has more than 12 decimals")
         (let* ((to-seller  (- amount to-buyer))
                (fee-part   (if (= to-buyer amount) fee (if (= to-buyer 0.0) 0.0 (floor (/ (* fee to-buyer) amount) 12))))
-               (new-state  (if (= to-buyer amount) "COMPLETED" (if (= to-buyer 0.0) "REFUNDED" "SPLIT"))))
-          (if (> to-buyer 0.0) (pay-from-trade trade-id buyer to-buyer fee-part) "nothing to buyer")
-          (if (> to-seller 0.0)
+               (new-state  (if (= to-buyer amount) "COMPLETED" (if (= to-buyer 0.0) "REFUNDED" "SPLIT")))
+               ;; If the fee account is the seller, its fee goes with the seller's share in one transfer
+               ;; (two managed TRANSFERs to the same receiver cannot be installed in one transaction).
+               (merge      (= seller (at "fee-account" (read config "global"))))
+               (buyer-gets (if merge (- to-buyer fee-part) to-buyer))
+               (buyer-fee  (if merge 0.0 fee-part))
+               (seller-gets (if merge (+ to-seller fee-part) to-seller)))
+          (if (> buyer-gets 0.0) (pay-from-trade trade-id buyer buyer-gets buyer-fee) "nothing to buyer")
+          (if (> seller-gets 0.0)
             (with-capability (TRADE_VAULT trade-id)
               (let ((vault (trade-vault trade-id)))
-                (install-capability (coin.TRANSFER vault seller to-seller))
-                (coin.transfer vault seller to-seller)))
+                (install-capability (coin.TRANSFER vault seller seller-gets))
+                (coin.transfer vault seller seller-gets)))
             "nothing to seller")
           (settle-locked offer amount)
           (update trades trade-id { "state": new-state, "closed-at": (now) })
           (bump seller false true false 0.0)
           (bump buyer false true false 0.0)
           (emit-event (TRADE_EVENT trade-id offer new-state seller buyer to-buyer))
-          new-state))))
+          new-state)))))
 
   ;; ------------------------------------------------------------------- reads
 
