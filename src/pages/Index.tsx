@@ -275,6 +275,10 @@ const Index = () => {
               Quantum-Safe Kadena
             </a>
             <span aria-hidden="true">·</span>
+            <a className="transition-colors hover:text-foreground" href="https://kadena.ws/whales/">
+              Whale Watch
+            </a>
+            <span aria-hidden="true">·</span>
             <a className="transition-colors hover:text-foreground" href="https://kadenadevs.kadena.ws/">
               Kadena Devs
             </a>
