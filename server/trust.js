@@ -49,6 +49,38 @@ export function createChainCache({ fetchOffers = fetchAllEscrows, freshMs = 60 *
   };
 }
 
+/**
+ * Reputation per wallet from the server's tables, for many wallets in three grouped queries (not three per
+ * wallet): { [wallet]: { averageRating, totalRatings, completedTrades, disputedCount, completionRate } }.
+ * A wallet nobody traded with or rated gets zeros and a completion rate of 1.
+ */
+export async function ratingSummaries(pool, wallets) {
+  const list = [...new Set(wallets)];
+  const out = Object.fromEntries(list.map((w) => [w, { averageRating: 0, totalRatings: 0, completedTrades: 0, disputedCount: 0, completionRate: 1 }]));
+  if (!list.length) return out;
+  const [completed, disputed, agg] = await Promise.all([
+    pool.query(
+      `SELECT w AS wallet, COUNT(c.offer_id)::int AS cnt FROM unnest($1::text[]) AS w
+         LEFT JOIN completed_offers c ON c.buyer_wallet = w OR c.seller_wallet = w GROUP BY w`, [list]),
+    pool.query(
+      `SELECT w AS wallet, COUNT(DISTINCT d.id)::int AS cnt FROM unnest($1::text[]) AS w
+         JOIN completed_offers c ON c.buyer_wallet = w OR c.seller_wallet = w
+         JOIN disputes d ON d.offer_id = c.offer_id GROUP BY w`, [list]),
+    pool.query(
+      `SELECT rated_wallet AS wallet, AVG(rating)::float AS avg_rating, COUNT(*)::int AS cnt FROM ratings
+        WHERE rated_wallet = ANY($1::text[]) GROUP BY rated_wallet`, [list]),
+  ]);
+  for (const r of completed.rows) out[r.wallet].completedTrades = r.cnt;
+  for (const r of disputed.rows) out[r.wallet].disputedCount = r.cnt;
+  for (const r of agg.rows) { out[r.wallet].averageRating = Math.round(r.avg_rating * 10) / 10; out[r.wallet].totalRatings = r.cnt; }
+  for (const o of Object.values(out)) {
+    // completion rate: share of completed trades that had no dispute
+    const rate = o.completedTrades > 0 ? Math.max(0, (o.completedTrades - o.disputedCount) / o.completedTrades) : 1;
+    o.completionRate = Math.round(rate * 100) / 100;
+  }
+  return out;
+}
+
 /** Owners of a trade on the chain: { seller (KDA holder), buyer (payer) }. */
 const sides = (o) => (o.side === "SELL" ? { seller: o.creator, buyer: o.buyer } : { seller: o.buyer, buyer: o.creator });
 

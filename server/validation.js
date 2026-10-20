@@ -103,6 +103,9 @@ export const profilesStatusBulkBodySchema = z.object({
 export const offersPutBodySchema = z.object({
   offerId: z.string().min(1).max(256),
   creator: walletSchema,
+  wallet: walletSchema,
+  publicKey: publicKeySchema,
+  signedCmd: signedCmdSchema,
   amount: z.coerce.number().finite().positive(),
   side: z.enum(["BUY", "SELL"]),
   price: z.coerce.number().finite().nonnegative(),

@@ -26,7 +26,8 @@
 import { isToken } from "./tokens.js";
 import crypto from "crypto";
 import fs from "fs";
-import rateLimit, { ipKeyGenerator } from "express-rate-limit";
+import rateLimit from "express-rate-limit";
+import { ipKey } from "./clientIp.js";
 import { z } from "zod";
 import { hash as blakeHash } from "@kadena/cryptography-utils";
 import { fetchChain } from "./chain.js";
@@ -394,17 +395,12 @@ const publicSettings = (r) => ({
 });
 
 export function registerAlertRoutes(app, getPool) {
-  const realIp = (req) => {
-    const peer = req.socket?.remoteAddress || "";
-    const fwd = req.get("X-Real-IP");
-    return (fwd && /^(::ffff:)?127\.0\.0\.1$|^::1$/.test(peer)) ? fwd : (req.ip || peer);
-  };
   const signupLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, limit: 5, standardHeaders: true, legacyHeaders: false,
-    keyGenerator: (req) => ipKeyGenerator(realIp(req)),
+    keyGenerator: ipKey,
     message: { error: "Too many sign-ups from this connection. Try again in 15 minutes." },
   });
-  const tokenLimiter = rateLimit({ windowMs: 60 * 1000, limit: 30, standardHeaders: true, legacyHeaders: false, keyGenerator: (req) => ipKeyGenerator(realIp(req)) });
+  const tokenLimiter = rateLimit({ windowMs: 60 * 1000, limit: 30, standardHeaders: true, legacyHeaders: false, keyGenerator: ipKey });
   const off = (res) => res.status(503).json({ error: "Offer alerts are not switched on yet." });
   const bad = (res, err) => res.status(400).json({ error: err.issues?.[0]?.message || "Invalid request" });
 

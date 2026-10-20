@@ -3,7 +3,8 @@ import { getSocket } from "@/hooks/useOnlineStatus";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { useWallet } from "@/hooks/useWallet";
-import { FeedItem, fetchFeed, getPushKey, removePushSubscription, savePushSubscription } from "@/lib/notificationsApi";
+import { FeedItem, Who, fetchFeed, getPushKey, removePushSubscription, savePushSubscription } from "@/lib/notificationsApi";
+import { authProof, autoSignIn, getSessionToken } from "@/lib/session";
 
 /**
  * In-page notifications: polls the server feed (this wallet's trade events plus new offers), counts unread
@@ -54,10 +55,21 @@ export function useOpenOffer() {
   return useCallback((offerId: string | null) => navigate(offerId ? `/?offer=${encodeURIComponent(offerId)}` : "/"), [navigate]);
 }
 
+/**
+ * The wallet's proof for the server, without bothering the person: the saved sign-in of this device, else the
+ * one sign-in the page asks for on its own per visit (shared with the online status). Null when there is none
+ * yet: the feed then shows new offers only until a trade step or a chat signs the wallet in.
+ */
+async function quietProof(wallet: string, publicKey: string): Promise<Who | null> {
+  const signedCmd = getSessionToken(wallet) ?? (await autoSignIn(wallet, publicKey).catch(() => null));
+  return signedCmd ? { account: wallet, publicKey, signedCmd } : null;
+}
+
 export function NotificationsProvider({ children }: { children: ReactNode }) {
   const { account, isConnected } = useWallet();
   const openOffer = useOpenOffer();
   const wallet = isConnected && account ? account.account : null;
+  const publicKey = isConnected && account ? account.publicKey : null;
   const [enabled, setEnabled] = useState(false);
   const [feed, setFeed] = useState<Ctx["feed"]>("loading");
   const [items, setItems] = useState<FeedItem[]>([]);
@@ -73,7 +85,9 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     let stop = false;
     const load = async () => {
       try {
-        const r = await fetchFeed(wallet);
+        const who = wallet && publicKey ? await quietProof(wallet, publicKey) : null;
+        if (stop) return;
+        const r = await fetchFeed(who);
         if (stop) return;
         setEnabled(r.enabled);
         setFeed(r.enabled ? "on" : "off");
@@ -100,7 +114,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     const onTrade = () => { soon.push(setTimeout(load, 3000), setTimeout(load, 9000)); };
     socket?.on("trade-changed", onTrade);
     return () => { stop = true; clearInterval(t); document.removeEventListener("visibilitychange", vis); socket?.off("trade-changed", onTrade); soon.forEach(clearTimeout); };
-  }, [wallet, tick, openOffer]);
+  }, [wallet, publicKey, tick, openOffer]);
 
   // what this device can do about phone notifications
   const checkPush = useCallback(async () => {
@@ -128,17 +142,19 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     return () => navigator.serviceWorker.removeEventListener("message", onMsg);
   }, [navigate]);
 
-  // keep the device's subscription tied to the connected wallet
+  // keep the device's subscription tied to the connected wallet (with its proof; none yet: left as it is)
   useEffect(() => {
     if (push !== "on") return;
     (async () => {
       try {
+        const who = wallet && publicKey ? await quietProof(wallet, publicKey) : null;
+        if (wallet && !who) return;
         const reg = await swReady();
         const sub = await reg.pushManager.getSubscription();
-        if (sub) await savePushSubscription(sub.toJSON(), wallet, true, pushOffers);
+        if (sub) await savePushSubscription(sub.toJSON(), who, true, pushOffers);
       } catch { /* ignore */ }
     })();
-  }, [wallet, push, pushOffers]);
+  }, [wallet, publicKey, push, pushOffers]);
 
   const turnOnPush = useCallback(async (offers: boolean) => {
     if (!pushSupported()) return;
@@ -151,7 +167,9 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       const reg = await swReady();
       const sub = (await reg.pushManager.getSubscription()) ||
         (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(key.publicKey) }));
-      await savePushSubscription(sub.toJSON(), wallet, true, offers);
+      // the person just asked for this: a sign-in (saved on this device) if there is none yet
+      const who: Who | null = wallet && publicKey ? { account: wallet, publicKey, signedCmd: await authProof(wallet, publicKey) } : null;
+      await savePushSubscription(sub.toJSON(), who, true, offers);
       try { localStorage.setItem("nx-push-offers", offers ? "1" : "0"); } catch { /* ignore */ }
       setPushOffers(offers);
       setPush("on");
@@ -166,7 +184,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
         duration: 10000,
       });
     }
-  }, [wallet]);
+  }, [wallet, publicKey]);
 
   const turnOffPush = useCallback(async () => {
     try {

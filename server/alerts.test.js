@@ -11,6 +11,7 @@ import path from "path";
 import pg from "pg";
 import express from "express";
 import { matches, runAlertsOnce, registerAlertRoutes, offersEmail, poolAsAlertOffer, poolMethods } from "./alerts.js";
+import { realIp, ipKey } from "./clientIp.js";
 
 const MAIL = path.join(os.tmpdir(), `alerts-mail-${process.pid}.jsonl`);
 process.env.ALERTS_MAIL_LOG = MAIL;
@@ -41,6 +42,17 @@ after(async () => {
   await pool.query("DELETE FROM offer_details WHERE offer_id LIKE 'alerttest-%'");
   await pool.end();
   clearMail();
+});
+
+test("rate limits are keyed on the visitor behind Nginx, never on a header a direct visitor sets", () => {
+  const req = (peer, headers = {}, ip = peer) => ({ socket: { remoteAddress: peer }, ip, get: (h) => headers[h] });
+  assert.equal(realIp(req("127.0.0.1", { "X-Real-IP": "203.0.113.7" })), "203.0.113.7", "from Nginx on the same machine");
+  assert.equal(realIp(req("::ffff:127.0.0.1", { "X-Real-IP": "203.0.113.7" })), "203.0.113.7");
+  assert.equal(realIp(req("::1", { "X-Real-IP": "203.0.113.7" })), "203.0.113.7");
+  assert.equal(realIp(req("198.51.100.4", { "X-Real-IP": "203.0.113.7" })), "198.51.100.4", "a direct visitor cannot choose their key");
+  assert.equal(realIp(req("127.0.0.1")), "127.0.0.1", "no header: the peer itself");
+  assert.equal(ipKey(req("127.0.0.1", { "X-Real-IP": "203.0.113.7" })), "203.0.113.7");
+  assert.notEqual(ipKey(req("127.0.0.1", { "X-Real-IP": "203.0.113.7" })), ipKey(req("127.0.0.1", { "X-Real-IP": "203.0.113.8" })), "two visitors, two buckets");
 });
 
 test("matching by side, currency and amount", () => {

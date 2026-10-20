@@ -11,7 +11,7 @@
 import "dotenv/config";
 import { registerAlertRoutes, startAlertWatcher } from "./alerts.js";
 import { registerMarketRoutes } from "./market.js";
-import { registerTrustRoutes, recheckCompletedOffers } from "./trust.js";
+import { registerTrustRoutes, recheckCompletedOffers, ratingSummaries } from "./trust.js";
 import { registerOfferModerationRoutes, startPoolExpiryWatcher, expiryDays } from "./offerModeration.js";
 import { registerCompletedFeedRoutes, completedItem } from "./completedFeed.js";
 import { registerTradeEmailRoutes, emailNotification } from "./tradeEmails.js";
@@ -23,9 +23,12 @@ import { createAutoRelease, registerAutoReleaseRoutes, startAutoReleaseWatcher }
 import { fetchChain, readTradeWithPool } from "./chain.js";
 import { createChainCache } from "./trust.js";
 import { registerProofRoutes } from "./proofs.js";
+import { createDisputeAuthz } from "./authz.js";
+import { ownedFilename, mayUseAvatar, shouldDeleteOld, AVATAR_URL_PREFIX } from "./avatars.js";
 import { initSessionSecret, isSessionToken, issueSessionToken, verifySessionToken } from "./session.js";
 import express from "express";
 import rateLimit from "express-rate-limit";
+import { ipKey } from "./clientIp.js";
 import cors from "cors";
 import path from "path";
 import fs from "fs";
@@ -263,40 +266,36 @@ app.use((req, res, next) => {
   express.json({ limit: "256kb" })(req, res, next);
 });
 
-// Rate limiting: 50 req/s per IP on /api/* (50+ → 429)
+// Rate limiting: 50 req/s per visitor on /api/* (50+ → 429). Keyed on the visitor's address behind Nginx
+// (server/clientIp.js), not on req.ip, which is always 127.0.0.1 there.
 const apiLimiter = rateLimit({
   windowMs: 1000,
   max: 50,
   message: { error: "Too many requests, please try again later." },
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: ipKey,
 });
-// Chat/messages: 30 messages per minute per IP (flexible limit)
+// Chat/messages: 30 messages per minute per visitor (flexible limit)
 const messagesLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 30,
   message: { error: "Too many message requests, please slow down." },
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: ipKey,
 });
-// Sign-in: 20 per minute per IP
+// Sign-in: 20 per minute per visitor
 const sessionLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 20,
   message: { error: "Too many sign-in requests, please try again in a minute." },
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: ipKey,
 });
 app.use("/api/messages", messagesLimiter);
 app.use("/api", apiLimiter);
-
-// Debug middleware to log all requests
-app.use((req, res, next) => {
-  if (req.path?.includes("messages")) {
-    console.log(`[Request] ${req.method} ${req.path}`, req.query);
-  }
-  next();
-});
 
 // Serve uploads with safe headers (nosniff to prevent MIME sniffing)
 app.use("/uploads/profiles", (req, res, next) => {
@@ -318,7 +317,7 @@ let pool;
 // Offer alerts by email (off until RESEND_API_KEY is set)
 registerAlertRoutes(app, () => pool);
 // Trade notifications: in-page feed and Web Push
-registerNotificationRoutes(app, () => pool);
+registerNotificationRoutes(app, () => pool, { requireAuth: (...a) => requireAuth(...a), sendAuthError: (...a) => sendAuthError(...a) });
 // A trade step confirmed on the chain: tell open pages at once (they re-read that trade) and send the
 // bell / push notifications now instead of at the next round.
 const onTradeStepSettled = ({ offerId, ok }) => {
@@ -326,7 +325,7 @@ const onTradeStepSettled = ({ offerId, ok }) => {
   io.emit("trade-changed", { offerId });
   notifyTradeChangeSoon();
 };
-registerTradeTxRoutes(app, () => pool, { onSettled: (x) => onTradeStepSettled(x) });
+registerTradeTxRoutes(app, () => pool, { onSettled: (x) => onTradeStepSettled(x), requireAuth: (...a) => requireAuth(...a), sendAuthError: (...a) => sendAuthError(...a) });
 registerMarketRoutes(app);
 // one cached read of the v11 chain (pools, trades, config) shared by the routes that list from it
 const chainCache = createChainCache({ fetchOffers: fetchChain, freshMs: 15 * 1000 });
@@ -726,35 +725,9 @@ function sendAuthError(res, auth) {
   return res.status(auth.status).json({ error: auth.error, ...(auth.reason && { reason: auth.reason }) });
 }
 
-/**
- * Disputes are private to the two sides of the trade and the arbiter. Who they are is read from the chain.
- * After a refund the chain forgets the buyer, so someone who already took part in this dispute (opened it,
- * sent evidence or a message, all checked at the time) keeps access.
- * Returns { ok, wallet } or sends the error and returns { ok: false }.
- */
-async function requireDisputeParty(req, res, offerId, from = "body") {
-  const auth = requireAuth(req, from);
-  if (!auth.ok) { sendAuthError(res, auth); return { ok: false }; }
-  const data = from === "query" ? req.query : req.body;
-  if (data?.wallet !== auth.wallet) { res.status(400).json({ error: "Wallet must match authenticated wallet" }); return { ok: false }; }
-  const me = auth.wallet;
-  let e;
-  try { e = await readEscrowFromChain(offerId); }
-  catch { res.status(502).json({ error: "Could not check the trade on the chain. Try again." }); return { ok: false }; }
-  if (e) {
-    const { holder, payer } = sidesOf(e);
-    if ((holder && me === holder) || (payer && me === payer) || me === e.arbiter) return { ok: true, wallet: me, escrow: e };
-  }
-  const before = await pool.query(
-    `SELECT 1 FROM disputes WHERE offer_id = $1 AND opened_by_wallet = $2
-     UNION SELECT 1 FROM evidence WHERE offer_id = $1 AND submitted_by = $2
-     UNION SELECT 1 FROM dispute_messages WHERE offer_id = $1 AND from_wallet = $2 LIMIT 1`,
-    [offerId, me]
-  ).catch(() => ({ rows: [] }));
-  if (before.rows.length) return { ok: true, wallet: me, escrow: e };
-  res.status(403).json({ error: "Only the two sides of this trade and the arbiter can see or add to its dispute" });
-  return { ok: false };
-}
+// Disputes are private to the two sides of the trade and the arbiter; arbiter actions are the arbiter's only.
+// Who they are is read from the chain (server/authz.js).
+const { requireDisputeParty, requireArbiter } = createDisputeAuthz({ getPool: () => pool, requireAuth, sendAuthError });
 
 // POST /api/profiles/upload-avatar – multipart: image (file), wallet, publicKey, signedCmd (JSON string). Returns { url }.
 app.post("/api/profiles/upload-avatar", (req, res, next) => {
@@ -786,7 +759,10 @@ app.post("/api/profiles/upload-avatar", (req, res, next) => {
       try { fs.unlinkSync(req.file.path); } catch (e) { /* ignore */ }
       return sendAuthError(res, auth);
     }
-    const url = "/uploads/profiles/" + req.file.filename;
+    // the file is named after its uploader (server/avatars.js): only that wallet can show or delete it
+    const filename = ownedFilename(auth.wallet);
+    fs.renameSync(req.file.path, path.join(UPLOADS_DIR, filename));
+    const url = AVATAR_URL_PREFIX + filename;
     console.log(`Avatar uploaded: ${url} for wallet ${auth.wallet}`);
     return res.json({ url });
   } catch (err) {
@@ -854,9 +830,20 @@ app.put("/api/profiles", validateBody(profilePutBodySchema), async (req, res) =>
     // Check for existing profile to handle old avatar deletion
     const existingResult = await pool.query("SELECT avatar FROM profiles WHERE wallet = $1", [wallet]);
     const existing = existingResult.rows[0];
-    
-    if (existing?.avatar && existing.avatar.startsWith("/uploads/profiles/") && existing.avatar !== av) {
-      const oldPath = path.join(UPLOADS_DIR, path.basename(existing.avatar));
+    const current = existing?.avatar || null;
+
+    // an uploaded picture can only be shown by the wallet that uploaded it (server/avatars.js)
+    if (!mayUseAvatar(av, current, wallet)) {
+      return res.status(403).json({ error: "That picture was not uploaded by this wallet" });
+    }
+    // and only that wallet's own pictures are deleted when it stops showing them; a picture from before uploads
+    // were tagged with their owner goes only when no other profile still shows it
+    let stillShownElsewhere = false;
+    if (current && current !== av) {
+      stillShownElsewhere = (await pool.query("SELECT 1 FROM profiles WHERE avatar = $1 AND wallet <> $2 LIMIT 1", [current, wallet])).rows.length > 0;
+    }
+    if (shouldDeleteOld(current, av, wallet, stillShownElsewhere)) {
+      const oldPath = path.join(UPLOADS_DIR, path.basename(current));
       try {
         fs.unlinkSync(oldPath);
       } catch (e) {
@@ -922,14 +909,28 @@ app.get("/api/offers/:offerId", validateParams(offerIdParamSchema), async (req, 
   }
 });
 
-// PUT /api/offers – upsert off-chain offer details (call before or after create-offer on chain)
+// PUT /api/offers – upsert off-chain offer details (call before or after create-offer on chain).
+// Body: { offerId, creator, amount, side, price, paymentMethod?, fiatCurrency?, wallet, publicKey, signedCmd };
+// the signed-in wallet must be the creator, and an existing row can only be changed by its creator.
 app.put("/api/offers", validateBody(offersPutBodySchema), async (req, res) => {
+  const auth = requireAuth(req);
+  if (!auth.ok) return sendAuthError(res, auth);
+  if (req.body.wallet !== auth.wallet) {
+    return res.status(400).json({ error: "Wallet must match authenticated wallet" });
+  }
   const { offerId, creator, amount, side, price, paymentMethod, fiatCurrency } = req.body;
+  if (creator.trim() !== auth.wallet) {
+    return res.status(403).json({ error: "Only the creator of an offer can save its details" });
+  }
   const amt = amount;
   const pr = price;
   const pm = typeof paymentMethod === "string" ? paymentMethod : "[]";
   const fc = typeof fiatCurrency === "string" ? fiatCurrency.trim().slice(0, 10) : "USD";
   try {
+    const existing = await pool.query("SELECT creator FROM offer_details WHERE offer_id = $1", [offerId.trim()]);
+    if (existing.rows[0] && existing.rows[0].creator !== auth.wallet) {
+      return res.status(403).json({ error: "Only the creator of an offer can save its details" });
+    }
     await pool.query(
       `INSERT INTO offer_details (offer_id, creator, amount, side, price, min_amount, max_amount, payment_method, fiat_currency)
        VALUES ($1, $2, $3, $4, $5, $3, $3, $6, $7)
@@ -956,6 +957,17 @@ app.put("/api/offers/:offerId/fund-tx", validateParams(offerIdParamSchema), vali
   const offerId = req.params.offerId;
   const { requestKey } = req.body;
   try {
+    // only the offer's creator (the KDA holder who deposits) can record the deposit transaction
+    const row = (await pool.query("SELECT creator FROM offer_details WHERE offer_id = $1", [offerId])).rows[0];
+    if (!row) return res.status(404).json({ error: "Offer not found" });
+    let allowed = row.creator === auth.wallet;
+    if (!allowed) {
+      let e;
+      try { e = await readEscrowFromChain(offerId); }
+      catch { return res.status(502).json({ error: "Could not check the trade on the chain. Try again." }); }
+      allowed = !!e && (e.creator === auth.wallet || sidesOf(e).holder === auth.wallet);
+    }
+    if (!allowed) return res.status(403).json({ error: "Only the creator of this offer can save its deposit transaction" });
     await pool.query(
       "UPDATE offer_details SET fund_tx_request_key = $1 WHERE offer_id = $2",
       [requestKey.trim(), offerId]
@@ -1242,8 +1254,6 @@ app.get("/api/messages/:otherWallet", validateParams(otherWalletParamSchema), va
   const wallet = auth.wallet;
   const otherWallet = req.params.otherWallet;
 
-  console.log(`[GET /api/messages/:otherWallet] wallet: ${wallet}, otherWallet: ${otherWallet}`);
-
   try {
     // Ensure pool is initialized
     if (!pool) {
@@ -1289,7 +1299,6 @@ app.get("/api/messages/:otherWallet", validateParams(otherWalletParamSchema), va
       attachmentName: row.attachment_name || null,
     }));
     
-    console.log(`[GET /api/messages/:otherWallet] Returning ${messages.length} messages`);
     return res.json(messages);
   } catch (err) {
     console.error("GET /api/messages/:otherWallet", err);
@@ -1782,13 +1791,10 @@ app.get("/api/disputes/:offerId/actions", validateParams(offerIdParamSchema), as
 
 // PUT /api/disputes/:offerId/review – arbiter marks dispute under review. Body: { wallet, publicKey, signedCmd }
 app.put("/api/disputes/:offerId/review", validateParams(offerIdParamSchema), validateBody(disputeActionBodySchema), async (req, res) => {
-  const auth = requireAuth(req, "body", { allowSession: false });
-  if (!auth.ok) return sendAuthError(res, auth);
-  if (req.body.wallet !== auth.wallet) {
-    return res.status(400).json({ error: "Wallet must match authenticated wallet" });
-  }
-  const wallet = auth.wallet;
   const offerId = req.params.offerId;
+  const arb = await requireArbiter(req, res, offerId, "body");
+  if (!arb.ok) return;
+  const wallet = arb.wallet;
   try {
     const disputeResult = await pool.query("SELECT status FROM disputes WHERE offer_id = $1", [offerId]);
     if (disputeResult.rows.length === 0) return res.status(404).json({ error: "Dispute not found" });
@@ -1813,13 +1819,10 @@ app.put("/api/disputes/:offerId/review", validateParams(offerIdParamSchema), val
 
 // POST /api/disputes/:offerId/request-info – arbiter requests more info. Body: { message?, wallet, publicKey, signedCmd }
 app.post("/api/disputes/:offerId/request-info", validateParams(offerIdParamSchema), validateBody(disputeActionBodySchema), async (req, res) => {
-  const auth = requireAuth(req, "body", { allowSession: false });
-  if (!auth.ok) return sendAuthError(res, auth);
-  if (req.body.wallet !== auth.wallet) {
-    return res.status(400).json({ error: "Wallet must match authenticated wallet" });
-  }
-  const wallet = auth.wallet;
   const offerId = req.params.offerId;
+  const arb = await requireArbiter(req, res, offerId, "body");
+  if (!arb.ok) return;
+  const wallet = arb.wallet;
   const { message } = req.body;
   try {
     const disputeResult = await pool.query("SELECT id FROM disputes WHERE offer_id = $1", [offerId]);
@@ -1845,13 +1848,10 @@ app.post("/api/disputes/:offerId/request-info", validateParams(offerIdParamSchem
 
 // PUT /api/disputes/:offerId/close – arbiter closes dispute. Body: { wallet, publicKey, signedCmd }
 app.put("/api/disputes/:offerId/close", validateParams(offerIdParamSchema), validateBody(disputeActionBodySchema), async (req, res) => {
-  const auth = requireAuth(req, "body", { allowSession: false });
-  if (!auth.ok) return sendAuthError(res, auth);
-  if (req.body.wallet !== auth.wallet) {
-    return res.status(400).json({ error: "Wallet must match authenticated wallet" });
-  }
-  const wallet = auth.wallet;
   const offerId = req.params.offerId;
+  const arb = await requireArbiter(req, res, offerId, "body");
+  if (!arb.ok) return;
+  const wallet = arb.wallet;
   try {
     const disputeResult = await pool.query("SELECT status FROM disputes WHERE offer_id = $1", [offerId]);
     if (disputeResult.rows.length === 0) {
@@ -1878,12 +1878,9 @@ app.put("/api/disputes/:offerId/close", validateParams(offerIdParamSchema), vali
 
 // PUT /api/disputes/:offerId/release-refund-tx – save release or refund transaction request key (called by arbiter after release/refund)
 app.put("/api/disputes/:offerId/release-refund-tx", validateParams(offerIdParamSchema), validateBody(releaseRefundTxBodySchema), async (req, res) => {
-  const auth = requireAuth(req, "body", { allowSession: false });
-  if (!auth.ok) return sendAuthError(res, auth);
-  if (req.body.wallet !== auth.wallet) {
-    return res.status(400).json({ error: "Wallet must match authenticated wallet" });
-  }
   const offerId = req.params.offerId;
+  const arb = await requireArbiter(req, res, offerId, "body");
+  if (!arb.ok) return;
   const { requestKey } = req.body;
   try {
     const disputeResult = await pool.query("SELECT id FROM disputes WHERE offer_id = $1", [offerId]);
@@ -2025,40 +2022,7 @@ app.get("/api/ratings/trade/:offerId", validateParams(offerIdParamSchema), async
 app.get("/api/ratings/summary/:wallet", validateParams(walletParamSchema), async (req, res) => {
   const wallet = req.params.wallet;
   try {
-    const completed = await pool.query(
-      "SELECT COUNT(*) AS cnt FROM completed_offers WHERE buyer_wallet = $1 OR seller_wallet = $1",
-      [wallet]
-    );
-    const completedTrades = parseInt(completed.rows[0]?.cnt ?? "0", 10);
-
-    const disputed = await pool.query(
-      `SELECT COUNT(DISTINCT d.id) AS cnt
-       FROM disputes d
-       INNER JOIN completed_offers c ON c.offer_id = d.offer_id
-       WHERE c.buyer_wallet = $1 OR c.seller_wallet = $1`,
-      [wallet]
-    );
-    const disputedCount = parseInt(disputed.rows[0]?.cnt ?? "0", 10);
-
-    // Completion rate: share of completed trades that had no dispute
-    const completionRate = completedTrades > 0
-      ? Math.max(0, (completedTrades - disputedCount) / completedTrades)
-      : 1;
-
-    const agg = await pool.query(
-      "SELECT COALESCE(AVG(rating), 0) AS avg_rating, COUNT(*) AS cnt FROM ratings WHERE rated_wallet = $1",
-      [wallet]
-    );
-    const averageRating = parseFloat(agg.rows[0]?.avg_rating ?? "0");
-    const totalRatings = parseInt(agg.rows[0]?.cnt ?? "0", 10);
-
-    return res.json({
-      averageRating: Math.round(averageRating * 10) / 10,
-      totalRatings,
-      completedTrades,
-      disputedCount,
-      completionRate: Math.round(completionRate * 100) / 100,
-    });
+    return res.json((await ratingSummaries(pool, [wallet]))[wallet]);
   } catch (err) {
     console.error("GET /api/ratings/summary/:wallet", err);
     return res.status(500).json({ error: err.message || "Database error" });
@@ -2066,43 +2030,12 @@ app.get("/api/ratings/summary/:wallet", validateParams(walletParamSchema), async
 });
 
 // POST /api/ratings/summary/bulk – body: { wallets: string[] }; returns { [wallet]: { averageRating, totalRatings, completedTrades, disputedCount, completionRate } }
+// Three grouped queries for the whole list (server/trust.js), not three per wallet.
 app.post("/api/ratings/summary/bulk", validateBody(ratingsSummaryBulkBodySchema), async (req, res) => {
   const list = req.body.wallets;
   if (list.length === 0) return res.json({});
   try {
-    const out = {};
-    for (const w of list) {
-      const completed = await pool.query(
-        "SELECT COUNT(*) AS cnt FROM completed_offers WHERE buyer_wallet = $1 OR seller_wallet = $1",
-        [w]
-      );
-      const completedTrades = parseInt(completed.rows[0]?.cnt ?? "0", 10);
-      const disputed = await pool.query(
-        `SELECT COUNT(DISTINCT d.id) AS cnt
-         FROM disputes d
-         INNER JOIN completed_offers c ON c.offer_id = d.offer_id
-         WHERE c.buyer_wallet = $1 OR c.seller_wallet = $1`,
-        [w]
-      );
-      const disputedCount = parseInt(disputed.rows[0]?.cnt ?? "0", 10);
-      const completionRate = completedTrades > 0
-        ? Math.max(0, (completedTrades - disputedCount) / completedTrades)
-        : 1;
-      const agg = await pool.query(
-        "SELECT COALESCE(AVG(rating), 0) AS avg_rating, COUNT(*) AS cnt FROM ratings WHERE rated_wallet = $1",
-        [w]
-      );
-      const averageRating = parseFloat(agg.rows[0]?.avg_rating ?? "0");
-      const totalRatings = parseInt(agg.rows[0]?.cnt ?? "0", 10);
-      out[w] = {
-        averageRating: Math.round(averageRating * 10) / 10,
-        totalRatings,
-        completedTrades,
-        disputedCount,
-        completionRate: Math.round(completionRate * 100) / 100,
-      };
-    }
-    return res.json(out);
+    return res.json(await ratingSummaries(pool, list));
   } catch (err) {
     console.error("POST /api/ratings/summary/bulk", err);
     return res.status(500).json({ error: err.message || "Database error" });
