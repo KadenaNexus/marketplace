@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { MarketTag } from "./MarketTag";
 import { TradeCode } from "./TradeCode";
+import type { IUnsignedCommand } from "@kadena/client";
 import { createPortal } from "react-dom";
 import { useQuery, useQueries, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
@@ -67,7 +68,21 @@ import {
 } from "@/lib/kadena";
 import { getOfferDetails } from "@/lib/offerDetailsApi";
 import { formatFiat } from "@/lib/utils";
-import { TradeTimer, isStepExpired } from "./TradeTimer";
+import {
+  canonicalRef,
+  readTrade,
+  buildMarkPaidTx as buildV11MarkPaidTx, buildReleaseTx as buildV11ReleaseTx, buildCancelTx as buildV11CancelTx,
+  buildTimeoutRefundTx as buildV11TimeoutRefundTx, buildOpenDisputeTx as buildV11OpenDisputeTx,
+} from "@/lib/v11";
+import { isV11, toV11Escrow, payText, loadV11Escrows, type V11Escrow } from "@/lib/v11ui";
+import { PoolPayoutCard } from "./pools/PoolPayoutCard";
+import { AutoReleaseCard } from "./pools/AutoReleaseCard";
+import { useTradeAuto } from "@/hooks/useAutoRelease";
+import { isAutoActive } from "@/lib/autoReleaseApi";
+import { chainLabel, isGiveawayPool, isInstant, windowLabel } from "@/lib/markets";
+import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { TradeTimer, isStepExpired, nextStep } from "./TradeTimer";
 import { TradeSteps, YourTurnCard, kdaAmount, tradeTitle, turnInfo } from "./MobileTrade";
 import { useIsMobile } from "@/hooks/use-mobile";
 import type { OfferFilters } from "./OfferFilters";
@@ -123,8 +138,11 @@ export function EscrowActions({ refreshTrigger = 0, filters, role = "seller", vi
   const [registeringCompletion, setRegisteringCompletion] = useState(false);
 
 const ACTIVE_STATES = ["ACCEPTED", "FUNDED", "PAID", "DISPUTED"] as const;
-const tradeTotal = (e: Escrow) => isGiveaway(e) ? "Free" : `${currencyPrefix(e.fiatCurrency)}${formatFiat(e.amount * e.price, e.fiatCurrency)}`;
-const PAST_TERMINAL_STATES = ["COMPLETED", "REFUNDED", "CLOSED"] as const;
+/** What the buyer pays: the contract's pay-amount for a v11 trade, amount × price for a v10 one. */
+const tradeTotal = (e: Escrow) => isGiveaway(e) ? "Free"
+  : isV11(e) ? `${formatFiat(e.trade.payAmount, e.trade.currency)} ${e.trade.currency}`
+  : `${currencyPrefix(e.fiatCurrency)}${formatFiat(e.amount * e.price, e.fiatCurrency)}`;
+const PAST_TERMINAL_STATES = ["COMPLETED", "REFUNDED", "CLOSED", "CANCELLED", "SPLIT"] as const;
 /** Accepted, never funded, for days: nothing is locked and it cannot go ahead, so it is filed under Finished. */
 const unfundedExpired = (e: Escrow) => e.state === "ACCEPTED" && !!e.acceptedAt && Date.now() - new Date(e.acceptedAt).getTime() > UNFUNDED_TRADE_DAYS * 86400000;
 /** Open offers whose creator has not been active for this many days are faded and listed last. */
@@ -141,7 +159,9 @@ function txLabel(action: string, e: Escrow | null | undefined): string {
     case "Delete Offer": return "Deleting the offer";
     case "Cancel Offer": return "Cancelling the offer";
     case "Close (T1 Expired)": return "Closing the trade";
-    case "Timeout: Dispute (T3)": return "Moving the trade to dispute";
+    case "Timeout: Dispute (T3)": case "Open dispute": return "Moving the trade to dispute";
+    case "Cancel": return `Cancelling: ${kda} goes back to the pool`;
+    case "Take KDA back": return `Taking ${kda} back`;
     default: return "Confirming your transaction";
   }
 }
@@ -279,7 +299,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
   }, [allEscrows, filters, role, account?.account, viewMode]);
 
   // Off-chain offer details (price, limits, payment); merge with chain data for display
-  const offerIds = useMemo(() => [...new Set(allEscrows.map((e) => e.offerId))], [allEscrows]);
+  const offerIds = useMemo(() => [...new Set(allEscrows.filter((e) => !isV11(e)).map((e) => e.offerId))], [allEscrows]);
   const { data: offerDetailsMap = {} } = useQuery({
     queryKey: ["offer-details", offerIds.sort().join(",")],
     queryFn: async () => {
@@ -299,7 +319,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
     () =>
       escrows.map((e) => {
         const details = offerDetailsMap[e.offerId];
-        return details
+        return details && !isV11(e)
           ? { ...e, price: details.price, paymentMethod: details.paymentMethod, fiatCurrency: details.fiatCurrency,
               listedUntil: details.listedSince && details.expiryDays ? new Date(new Date(details.listedSince).getTime() + details.expiryDays * 86400000).toISOString() : undefined }
           : e;
@@ -414,7 +434,9 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
   // Link to an offer or trade (?offer=ID) from an alert email or a notification: select it once it is in
   // this list and scroll to it. Reacts every time the link changes, not only on first load.
   const [searchParams, setSearchParams] = useSearchParams();
-  const linkedOffer = searchParams.get("offer");
+  // "?offer=2:trade-…" names a trade on chain 2; "1:x" and "x" are the same chain-1 trade
+  const linkedParam = searchParams.get("offer");
+  const linkedOffer = linkedParam ? canonicalRef(linkedParam) : null;
   const handledLink = useRef<string | null>(null);
   const reloadedFor = useRef<string | null>(null);
   const linkKey = useLocation().key;
@@ -496,7 +518,12 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
   const loadAll = async () => {
     setIsLoading(true);
     try {
-      const list = await listAllEscrows();
+      // v11 trades first; v10 history (completed trades of the old contract) is kept if it still reads
+      const [v11, v10] = await Promise.all([
+        loadV11Escrows(account?.account),
+        listAllEscrows().catch((err) => { console.warn("[EscrowActions] v10 history not available:", err); return [] as Escrow[]; }),
+      ]);
+      const list = [...v11, ...v10];
       setAllEscrows(list);
       if (selectedOfferId && !list.some((e) => e.offerId === selectedOfferId)) {
         setSelectedOfferId(null);
@@ -522,6 +549,12 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
   /** Re-read one trade from the chain and update it in place (much faster than reloading every offer). */
   const refreshOne = async (offerId: string | undefined) => {
     if (!offerId) return null;
+    const current = allEscrows.find((e) => e.offerId === offerId);
+    if (current && isV11(current)) {
+      const t = await readTrade(offerId).catch(() => null);
+      if (t) setAllEscrows((list) => list.map((e) => (e.offerId === offerId && isV11(e) ? toV11Escrow(t, e.pool, e.networks, e.tRelease ?? 3600, e.arbiter) : e)));
+      return t ? ({ state: t.state } as Escrow) : null;
+    }
     const fresh = await readEscrow(offerId).catch(() => null);
     if (fresh) {
       setAllEscrows((list) => list.map((e) => (e.offerId === offerId
@@ -576,7 +609,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
 
   const executeAction = async (
     actionName: string,
-    buildTx: () => any
+    buildTx: () => IUnsignedCommand
   ) => {
     if (!account) {
       toast.error("Please connect your wallet");
@@ -727,13 +760,74 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
 
   const doMarkPaid = () => {
     if (!account || !selectedEscrow) return;
-    executeAction("Mark Paid", () => 
+    if (isV11(selectedEscrow)) {
+      executeAction("Mark Paid", () => buildV11MarkPaidTx(selectedEscrow.offerId, account.account, account.publicKey));
+      return;
+    }
+    executeAction("Mark Paid", () =>
       buildMarkPaidTx(selectedEscrow.offerId, account.account, account.publicKey)
     );
   };
 
+  // v11: the buyer cancels an unpaid trade (KDA back to the pool); the seller takes the KDA back after the window
+  const handleV11Cancel = () => {
+    if (!account || !selectedEscrow || !isV11(selectedEscrow)) return;
+    if (!window.confirm(`Cancel this trade? The ${kdaAmount(selectedEscrow.amount)} KDA goes back to the seller's pool. Only do this if you have not paid.`)) return;
+    executeAction("Cancel", () => buildV11CancelTx(selectedEscrow.offerId, account.account, account.publicKey));
+  };
+  const handleV11Refund = () => {
+    if (!account || !selectedEscrow || !isV11(selectedEscrow)) return;
+    if (!window.confirm(`Take ${kdaAmount(selectedEscrow.amount)} KDA back? Check your account first: if the buyer did pay, release instead.`)) return;
+    executeAction("Take KDA back", () => buildV11TimeoutRefundTx(selectedEscrow.offerId, account.account, account.publicKey));
+  };
+  // v11: a dispute is a chain step (open-dispute) plus the arbiter's record on our server
+  const [disputeOpen, setDisputeOpen] = useState(false);
+  const [disputeReason, setDisputeReason] = useState("");
+  const handleV11Dispute = async () => {
+    if (!account || !selectedEscrow || !isV11(selectedEscrow)) return;
+    const reason = disputeReason.trim();
+    if (!reason) { toast.error("Say what went wrong"); return; }
+    setDisputeOpen(false);
+    const e = selectedEscrow;
+    setActionLoading("Open dispute");
+    setTxLabel(txLabel("Open dispute", e));
+    await new Promise((r) => setTimeout(r, 0));
+    try {
+      const tx = buildV11OpenDisputeTx(e.offerId, account.account, account.publicKey);
+      const signedTx = await signTransaction(tx);
+      const requestKey = await submitTransaction(signedTx);
+      const res = (await pollTransaction(requestKey))?.result;
+      if (res?.status === "failure") {
+        const err = res.error as { message?: string } | string | undefined;
+        throw new Error(typeof err === "string" ? err : err?.message || "Transaction failed on-chain");
+      }
+      addTransaction("Open dispute", requestKey);
+      try {
+        const signedCmd = await authProof(account.account, account.publicKey);
+        await openDispute({ offerId: e.offerId, openedBy: account.account === e.buyer ? "buyer" : "seller", reason, wallet: account.account, publicKey: account.publicKey, signedCmd });
+        toast.success("Dispute opened: the arbiter has been notified");
+        setDisputeTab("dispute");
+        queryClient.invalidateQueries({ queryKey: ["dispute-check"] });
+      } catch {
+        toast.warning("Moved to dispute on chain, but the arbiter record could not be created", { description: `Contact support with trade ID: ${e.offerId}` });
+      }
+      setDisputeReason("");
+      void refreshOne(e.offerId);
+      loadAll();
+    } catch (error) {
+      toast.error("Open dispute failed", { description: error instanceof Error ? error.message : "Unknown error" });
+    } finally {
+      txFinished();
+      setActionLoading(null);
+    }
+  };
+
   const doRelease = async () => {
     if (!account || !selectedEscrow) return;
+    if (isV11(selectedEscrow)) {
+      executeAction("Release", () => buildV11ReleaseTx(selectedEscrow.offerId, account.account, account.publicKey));
+      return;
+    }
     const releaseRecipient = selectedEscrow.side === "SELL" ? selectedEscrow.buyer! : selectedEscrow.creator;
     const vaultAccount = await getEscrowVaultAccount(selectedEscrow.offerId);
     executeAction("Release", () =>
@@ -854,24 +948,37 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
     }
   };
 
-  const canAccept = selectedEscrow?.state === "CREATED" && account?.account !== selectedEscrow?.creator;
+  // v11 trade: what this wallet can do now (the v10 flags below are all off for it)
+  const v11 = selectedEscrow && isV11(selectedEscrow) ? (selectedEscrow as V11Escrow) : null;
+  const t11 = v11?.trade;
+  const meIsBuyer11 = !!t11 && !!account && account.account === t11.buyer;
+  const meIsSeller11 = !!t11 && !!account && account.account === t11.seller;
+  const payExpired11 = !!t11 && t11.state === "FUNDED" && isStepExpired(t11.fundedAt, t11.payWindow);
+  const releaseExpired11 = !!t11 && t11.state === "PAID" && isStepExpired(t11.paidAt, v11?.tRelease ?? 3600);
+  const canV11MarkPaid = !!t11 && t11.state === "FUNDED" && meIsBuyer11 && !payExpired11;
+  const canV11Cancel = !!t11 && t11.state === "FUNDED" && meIsBuyer11;
+  const canV11Release = !!t11 && (t11.state === "FUNDED" || t11.state === "PAID") && meIsSeller11;
+  const canV11Refund = !!t11 && t11.state === "FUNDED" && meIsSeller11 && payExpired11;
+  const canV11Dispute = !!t11 && (t11.state === "FUNDED" || t11.state === "PAID") && (meIsBuyer11 || (meIsSeller11 && t11.state === "PAID"));
+
+  const canAccept = !v11 && selectedEscrow?.state === "CREATED" && account?.account !== selectedEscrow?.creator;
   // KDA depositor (contract): SELL → creator; BUY → on-chain `buyer` (accepter). readEscrow maps that to `seller` always.
-  const canDeposit =
+  const canDeposit = !v11 &&
     selectedEscrow?.state === "ACCEPTED" &&
     !!selectedEscrow?.seller &&
     account?.account === selectedEscrow.seller;
-  const canMarkPaid = selectedEscrow?.state === "FUNDED" &&
+  const canMarkPaid = !v11 && selectedEscrow?.state === "FUNDED" &&
     (selectedEscrow?.side === "SELL" ? account?.account === selectedEscrow?.buyer : account?.account === selectedEscrow?.creator);
-  const canRelease = (selectedEscrow?.state === "PAID" || selectedEscrow?.state === "DISPUTED") &&
+  const canRelease = !v11 && (selectedEscrow?.state === "PAID" || selectedEscrow?.state === "DISPUTED") &&
     (account?.account === selectedEscrow?.seller || account?.account === selectedEscrow?.arbiter) &&
     (selectedEscrow?.state !== "DISPUTED" || account?.account === selectedEscrow?.arbiter);
-  const canRefund = (selectedEscrow?.state === "FUNDED" || selectedEscrow?.state === "PAID" || selectedEscrow?.state === "DISPUTED") &&
+  const canRefund = !v11 && (selectedEscrow?.state === "FUNDED" || selectedEscrow?.state === "PAID" || selectedEscrow?.state === "DISPUTED") &&
     account?.account === selectedEscrow?.arbiter &&
     (selectedEscrow?.side === "SELL" || !!selectedEscrow?.buyer);
-  const canCancelAcceptedOffer = selectedEscrow?.state === "ACCEPTED" && account?.account === selectedEscrow?.creator && !isStepExpired(selectedEscrow.acceptedAt, T1_SECONDS);
-  const canTimeoutAcceptedClose = selectedEscrow?.state === "ACCEPTED" && !!account?.account && isStepExpired(selectedEscrow.acceptedAt, T1_SECONDS);
-  const canTimeoutFundedRefund = selectedEscrow?.state === "FUNDED" && account?.account === selectedEscrow?.seller && isStepExpired(selectedEscrow.fundedAt, T2_SECONDS);
-  const canTimeoutPaidDispute = selectedEscrow?.state === "PAID" && !!account?.account && isStepExpired(selectedEscrow.paidAt, T3_SECONDS);
+  const canCancelAcceptedOffer = !v11 && selectedEscrow?.state === "ACCEPTED" && account?.account === selectedEscrow?.creator && !isStepExpired(selectedEscrow.acceptedAt, T1_SECONDS);
+  const canTimeoutAcceptedClose = !v11 && selectedEscrow?.state === "ACCEPTED" && !!account?.account && isStepExpired(selectedEscrow.acceptedAt, T1_SECONDS);
+  const canTimeoutFundedRefund = !v11 && selectedEscrow?.state === "FUNDED" && account?.account === selectedEscrow?.seller && isStepExpired(selectedEscrow.fundedAt, T2_SECONDS);
+  const canTimeoutPaidDispute = !v11 && selectedEscrow?.state === "PAID" && !!account?.account && isStepExpired(selectedEscrow.paidAt, T3_SECONDS);
 
   // When dispute is open/under review, disable all action buttons for seller and buyer (arbiter can still act)
   const isInDispute =
@@ -884,12 +991,18 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
   const canAcceptFinal = canAccept && !isInDisputeForParty;
   // Deposit is a seller-mode action (KDA holder); hide in buyer-mode marketplace view.
   const canDepositFinal = canDeposit && !isInDisputeForParty && role === "seller";
-  const canMarkPaidFinal = canMarkPaid && !isInDisputeForParty;
-  const canReleaseFinal = canRelease && !isInDisputeForParty;
+  const canMarkPaidFinal = (canMarkPaid || canV11MarkPaid) && !isInDisputeForParty;
+  const canReleaseFinal = (canRelease || canV11Release) && !isInDisputeForParty;
   const canTimeoutFundedRefundFinal = canTimeoutFundedRefund && !isInDisputeForParty;
   const canTimeoutPaidDisputeFinal = canTimeoutPaidDispute && !isInDisputeForParty;
+  const canV11CancelFinal = canV11Cancel && !isInDisputeForParty;
+  const canV11RefundFinal = canV11Refund && !isInDisputeForParty;
+  const canV11DisputeFinal = canV11Dispute && !isInDisputeForParty;
+  // auto-release: the platform's agent releases once it sees the exact payment, so "I paid" stays as a fallback only
+  const { data: auto11 } = useTradeAuto(v11);
+  const agentReleases11 = !!v11 && isAutoActive(auto11);
 
-  const isTerminal = selectedEscrow?.state === "COMPLETED" || selectedEscrow?.state === "REFUNDED" || selectedEscrow?.state === "CLOSED" || selectedEscrow?.state === "DELETED";
+  const isTerminal = !!selectedEscrow && PAST_TERMINAL_STATES.includes(selectedEscrow.state as (typeof PAST_TERMINAL_STATES)[number]) || selectedEscrow?.state === "DELETED";
 
   const isCompletedTrade = selectedEscrow?.state === "COMPLETED" && selectedEscrow?.buyer;
   const isPartyToTrade = isCompletedTrade && account && (account.account === selectedEscrow.buyer || account.account === selectedEscrow.seller);
@@ -930,9 +1043,24 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
   const mobilePrimary = !isMobile || !selectedEscrow || isTerminal || !isConnected ? null
     : canAcceptFinal ? { label: "Accept Offer", busy: "Accept Offer", Icon: UserPlus, run: handleAccept }
     : canDepositFinal ? { label: `Deposit ${kdaAmount(selectedEscrow.amount)} KDA`, busy: "Deposit", Icon: Lock, run: handleDeposit }
+    : v11 && canMarkPaidFinal && !agentReleases11 ? { label: "I paid", busy: "Mark Paid", Icon: DollarSign, run: handleMarkPaid }
+    : v11 && canReleaseFinal && t11?.state === "PAID" ? { label: "Release", busy: "Release", Icon: Unlock, run: handleRelease }
+    : v11 && canV11RefundFinal ? { label: "Take KDA back", busy: "Take KDA back", Icon: RotateCcw, run: handleV11Refund }
+    : v11 ? null
     : canMarkPaidFinal ? { label: "Mark as Paid", busy: "Mark Paid", Icon: DollarSign, run: handleMarkPaid }
     : canReleaseFinal ? { label: "Release to Buyer", busy: "Release", Icon: Unlock, run: handleRelease }
     : null;
+  /** v11 buttons, by role and state (the one in the phone's bottom bar is left out there) */
+  const v11Buttons = !v11 || isTerminal || !isConnected ? [] : [
+    canMarkPaidFinal && (!isMobile || agentReleases11) ? { key: "paid", label: "I paid", busy: "Mark Paid", Icon: DollarSign, run: handleMarkPaid, variant: agentReleases11 ? "outline" as const : "default" as const,
+      note: agentReleases11 ? "Not needed with auto-release: the KDA is released when your exact payment arrives." : undefined } : null,
+    canReleaseFinal && (!isMobile || t11?.state !== "PAID") ? { key: "release", label: t11?.state === "FUNDED" ? "Release now (buyer paid)" : "Release", busy: "Release", Icon: Unlock, run: handleRelease, variant: t11?.state === "PAID" ? "default" as const : "outline" as const,
+      note: t11?.state === "FUNDED" ? "Only if the money is already in your account." : undefined } : null,
+    canV11RefundFinal && !isMobile ? { key: "refund", label: "Take KDA back", busy: "Take KDA back", Icon: RotateCcw, run: handleV11Refund, variant: "outline" as const, note: "The payment window closed." } : null,
+    canV11CancelFinal ? { key: "cancel", label: "Cancel", busy: "Cancel", Icon: XCircle, run: handleV11Cancel, variant: "outline" as const, note: "Before paying only." } : null,
+    canV11DisputeFinal ? { key: "dispute", label: "Open dispute", busy: "Open dispute", Icon: AlertTriangle, run: () => setDisputeOpen(true), variant: "outline" as const,
+      note: releaseExpired11 ? "The release window closed." : undefined } : null,
+  ].filter((b): b is NonNullable<typeof b> => !!b);
   const closeTrade = () => setSelectedOfferId(null);
   const shownState = (e: Escrow) =>
     existingDispute && (existingDispute.status === "OPEN" || existingDispute.status === "UNDER_REVIEW") ? "DISPUTED" : e.state;
@@ -968,27 +1096,35 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
               <div>
                 <Label className="text-muted-foreground">Price</Label>
                 <p className="font-mono text-2xl font-bold text-primary">
-                  {isGiveaway(selectedEscrow) ? "Free" : <>
+                  {isGiveaway(selectedEscrow) ? "Free" : v11 ? <>
+                  {formatFiat(selectedEscrow.price, "USD")} {selectedEscrow.fiatCurrency} <span className="text-base">per KDA</span>
+                  </> : <>
                   {currencyPrefix(selectedEscrow.fiatCurrency)}
                   {formatFiat(selectedEscrow.price, selectedEscrow.fiatCurrency)} <span className="text-base">per KDA</span>
                   </>}
                 </p>
-                {!isGiveaway(selectedEscrow) && <MarketTag price={selectedEscrow.price} currency={selectedEscrow.fiatCurrency} className="text-sm" />}
+                {!isGiveaway(selectedEscrow) && !(v11 && isInstant(v11.trade)) && <MarketTag price={selectedEscrow.price} currency={v11 ? "USD" : selectedEscrow.fiatCurrency} className="text-sm" />}
               </div>
               <div>
-                <Label className="text-muted-foreground">Available Amount</Label>
+                <Label className="text-muted-foreground">{v11 ? "Amount" : "Available Amount"}</Label>
                 <p className="font-mono text-xl font-bold">
                   {isMobile ? kdaAmount(selectedEscrow.amount) : selectedEscrow.amount.toFixed(8)} <span className="text-base">KDA</span>
                 </p>
+                {v11 && !isInstant(v11.trade) && !isGiveawayPool(v11.trade) && <p className="text-xs text-muted-foreground">Payment window: {windowLabel(v11.trade.payWindow)}</p>}
               </div>
               <div className="sm:col-span-2">
-                <Label className="text-muted-foreground">Total Value</Label>
+                <Label className="text-muted-foreground">{v11 ? (v11.side === "SELL" ? "The buyer pays" : "You get paid") : "Total Value"}</Label>
                 <div className="mt-1 rounded-lg border-2 border-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 dark:border-emerald-700 px-4 py-3">
                   <p className="font-mono text-2xl font-bold text-emerald-800 dark:text-emerald-200">
-                    {tradeTotal(selectedEscrow)}
+                    {agentReleases11 ? `${auto11?.amount} ${v11?.trade.currency}` : tradeTotal(selectedEscrow)}
                   </p>
                   <p className="mt-3 text-sm text-muted-foreground leading-snug">
-                    {isGiveaway(selectedEscrow)
+                    {v11 ? (
+                      isGiveawayPool(v11.trade) ? "Free giveaway: the KDA went straight to the receiver when they claimed it."
+                      : isInstant(v11.trade) ? `Instant: ${payText(v11.trade)} and the KDA moved in the same transaction.`
+                      : agentReleases11 ? `Auto-release: the buyer sends exactly ${auto11?.amount} ${v11.trade.currency} (the last digits identify the payment) and the KDA is released when it arrives.`
+                      : "The buyer sends exactly this amount to the address below from a wallet they control, then presses I paid. The seller checks their own account and releases."
+                    ) : isGiveaway(selectedEscrow)
                       ? "Free giveaway: there is nothing to pay. Once the seller has locked the KDA, the receiver taps Mark as Paid (no screenshot needed) and the seller releases the KDA."
                       : "Kadena buyer must send this exact amount to the seller using the selected payment method. After sending the payment, the buyer must upload a screenshot of the transaction confirmation in the chat."}
                   </p>
@@ -997,10 +1133,13 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
               <div className="sm:col-span-2 space-y-4">
                 {!isGiveaway(selectedEscrow) && <>
                 <ProofCard escrow={selectedEscrow} />
+                {v11 && !isInstant(v11.trade) && <AutoReleaseCard escrow={v11} />}
+                {v11 && v11.side === "SELL" ? <PoolPayoutCard escrow={v11} /> : (!v11 || !isInstant(v11.trade)) && (
                 <PayoutCard
                   escrow={selectedEscrow}
-                  total={tradeTotal(selectedEscrow)}
+                  total={agentReleases11 ? `${auto11?.amount} ${v11?.trade.currency}` : tradeTotal(selectedEscrow)}
                 />
+                )}
                 </>}
               </div>
               <div className={isMobile ? "hidden" : undefined}>
@@ -1063,6 +1202,19 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                     <AlertTitle>Transaction in progress</AlertTitle>
                     <AlertDescription>{TX_CONFIRM_MESSAGE}</AlertDescription>
                   </Alert>
+                )}
+                {v11Buttons.length > 0 && (
+                  <div className="flex flex-col gap-2">
+                    {v11Buttons.map((b) => (
+                      <div key={b.key} className="flex flex-col gap-1">
+                        <Button onClick={b.run} disabled={!!actionLoading} variant={b.variant} className={`h-12 gap-2 ${b.key === "cancel" ? "border-destructive text-destructive hover:bg-destructive/10" : b.key === "dispute" ? "border-amber-500 text-amber-700 hover:bg-amber-500/10 dark:text-amber-300" : b.key === "release" && b.variant === "default" ? "bg-success hover:bg-success/90" : ""}`}>
+                          {actionLoading === b.busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <b.Icon className="h-4 w-4" />}
+                          {b.label}
+                        </Button>
+                        {b.note && <p className="text-xs text-muted-foreground">{b.note}</p>}
+                      </div>
+                    ))}
+                  </div>
                 )}
                 <div className="flex flex-wrap gap-3">
 
@@ -1137,7 +1289,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                   </p>
                 )}
 
-                {canMarkPaidFinal && !isMobile && (
+                {canMarkPaidFinal && !v11 && !isMobile && (
                   <Button 
                     onClick={handleMarkPaid}
                     disabled={!!actionLoading}
@@ -1153,7 +1305,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
                   </Button>
                 )}
 
-                {canReleaseFinal && !isMobile && (
+                {canReleaseFinal && !v11 && !isMobile && (
                   <Button 
                     onClick={handleRelease}
                     disabled={!!actionLoading}
@@ -1221,7 +1373,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
 
             {isTerminal && (
               <div className="pt-4 border-t border-border space-y-3">
-                <p className="text-center text-muted-foreground">This escrow has been finalized.</p>
+                <p className="text-center text-muted-foreground">{v11 ? nextStep(v11, account?.account, false) : "This escrow has been finalized."}</p>
                 {isPartyToTrade && (
                   <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2">
                     <p className="text-sm font-medium text-center">Leave a rating for this trade</p>
@@ -1400,7 +1552,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
             <p className="text-center py-8 text-muted-foreground">
               {escrows.length === 0
                 ? (viewMode === "mine"
-                    ? "No trades yet. Accept an offer in Offers, or post your own in New offer."
+                    ? "No trades yet. Take an offer in Offers, or post your own in New offer."
                     : viewMode === "active"
                     ? "You have no active trades. Accept an offer as buyer or wait for a buyer as seller to see trades here."
                     : viewMode === "new"
@@ -1443,6 +1595,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
             <div className="min-w-0 flex-1">
               <h2 className="truncate font-display text-lg font-semibold leading-tight">{tradeTitle(selectedEscrow, account?.account)}</h2>
               <TradeCode offerId={selectedEscrow.offerId} copy className="mt-0.5" />
+              {isV11(selectedEscrow) && <span className="ml-2 text-xs text-muted-foreground">{chainLabel(selectedEscrow.trade.chain)}</span>}
             </div>
             <span className="shrink-0 pr-2"><EscrowStatus state={shownState(selectedEscrow)} /></span>
           </header>
@@ -1473,7 +1626,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
         <Card className="escrow-card">
           <CardHeader>
             <div className="flex items-center justify-between">
-              <CardTitle className="flex items-center gap-3 text-lg"><TradeCode offerId={selectedEscrow.offerId} copy size="md" /><span className="font-mono text-sm font-normal text-muted-foreground">{selectedEscrow.offerId}</span></CardTitle>
+              <CardTitle className="flex items-center gap-3 text-lg"><TradeCode offerId={selectedEscrow.offerId} copy size="md" /><span className="font-mono text-sm font-normal text-muted-foreground">{selectedEscrow.offerId}</span>{isV11(selectedEscrow) && <span className="text-xs font-normal text-muted-foreground">{chainLabel(selectedEscrow.trade.chain)}</span>}</CardTitle>
               <EscrowStatus
                 state={
                   existingDispute && (existingDispute.status === "OPEN" || existingDispute.status === "UNDER_REVIEW")
@@ -1493,6 +1646,21 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
         <>
           <MarkPaidDialog escrow={selectedEscrow} total={tradeTotal(selectedEscrow)} open={markPaidOpen} onOpenChange={setMarkPaidOpen} onConfirm={doMarkPaid} />
           <ReleaseDialog escrow={selectedEscrow} total={tradeTotal(selectedEscrow)} open={releaseOpen} onOpenChange={setReleaseOpen} onConfirm={() => { void doRelease(); }} />
+          {v11 && (
+            <Dialog open={disputeOpen} onOpenChange={setDisputeOpen}>
+              <DialogContent className="max-w-md">
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2 font-display text-xl"><AlertTriangle className="h-5 w-5 text-amber-500" />Open a dispute</DialogTitle>
+                  <DialogDescription>The trade freezes and the arbiter decides where the {kdaAmount(selectedEscrow.amount)} KDA goes: to the buyer, back to the seller, or split. Say what went wrong; you can add evidence in the Dispute tab after.</DialogDescription>
+                </DialogHeader>
+                <Textarea value={disputeReason} onChange={(e) => setDisputeReason(e.target.value)} rows={4} maxLength={1000} placeholder="What happened?" className="resize-none" />
+                <DialogFooter className="flex-col gap-2 sm:flex-col">
+                  <Button className="h-12 w-full gap-2" variant="destructive" disabled={!disputeReason.trim()} onClick={() => { void handleV11Dispute(); }}><AlertTriangle className="h-4 w-4" />Open dispute</Button>
+                  <Button variant="outline" className="h-11 w-full" onClick={() => setDisputeOpen(false)}>Not now</Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          )}
         </>
       )}
 

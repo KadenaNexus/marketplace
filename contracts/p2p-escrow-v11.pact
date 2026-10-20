@@ -69,7 +69,8 @@
     t-release:integer          ; seconds the seller has to release after mark-paid
     fee-bps:integer            ; platform fee in basis points, 0 = none
     fee-account:string
-    paused:bool)
+    paused:bool
+    agent:string)              ; the platform's release agent ("" = none); the only account an offer may name as agent
 
   (defschema offer
     creator:string
@@ -83,7 +84,7 @@
     token:string               ; "" = paid outside Kadena; else the token module name, settled instantly
     pay-window:integer         ; seconds a buyer has to pay and mark paid
     expires-at:time            ; EPOCH = never
-    agent:string               ; "" or an account allowed to release this offer's trades
+    agent:string               ; "" or the platform's release agent (config "agent"), allowed to release this offer's trades
     state:string               ; OPEN | CLOSED
     created-at:time
     takes:integer)
@@ -123,7 +124,17 @@
     (with-capability (GOVERNANCE)
       (enforce (> (length arbiter) 0) "Arbiter required")
       (insert config "global"
-        { "arbiter": arbiter, "t-release": 3600, "fee-bps": 0, "fee-account": fee-account, "paused": false })))
+        { "arbiter": arbiter, "t-release": 3600, "fee-bps": 0, "fee-account": fee-account, "paused": false, "agent": "" })))
+
+  ;; The release agent: a server account that releases a trade once the payment is seen arriving (USDT/USDC).
+  ;; Offers can only name this account (or none), so nobody can name an account of their own: on a BUY offer the
+  ;; creator is the payer, and their own "agent" could release the seller's KDA without paying. Changing it applies
+  ;; to offers that choose it from then on; open trades keep the agent they were taken with.
+  (defun set-agent (agent:string)
+    (with-capability (GOVERNANCE)
+      (enforce (or (= (length agent) 0) (and (= (take 2 agent) "k:") (= (length agent) 66))) "Agent must be a k: account or empty")
+      (enforce (!= agent (get-arbiter)) "The agent cannot be the arbiter")
+      (update config "global" { "agent": agent })))
 
   (defun set-arbiter (arbiter:string)
     (with-capability (GOVERNANCE)
@@ -150,6 +161,9 @@
 
   (defun get-config () (read config "global"))
   (defun get-arbiter:string () (at "arbiter" (read config "global")))
+  (defun get-agent:string () (at "agent" (read config "global")))
+  (defun valid-agent (agent:string)
+    (enforce (or (= (length agent) 0) (= agent (get-agent))) "Agent must be the platform's release agent or none"))
   (defun not-paused () (enforce (not (at "paused" (read config "global"))) "Marketplace is paused"))
   (defun now:time () (at "block-time" (chain-data)))
 
@@ -253,7 +267,8 @@
       (valid-window pay-window)
       (enforce (or (= expires-at EPOCH) (> expires-at (now))) "Expiry must be in the future")
       (enforce (!= creator (get-arbiter)) "The arbiter cannot trade")
-      (enforce (or (= (length agent) 0) (and (!= agent creator) (!= agent (get-arbiter)))) "Agent must be a different account")
+      (enforce (!= creator (get-agent)) "The release agent cannot trade")
+      (valid-agent agent)
       (if (= side "SELL")
         (let ((vault (offer-vault id)))
           (coin.transfer-create creator vault (offer-vault-guard id) total))
@@ -305,7 +320,7 @@
         (enforce (or (> price 0.0) (and (= side "SELL") (= (length token) 0))) "A free giveaway must be a SELL offer paid outside Kadena")
         (valid-window pay-window)
         (enforce (or (= expires-at EPOCH) (> expires-at (now))) "Expiry must be in the future")
-        (enforce (or (= (length agent) 0) (and (!= agent creator) (!= agent (get-arbiter)))) "Agent must be a different account")
+        (valid-agent agent)
         (update offers id { "min": min, "max": max, "price": price, "pay-window": pay-window, "expires-at": expires-at, "agent": agent })
         (emit-event (OFFER_EVENT id "UPDATED" creator 0.0))
         id)))
@@ -333,6 +348,8 @@
       (enforce (= state "OPEN") "Offer is closed")
       (enforce (or (= expires-at EPOCH) (< (now) expires-at)) "Offer has expired")
       (enforce (!= taker creator) "Cannot take your own offer")
+      (enforce (!= taker (get-arbiter)) "The arbiter cannot trade")
+      (enforce (!= taker (get-agent)) "The release agent cannot trade")
       (valid-account taker)
       (valid-amount amount "Amount")
       (enforce (>= amount min) "Below the minimum for this offer")

@@ -63,6 +63,8 @@ jobs:
         run: npm run test:moderation
       - name: Run completed-trade feed tests
         run: npm run test:feed
+      - name: Run auto-release tests
+        run: npm run test:auto-release
   deploy:
     name: deploy
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -71,5 +73,6 @@ jobs:
       contents: write
     uses: KadenaNexus/homepage/.github/workflows/deploy-app.yml@main
     with:
-      url: https://marketplace.kadena.ws/
+      # This repository deploys the v11 preview only; marketplace.kadena.ws deploys from KadenaNexus/marketplace.
+      url: https://marketplace-advanced.kadena.ws/
     secrets: inherit

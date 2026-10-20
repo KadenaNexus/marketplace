@@ -3,8 +3,21 @@ import { Clock, AlertTriangle } from "lucide-react";
 import { T1_SECONDS, T2_SECONDS, T3_SECONDS, type Escrow } from "@/lib/kadena";
 import { cn } from "@/lib/utils";
 import { isGiveaway } from "@/lib/markets";
+import { isV11, v11Deadline, v11NextStep } from "@/lib/v11ui";
 
 const WARNING_THRESHOLD_SEC = 2 * 60; // Last 2 minutes: show warning
+
+/**
+ * The clock that runs on a trade: when it started and how many seconds it allows. v10 trades use the contract's
+ * T1/T2/T3; v11 trades use the pool's payment window and the config's release window.
+ */
+export function deadlineFor(e: Escrow): { iso?: string; limit: number } {
+  if (isV11(e)) return v11Deadline(e);
+  if (e.state === "ACCEPTED") return { iso: e.acceptedAt, limit: T1_SECONDS };
+  if (e.state === "FUNDED") return { iso: e.fundedAt, limit: T2_SECONDS };
+  if (e.state === "PAID") return { iso: e.paidAt, limit: T3_SECONDS };
+  return { limit: 0 };
+}
 
 /** Remaining seconds until deadline (limitSeconds after deadlineIso). Null if no deadline. */
 export function getRemainingSeconds(deadlineIso: string, limitSeconds: number): number | null {
@@ -34,6 +47,7 @@ export function formatCountdown(seconds: number): string {
  * Refund, Move to dispute, Close offer.
  */
 export function nextStep(escrow: Escrow, me: string | undefined, expired: boolean): string {
+  if (isV11(escrow)) return v11NextStep(escrow, me, expired);
   const kda = `${escrow.amount.toLocaleString("en-US", { maximumFractionDigits: 4 })} KDA`;
   const seller = !!me && me === escrow.seller;
   const buyer = !!me && me === escrow.buyer;
@@ -93,25 +107,12 @@ export function TradeTimer({ escrow, me, className }: TradeTimerProps) {
   }, []);
 
   const state = escrow.state;
-  let label = "";
-  let deadlineIso: string | undefined;
-  let limitSec = 0;
+  const { iso: deadlineIso, limit: limitSec } = deadlineFor(escrow);
+  const label = state === "ACCEPTED" ? "Time to fund escrow"
+    : state === "FUNDED" ? (isV11(escrow) ? "Time to pay" : "Time to mark payment sent")
+    : state === "PAID" ? "Time to release KDA" : "";
 
-  if (state === "ACCEPTED" && escrow.acceptedAt) {
-    label = "Time to fund escrow";
-    deadlineIso = escrow.acceptedAt;
-    limitSec = T1_SECONDS;
-  } else if (state === "FUNDED" && escrow.fundedAt) {
-    label = "Time to mark payment sent";
-    deadlineIso = escrow.fundedAt;
-    limitSec = T2_SECONDS;
-  } else if (state === "PAID" && escrow.paidAt) {
-    label = "Time to release KDA";
-    deadlineIso = escrow.paidAt;
-    limitSec = T3_SECONDS;
-  }
-
-  if (!deadlineIso || !limitSec) return null;
+  if (!deadlineIso || !limitSec || !label) return null;
 
   const remaining = getRemainingSeconds(deadlineIso, limitSec);
   if (remaining === null) return null;

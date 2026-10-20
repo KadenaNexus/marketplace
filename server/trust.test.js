@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import pg from "pg";
 import express from "express";
 import { completedCounts, createChainCache, recheckCompletedOffers, registerTrustRoutes, TERMS_VERSION } from "./trust.js";
+import { tradeAsLegacyEscrow, poolsById } from "./chain.js";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL || "postgresql://postgres:postgres@localhost:5432/kadena_nexus" });
 const A = "k:" + "a".repeat(64), B = "k:" + "b".repeat(64), C = "k:" + "c".repeat(64), T = "k:" + "7".repeat(64);
@@ -48,6 +49,18 @@ test("completed trades are counted per wallet, either side", () => {
     { state: "REFUNDED", creator: C, buyer: "" },
   ]);
   assert.deepEqual([n.get(A), n.get(B), n.get(C)], [3, 2, 1]);
+});
+
+test("v11 trades count with v10 offers, seller and buyer alike; only COMPLETED", () => {
+  const pools = poolsById([{ poolId: "p1", creator: A, side: "SELL" }, { poolId: "p2", creator: C, side: "BUY" }]);
+  const t = (o) => tradeAsLegacyEscrow({ tradeId: "t", poolId: "p1", seller: A, buyer: B, amount: 1, state: "COMPLETED", ...o }, pools);
+  const n = completedCounts([
+    { state: "COMPLETED", creator: A, buyer: B },                              // v10
+    t({ tradeId: "t1" }), t({ tradeId: "t2", buyer: C }),                     // v11 SELL pool: seller A
+    t({ tradeId: "t3", poolId: "p2", seller: B, buyer: C }),                  // v11 BUY pool: creator C pays, B holds
+    t({ tradeId: "t4", state: "FUNDED" }), t({ tradeId: "t5", state: "CANCELLED" }), t({ tradeId: "t6", state: "SPLIT" }),
+  ]);
+  assert.deepEqual([n.get(A), n.get(B), n.get(C)], [3, 3, 2]);
 });
 
 test("chain cache reuses a fresh read and keeps the last one if the chain fails", async () => {

@@ -13,7 +13,7 @@ export default defineConfig(({ mode }) => {
   server: {
     host: "::",
     port: 8081,
-    allowedHosts: ["marketplace.kadena.ws", "localhost", "127.0.0.1"],
+    allowedHosts: ["marketplace.kadena.ws", "marketplace-advanced.kadena.ws", "localhost", "127.0.0.1"],
     proxy: (() => {
       // Use 127.0.0.1 to avoid IPv6/localhost EACCES on Windows when dev:server isn't running.
       // "ws proxy error: ECONNREFUSED 127.0.0.1:3001" is normal when the profile API isn't running — run "npm run dev:server" in another terminal.

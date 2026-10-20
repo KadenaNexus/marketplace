@@ -1,18 +1,17 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useWallet } from "@/hooks/useWallet";
-import { useAppChainBalance } from "@/hooks/useAppChainBalance";
-import { CHAIN_ID } from "@/lib/kadena";
+import { useV11ChainBalances } from "@/hooks/useAppChainBalance";
 import { sendTestTransfer } from "@/lib/kadena";
 import { Wallet, LogOut, AlertCircle, Loader2, Send } from "lucide-react";
 import { toast } from "sonner";
-import { LINX_APP_STORE } from "./WalletPicker";
+import { linxStoreLink } from "./OpenInLinx";
 import { useLang } from "./NexusLanding";
 
 /** `inHeader`: on phones the button says just "Connect" so the header fits on one line. */
 export function WalletConnect({ inHeader = false }: { inHeader?: boolean } = {}) {
   const { account, isConnecting, isConnected, isWalletAvailable, error, connect, disconnect } = useWallet();
-  const { data: chainBalance } = useAppChainBalance(isConnected ? account?.account : undefined);
+  const { data: chainBalances } = useV11ChainBalances(isConnected ? account?.account : undefined);
   const [lang] = useLang();
   const t = lang === "ar"
     ? { short: "ربط", full: "اربط المحفظة", connecting: "جارٍ الربط..." }
@@ -41,7 +40,7 @@ export function WalletConnect({ inHeader = false }: { inHeader?: boolean } = {})
       <div className="flex items-center gap-2 text-warning">
         <AlertCircle className="h-4 w-4" />
         <a 
-          href={LINX_APP_STORE}
+          href={linxStoreLink()}
           target="_blank" 
           rel="noopener noreferrer"
           className="underline hover:no-underline"
@@ -61,9 +60,9 @@ export function WalletConnect({ inHeader = false }: { inHeader?: boolean } = {})
             <span className="hidden sm:inline">{shortenAddress(account.account)}</span>
             <span className="sm:hidden">{`${account.account.slice(0, 6)}…${account.account.slice(-4)}`}</span>
           </span>
-          {chainBalance !== undefined && (
-            <span className="hidden whitespace-nowrap text-[11px] text-muted-foreground tabular-nums sm:inline" title={`Only KDA on chain ${CHAIN_ID} can be used here; your wallet may show a total across all chains.`}>
-              Chain {CHAIN_ID}: {chainBalance.toLocaleString("en-US", { maximumFractionDigits: 4 })} KDA
+          {chainBalances && (
+            <span className="hidden whitespace-nowrap text-[11px] text-muted-foreground tabular-nums sm:inline" title="Offers in USDT, USDC, BRO and FLUX use KDA on chain 1; offers in kb-USDC, kb-ETH and kb-USDT use KDA on chain 2. Your wallet may show a total across all chains.">
+              {chainBalances.map((b) => `Chain ${b.chain}: ${b.balance.toLocaleString("en-US", { maximumFractionDigits: 4 })} KDA`).join(" · ")}
             </span>
           )}
         </div>
