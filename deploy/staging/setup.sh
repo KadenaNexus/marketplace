@@ -13,7 +13,7 @@ set -euo pipefail
 umask 022
 
 DOMAIN=marketplace-advanced.kadena.ws
-REPO_SSH=git@github-marketplace-advanced:KadenaNexus/marketplace-advanced.git
+REPO_URL=${REPO_URL:-https://github.com/KadenaNexus/marketplace-advanced.git}
 API_PORT=5060
 PM2_NAME=kadena-advanced-server
 DB_NAME=kadena_advanced
@@ -33,7 +33,7 @@ APP_DIR=$APP_HOME/apps/marketplace-advanced
 as_app() { sudo -u "$APP_USER" -H bash -lc "$1"; }
 
 say "Checks"
-for c in nginx certbot psql curl git openssl ss visudo ssh-keygen; do command -v "$c" >/dev/null || die "$c is not installed."; done
+for c in nginx certbot psql curl git openssl ss visudo; do command -v "$c" >/dev/null || die "$c is not installed."; done
 as_app "command -v node >/dev/null && command -v npm >/dev/null && command -v pm2 >/dev/null" || die "node, npm or pm2 is missing for $APP_USER."
 id deployer >/dev/null 2>&1 || die "the deployer account (used by GitHub Actions) does not exist."
 dns=$(getent ahostsv4 "$DOMAIN" | awk 'NR==1{print $1}' || true)
@@ -46,31 +46,31 @@ fi
 echo "ok: tools, DNS ($dns), port $API_PORT"
 
 say "Read-only GitHub access for the private repository"
-KEY=$APP_HOME/.ssh/marketplace_advanced_deploy
-if [ ! -f "$KEY" ]; then
-  as_app "install -d -m 700 ~/.ssh && ssh-keygen -q -t ed25519 -N '' -C 'marketplace-advanced preview (read-only)' -f '$KEY'"
-fi
-if ! grep -q "Host github-marketplace-advanced" "$APP_HOME/.ssh/config" 2>/dev/null; then
-  as_app "printf '\nHost github-marketplace-advanced\n  HostName github.com\n  User git\n  IdentityFile $KEY\n  IdentitiesOnly yes\n' >> ~/.ssh/config && chmod 600 ~/.ssh/config"
-fi
-# GitHub's published SSH host key (docs.github.com > GitHub's SSH key fingerprints), pinned rather than fetched.
-GH_HOSTKEY="github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
-as_app "grep -qF '$GH_HOSTKEY' ~/.ssh/known_hosts 2>/dev/null || echo '$GH_HOSTKEY' >> ~/.ssh/known_hosts"
-until as_app "git ls-remote '$REPO_SSH' HEAD >/dev/null 2>&1"; do
+# A fine-grained GitHub token limited to this repository with Contents: Read-only (the organization does not allow
+# deploy keys). It is kept in a file only the app account can read and is never printed. To renew it, delete
+# that file and run this script again.
+CRED_DIR=$APP_HOME/.config/marketplace-advanced
+CRED=$CRED_DIR/git-credentials
+HELPER="store --file=$CRED"
+can_read() { as_app "git -c credential.helper= -c credential.helper='$HELPER' ls-remote '$REPO_URL' HEAD >/dev/null 2>&1"; }
+until [ -f "$CRED" ] && can_read; do
   echo
-  echo "Add this key on GitHub: KadenaNexus/marketplace-advanced > Settings > Deploy keys > Add deploy key."
-  echo "Title: preview server. Leave \"Allow write access\" UNTICKED."
-  echo
-  cat "$KEY.pub"
-  echo
-  read -r -p "Press Enter once it is added (Ctrl-C to stop)... " _
+  echo "Paste the read-only GitHub token for KadenaNexus/marketplace-advanced (it starts with github_pat_)."
+  echo "Nothing is shown while you paste. Press Enter after it."
+  read -rs -p "Token: " TOKEN; echo
+  case "$TOKEN" in github_pat_*|ghp_*) ;; *) echo "That does not look like a GitHub token. Try again."; continue ;; esac
+  printf 'https://x-access-token:%s@github.com\n' "$TOKEN" | as_app "umask 077; mkdir -p '$CRED_DIR'; cat > '$CRED'"
+  unset TOKEN
+  can_read || echo "GitHub refused that token. Check it is for KadenaNexus, includes marketplace-advanced, has Contents: Read-only, and has been approved."
 done
 echo "ok: the server can read the repository"
 
 say "Code"
 if [ ! -d "$APP_DIR/.git" ]; then
-  as_app "mkdir -p '$(dirname "$APP_DIR")' && git clone --quiet --branch main '$REPO_SSH' '$APP_DIR'"
+  as_app "mkdir -p '$(dirname "$APP_DIR")' && git -c credential.helper= -c credential.helper='$HELPER' clone --quiet --branch main '$REPO_URL' '$APP_DIR'"
 fi
+# Deploys fetch with the same token; the remote URL itself never contains it.
+as_app "cd '$APP_DIR' && git remote set-url origin '$REPO_URL' && git config --replace-all credential.helper '' && git config --add credential.helper '$HELPER'"
 as_app "cd '$APP_DIR' && git fetch --quiet origin main && git -c advice.detachedHead=false checkout --quiet --force origin/main"
 echo "ok: $APP_DIR at $(as_app "cd '$APP_DIR' && git rev-parse --short HEAD")"
 
