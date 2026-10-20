@@ -27,6 +27,7 @@ import { createDisputeAuthz } from "./authz.js";
 import { initSessionSecret, isSessionToken, issueSessionToken, verifySessionToken } from "./session.js";
 import express from "express";
 import rateLimit from "express-rate-limit";
+import { ipKey } from "./clientIp.js";
 import cors from "cors";
 import path from "path";
 import fs from "fs";
@@ -264,29 +265,33 @@ app.use((req, res, next) => {
   express.json({ limit: "256kb" })(req, res, next);
 });
 
-// Rate limiting: 50 req/s per IP on /api/* (50+ → 429)
+// Rate limiting: 50 req/s per visitor on /api/* (50+ → 429). Keyed on the visitor's address behind Nginx
+// (server/clientIp.js), not on req.ip, which is always 127.0.0.1 there.
 const apiLimiter = rateLimit({
   windowMs: 1000,
   max: 50,
   message: { error: "Too many requests, please try again later." },
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: ipKey,
 });
-// Chat/messages: 30 messages per minute per IP (flexible limit)
+// Chat/messages: 30 messages per minute per visitor (flexible limit)
 const messagesLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 30,
   message: { error: "Too many message requests, please slow down." },
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: ipKey,
 });
-// Sign-in: 20 per minute per IP
+// Sign-in: 20 per minute per visitor
 const sessionLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 20,
   message: { error: "Too many sign-in requests, please try again in a minute." },
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: ipKey,
 });
 app.use("/api/messages", messagesLimiter);
 app.use("/api", apiLimiter);

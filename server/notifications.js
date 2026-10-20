@@ -16,7 +16,8 @@
  * unless VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY are set. NOTIFICATIONS_ENABLED=false switches it off.
  */
 import { isToken, tokenSymbol } from "./tokens.js";
-import rateLimit, { ipKeyGenerator } from "express-rate-limit";
+import rateLimit from "express-rate-limit";
+import { ipKey } from "./clientIp.js";
 import { z } from "zod";
 import webpush from "web-push";
 import { fetchChain, tradeAsLegacyEscrow, poolsById, configFor } from "./chain.js";
@@ -422,12 +423,7 @@ const subSchema = z.object({
 });
 
 export function registerNotificationRoutes(app, getPool) {
-  const realIp = (req) => {
-    const peer = req.socket?.remoteAddress || "";
-    const fwd = req.get("X-Real-IP");
-    return (fwd && /^(::ffff:)?127\.0\.0\.1$|^::1$/.test(peer)) ? fwd : (req.ip || peer);
-  };
-  const limiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, standardHeaders: true, legacyHeaders: false, keyGenerator: (req) => ipKeyGenerator(realIp(req)) });
+  const limiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, standardHeaders: true, legacyHeaders: false, keyGenerator: ipKey });
 
   // The feed: this wallet's trade items plus recent new offers by others. Newest first.
   app.get("/api/notifications", async (req, res) => {
