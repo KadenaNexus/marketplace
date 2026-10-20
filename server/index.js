@@ -21,7 +21,7 @@ import { registerPayoutRoutes, readEscrowFromChain, sidesOf } from "./payout.js"
 import { registerProofRoutes } from "./proofs.js";
 import { initSessionSecret, isSessionToken, issueSessionToken, verifySessionToken } from "./session.js";
 import express from "express";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import cors from "cors";
 import path from "path";
 import fs from "fs";
@@ -259,8 +259,17 @@ app.use((req, res, next) => {
   express.json({ limit: "256kb" })(req, res, next);
 });
 
-// Rate limiting: 50 req/s per IP on /api/* (50+ → 429)
+// Behind nginx every request comes from 127.0.0.1; the client's address is in X-Real-IP (set only by nginx).
+const realIp = (req) => {
+  const peer = req.socket?.remoteAddress || "";
+  const fwd = req.get("X-Real-IP");
+  return (fwd && /^(::ffff:)?127\.0\.0\.1$|^::1$/.test(peer)) ? fwd : (req.ip || peer);
+};
+const perClient = (req) => ipKeyGenerator(realIp(req));
+
+// Rate limiting: 50 req/s per client IP on /api/* (50+ → 429)
 const apiLimiter = rateLimit({
+  keyGenerator: perClient,
   windowMs: 1000,
   max: 50,
   message: { error: "Too many requests, please try again later." },
@@ -269,6 +278,7 @@ const apiLimiter = rateLimit({
 });
 // Chat/messages: 30 messages per minute per IP (flexible limit)
 const messagesLimiter = rateLimit({
+  keyGenerator: perClient,
   windowMs: 60 * 1000,
   max: 30,
   message: { error: "Too many message requests, please slow down." },
@@ -277,6 +287,7 @@ const messagesLimiter = rateLimit({
 });
 // Sign-in: 20 per minute per IP
 const sessionLimiter = rateLimit({
+  keyGenerator: perClient,
   windowMs: 60 * 1000,
   max: 20,
   message: { error: "Too many sign-in requests, please try again in a minute." },
@@ -285,14 +296,6 @@ const sessionLimiter = rateLimit({
 });
 app.use("/api/messages", messagesLimiter);
 app.use("/api", apiLimiter);
-
-// Debug middleware to log all requests
-app.use((req, res, next) => {
-  if (req.path?.includes("messages")) {
-    console.log(`[Request] ${req.method} ${req.path}`, req.query);
-  }
-  next();
-});
 
 // Serve uploads with safe headers (nosniff to prevent MIME sniffing)
 app.use("/uploads/profiles", (req, res, next) => {
@@ -736,13 +739,30 @@ async function requireDisputeParty(req, res, offerId, from = "body") {
   }
   const before = await pool.query(
     `SELECT 1 FROM disputes WHERE offer_id = $1 AND opened_by_wallet = $2
-     UNION SELECT 1 FROM evidence WHERE offer_id = $1 AND submitted_by = $2
-     UNION SELECT 1 FROM dispute_messages WHERE offer_id = $1 AND from_wallet = $2 LIMIT 1`,
+     UNION SELECT 1 FROM evidence WHERE offer_id = $1 AND submitted_by = $2 LIMIT 1`,
     [offerId, me]
   ).catch(() => ({ rows: [] }));
   if (before.rows.length) return { ok: true, wallet: me, escrow: e };
   res.status(403).json({ error: "Only the two sides of this trade and the arbiter can see or add to its dispute" });
   return { ok: false };
+}
+
+/**
+ * Arbiter-only actions on a dispute: a fresh signature, and the signer must be the arbiter of this
+ * trade as the chain records it. Returns { ok, wallet, escrow } or sends the error.
+ */
+async function requireArbiter(req, res, offerId) {
+  const auth = requireAuth(req, "body", { allowSession: false });
+  if (!auth.ok) { sendAuthError(res, auth); return { ok: false }; }
+  if (req.body?.wallet !== auth.wallet) { res.status(400).json({ error: "Wallet must match authenticated wallet" }); return { ok: false }; }
+  let e;
+  try { e = await readEscrowFromChain(offerId); }
+  catch { res.status(502).json({ error: "Could not check the trade on the chain. Try again." }); return { ok: false }; }
+  if (!e || !e.arbiter || e.arbiter !== auth.wallet) {
+    res.status(403).json({ error: "Only the arbiter of this trade can do this" });
+    return { ok: false };
+  }
+  return { ok: true, wallet: auth.wallet, escrow: e };
 }
 
 // POST /api/profiles/upload-avatar – multipart: image (file), wallet, publicKey, signedCmd (JSON string). Returns { url }.
@@ -1760,13 +1780,10 @@ app.get("/api/disputes/:offerId/actions", validateParams(offerIdParamSchema), as
 
 // PUT /api/disputes/:offerId/review – arbiter marks dispute under review. Body: { wallet, publicKey, signedCmd }
 app.put("/api/disputes/:offerId/review", validateParams(offerIdParamSchema), validateBody(disputeActionBodySchema), async (req, res) => {
-  const auth = requireAuth(req, "body", { allowSession: false });
-  if (!auth.ok) return sendAuthError(res, auth);
-  if (req.body.wallet !== auth.wallet) {
-    return res.status(400).json({ error: "Wallet must match authenticated wallet" });
-  }
-  const wallet = auth.wallet;
   const offerId = req.params.offerId;
+  const auth = await requireArbiter(req, res, offerId);
+  if (!auth.ok) return;
+  const wallet = auth.wallet;
   try {
     const disputeResult = await pool.query("SELECT status FROM disputes WHERE offer_id = $1", [offerId]);
     if (disputeResult.rows.length === 0) return res.status(404).json({ error: "Dispute not found" });
@@ -1791,13 +1808,10 @@ app.put("/api/disputes/:offerId/review", validateParams(offerIdParamSchema), val
 
 // POST /api/disputes/:offerId/request-info – arbiter requests more info. Body: { message?, wallet, publicKey, signedCmd }
 app.post("/api/disputes/:offerId/request-info", validateParams(offerIdParamSchema), validateBody(disputeActionBodySchema), async (req, res) => {
-  const auth = requireAuth(req, "body", { allowSession: false });
-  if (!auth.ok) return sendAuthError(res, auth);
-  if (req.body.wallet !== auth.wallet) {
-    return res.status(400).json({ error: "Wallet must match authenticated wallet" });
-  }
-  const wallet = auth.wallet;
   const offerId = req.params.offerId;
+  const auth = await requireArbiter(req, res, offerId);
+  if (!auth.ok) return;
+  const wallet = auth.wallet;
   const { message } = req.body;
   try {
     const disputeResult = await pool.query("SELECT id FROM disputes WHERE offer_id = $1", [offerId]);
@@ -1823,13 +1837,10 @@ app.post("/api/disputes/:offerId/request-info", validateParams(offerIdParamSchem
 
 // PUT /api/disputes/:offerId/close – arbiter closes dispute. Body: { wallet, publicKey, signedCmd }
 app.put("/api/disputes/:offerId/close", validateParams(offerIdParamSchema), validateBody(disputeActionBodySchema), async (req, res) => {
-  const auth = requireAuth(req, "body", { allowSession: false });
-  if (!auth.ok) return sendAuthError(res, auth);
-  if (req.body.wallet !== auth.wallet) {
-    return res.status(400).json({ error: "Wallet must match authenticated wallet" });
-  }
-  const wallet = auth.wallet;
   const offerId = req.params.offerId;
+  const auth = await requireArbiter(req, res, offerId);
+  if (!auth.ok) return;
+  const wallet = auth.wallet;
   try {
     const disputeResult = await pool.query("SELECT status FROM disputes WHERE offer_id = $1", [offerId]);
     if (disputeResult.rows.length === 0) {
@@ -1856,12 +1867,9 @@ app.put("/api/disputes/:offerId/close", validateParams(offerIdParamSchema), vali
 
 // PUT /api/disputes/:offerId/release-refund-tx – save release or refund transaction request key (called by arbiter after release/refund)
 app.put("/api/disputes/:offerId/release-refund-tx", validateParams(offerIdParamSchema), validateBody(releaseRefundTxBodySchema), async (req, res) => {
-  const auth = requireAuth(req, "body", { allowSession: false });
-  if (!auth.ok) return sendAuthError(res, auth);
-  if (req.body.wallet !== auth.wallet) {
-    return res.status(400).json({ error: "Wallet must match authenticated wallet" });
-  }
   const offerId = req.params.offerId;
+  const auth = await requireArbiter(req, res, offerId);
+  if (!auth.ok) return;
   const { requestKey } = req.body;
   try {
     const disputeResult = await pool.query("SELECT id FROM disputes WHERE offer_id = $1", [offerId]);
