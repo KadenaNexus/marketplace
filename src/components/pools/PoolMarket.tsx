@@ -11,7 +11,7 @@ import { fetchProfilesBulk, type ProfileSummary } from "@/lib/profileApi";
 import { fetchRatingSummariesBulk, type RatingSummary } from "@/lib/ratingApi";
 import { initializeOnlineStatus } from "@/hooks/useOnlineStatus";
 import { useCompletedCounts } from "../Trust";
-import { KADENA_TOKENS, PAYMENT_NETWORKS, isGiveawayPool, isInstant, poolFitsTable } from "@/lib/markets";
+import { KADENA_TOKENS, PAYMENT_NETWORKS, isGiveawayPool, isInstant, missingReceivingAddress, poolFitsTable } from "@/lib/markets";
 import type { PoolListing } from "@/lib/poolsApi";
 import { PoolCard, isTakeable } from "./PoolCard";
 import { TakeSheet } from "./TakeSheet";
@@ -63,14 +63,15 @@ export function PoolFilterBar({ filters, onChange, side }: { filters: PoolFilter
 
 /**
  * Pools that match the filters, for the side I am on. Mine are shown even when nothing is left. A pool whose
- * chain, currency and token module do not match the table (e.g. "kb-USDC" naming another module) is not listed.
+ * chain, currency and token module do not match the table (e.g. "kb-USDC" naming another module) is not listed,
+ * and neither is a USDT/USDC sell pool with no receiving address yet (nobody could pay it).
  */
 export function filterPools(pools: PoolListing[], side: "buyer" | "seller", f: PoolFilters, me?: string): PoolListing[] {
   const want = side === "buyer" ? "SELL" : "BUY";
   const amount = parseFloat(f.amount);
   return pools
     .filter((p) => p.side === want)
-    .filter((p) => p.creator === me || (isTakeable(p) && !p.hidden && poolFitsTable(p)))
+    .filter((p) => p.creator === me || (isTakeable(p) && !p.hidden && poolFitsTable(p) && !missingReceivingAddress(p)))
     .filter((p) => !f.instantOnly || isInstant(p))
     .filter((p) => !f.pay || p.currency === f.pay || p.networks.includes(f.pay))
     .filter((p) => !(amount > 0) || p.creator === me || (amount >= p.min && amount <= p.max && amount <= p.available))
