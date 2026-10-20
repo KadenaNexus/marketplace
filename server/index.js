@@ -297,14 +297,6 @@ const sessionLimiter = rateLimit({
 app.use("/api/messages", messagesLimiter);
 app.use("/api", apiLimiter);
 
-// Debug middleware to log all requests
-app.use((req, res, next) => {
-  if (req.path?.includes("messages")) {
-    console.log(`[Request] ${req.method} ${req.path}`, req.query);
-  }
-  next();
-});
-
 // Serve uploads with safe headers (nosniff to prevent MIME sniffing)
 app.use("/uploads/profiles", (req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
@@ -1262,8 +1254,6 @@ app.get("/api/messages/:otherWallet", validateParams(otherWalletParamSchema), va
   const wallet = auth.wallet;
   const otherWallet = req.params.otherWallet;
 
-  console.log(`[GET /api/messages/:otherWallet] wallet: ${wallet}, otherWallet: ${otherWallet}`);
-
   try {
     // Ensure pool is initialized
     if (!pool) {
@@ -1309,7 +1299,6 @@ app.get("/api/messages/:otherWallet", validateParams(otherWalletParamSchema), va
       attachmentName: row.attachment_name || null,
     }));
     
-    console.log(`[GET /api/messages/:otherWallet] Returning ${messages.length} messages`);
     return res.json(messages);
   } catch (err) {
     console.error("GET /api/messages/:otherWallet", err);
