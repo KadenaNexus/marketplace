@@ -26,6 +26,21 @@ You deploy it from Chainweaver with the same two wallets that govern v10. It tak
 - **Arbiter:** the same as v10, `k:eda1ef1f1528f5f72e153fcb9c2c8178317749429bd48aaf34b6b52fa16598e1`.
 - **Fee:** 0% at launch. The fee account is set to the arbiter account for now and can be changed later with `set-fee`.
 
+## Upgrade 1 (2026-10-20): internal helpers locked down
+
+The deployed module let anyone call `pay-from-trade`, `return-from-trade`, `settle-locked` and `bump` directly (no
+signature), so any open trade's KDA could be moved to any account. `contracts/deploy/upgrade-v11.pact` is the fixed
+module (sha256 2c58b246…4fb7; dry run on both chains: "Loaded module", 46,607 gas). It also makes a revoked agent
+drop out of new trades, validates `set-fee` / `set-arbiter`, and fixes `take-and-settle` when the taker is the fee account.
+
+Deploy it on **chain 1 and then chain 2** exactly like the first deployment (same gov-keyset, both signers, gas limit
+60000, gas price 0.00000001), with these differences:
+- Use `contracts/deploy/upgrade-v11.pact`. It has **no** create-table or init-config lines (the tables exist).
+- Before sending, make sure there are **no open pools or trades** on that chain (`list-offer-ids`, `list-active-trade-ids`),
+  or at least that every open trade is one you control. Open trades survive the upgrade unchanged; closing them first
+  only removes the window while the old code is live.
+- Preview must say **Write succeeded** / "Loaded module free.p2p-escrow-v11". Then send me both request keys.
+
 ## Before you start
 
 - Mica has reviewed the contract. A deployed module can be upgraded by governance, but its tables and trades stay, so treat this as final.
