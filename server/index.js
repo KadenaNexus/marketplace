@@ -23,6 +23,7 @@ import { createAutoRelease, registerAutoReleaseRoutes, startAutoReleaseWatcher }
 import { fetchChain, readTradeWithPool } from "./chain.js";
 import { createChainCache } from "./trust.js";
 import { registerProofRoutes } from "./proofs.js";
+import { createDisputeAuthz } from "./authz.js";
 import { initSessionSecret, isSessionToken, issueSessionToken, verifySessionToken } from "./session.js";
 import express from "express";
 import rateLimit from "express-rate-limit";
@@ -726,35 +727,9 @@ function sendAuthError(res, auth) {
   return res.status(auth.status).json({ error: auth.error, ...(auth.reason && { reason: auth.reason }) });
 }
 
-/**
- * Disputes are private to the two sides of the trade and the arbiter. Who they are is read from the chain.
- * After a refund the chain forgets the buyer, so someone who already took part in this dispute (opened it,
- * sent evidence or a message, all checked at the time) keeps access.
- * Returns { ok, wallet } or sends the error and returns { ok: false }.
- */
-async function requireDisputeParty(req, res, offerId, from = "body") {
-  const auth = requireAuth(req, from);
-  if (!auth.ok) { sendAuthError(res, auth); return { ok: false }; }
-  const data = from === "query" ? req.query : req.body;
-  if (data?.wallet !== auth.wallet) { res.status(400).json({ error: "Wallet must match authenticated wallet" }); return { ok: false }; }
-  const me = auth.wallet;
-  let e;
-  try { e = await readEscrowFromChain(offerId); }
-  catch { res.status(502).json({ error: "Could not check the trade on the chain. Try again." }); return { ok: false }; }
-  if (e) {
-    const { holder, payer } = sidesOf(e);
-    if ((holder && me === holder) || (payer && me === payer) || me === e.arbiter) return { ok: true, wallet: me, escrow: e };
-  }
-  const before = await pool.query(
-    `SELECT 1 FROM disputes WHERE offer_id = $1 AND opened_by_wallet = $2
-     UNION SELECT 1 FROM evidence WHERE offer_id = $1 AND submitted_by = $2
-     UNION SELECT 1 FROM dispute_messages WHERE offer_id = $1 AND from_wallet = $2 LIMIT 1`,
-    [offerId, me]
-  ).catch(() => ({ rows: [] }));
-  if (before.rows.length) return { ok: true, wallet: me, escrow: e };
-  res.status(403).json({ error: "Only the two sides of this trade and the arbiter can see or add to its dispute" });
-  return { ok: false };
-}
+// Disputes are private to the two sides of the trade and the arbiter; arbiter actions are the arbiter's only.
+// Who they are is read from the chain (server/authz.js).
+const { requireDisputeParty, requireArbiter } = createDisputeAuthz({ getPool: () => pool, requireAuth, sendAuthError });
 
 // POST /api/profiles/upload-avatar – multipart: image (file), wallet, publicKey, signedCmd (JSON string). Returns { url }.
 app.post("/api/profiles/upload-avatar", (req, res, next) => {
@@ -1782,13 +1757,10 @@ app.get("/api/disputes/:offerId/actions", validateParams(offerIdParamSchema), as
 
 // PUT /api/disputes/:offerId/review – arbiter marks dispute under review. Body: { wallet, publicKey, signedCmd }
 app.put("/api/disputes/:offerId/review", validateParams(offerIdParamSchema), validateBody(disputeActionBodySchema), async (req, res) => {
-  const auth = requireAuth(req, "body", { allowSession: false });
-  if (!auth.ok) return sendAuthError(res, auth);
-  if (req.body.wallet !== auth.wallet) {
-    return res.status(400).json({ error: "Wallet must match authenticated wallet" });
-  }
-  const wallet = auth.wallet;
   const offerId = req.params.offerId;
+  const arb = await requireArbiter(req, res, offerId, "body");
+  if (!arb.ok) return;
+  const wallet = arb.wallet;
   try {
     const disputeResult = await pool.query("SELECT status FROM disputes WHERE offer_id = $1", [offerId]);
     if (disputeResult.rows.length === 0) return res.status(404).json({ error: "Dispute not found" });
@@ -1813,13 +1785,10 @@ app.put("/api/disputes/:offerId/review", validateParams(offerIdParamSchema), val
 
 // POST /api/disputes/:offerId/request-info – arbiter requests more info. Body: { message?, wallet, publicKey, signedCmd }
 app.post("/api/disputes/:offerId/request-info", validateParams(offerIdParamSchema), validateBody(disputeActionBodySchema), async (req, res) => {
-  const auth = requireAuth(req, "body", { allowSession: false });
-  if (!auth.ok) return sendAuthError(res, auth);
-  if (req.body.wallet !== auth.wallet) {
-    return res.status(400).json({ error: "Wallet must match authenticated wallet" });
-  }
-  const wallet = auth.wallet;
   const offerId = req.params.offerId;
+  const arb = await requireArbiter(req, res, offerId, "body");
+  if (!arb.ok) return;
+  const wallet = arb.wallet;
   const { message } = req.body;
   try {
     const disputeResult = await pool.query("SELECT id FROM disputes WHERE offer_id = $1", [offerId]);
@@ -1845,13 +1814,10 @@ app.post("/api/disputes/:offerId/request-info", validateParams(offerIdParamSchem
 
 // PUT /api/disputes/:offerId/close – arbiter closes dispute. Body: { wallet, publicKey, signedCmd }
 app.put("/api/disputes/:offerId/close", validateParams(offerIdParamSchema), validateBody(disputeActionBodySchema), async (req, res) => {
-  const auth = requireAuth(req, "body", { allowSession: false });
-  if (!auth.ok) return sendAuthError(res, auth);
-  if (req.body.wallet !== auth.wallet) {
-    return res.status(400).json({ error: "Wallet must match authenticated wallet" });
-  }
-  const wallet = auth.wallet;
   const offerId = req.params.offerId;
+  const arb = await requireArbiter(req, res, offerId, "body");
+  if (!arb.ok) return;
+  const wallet = arb.wallet;
   try {
     const disputeResult = await pool.query("SELECT status FROM disputes WHERE offer_id = $1", [offerId]);
     if (disputeResult.rows.length === 0) {
@@ -1878,12 +1844,9 @@ app.put("/api/disputes/:offerId/close", validateParams(offerIdParamSchema), vali
 
 // PUT /api/disputes/:offerId/release-refund-tx – save release or refund transaction request key (called by arbiter after release/refund)
 app.put("/api/disputes/:offerId/release-refund-tx", validateParams(offerIdParamSchema), validateBody(releaseRefundTxBodySchema), async (req, res) => {
-  const auth = requireAuth(req, "body", { allowSession: false });
-  if (!auth.ok) return sendAuthError(res, auth);
-  if (req.body.wallet !== auth.wallet) {
-    return res.status(400).json({ error: "Wallet must match authenticated wallet" });
-  }
   const offerId = req.params.offerId;
+  const arb = await requireArbiter(req, res, offerId, "body");
+  if (!arb.ok) return;
   const { requestKey } = req.body;
   try {
     const disputeResult = await pool.query("SELECT id FROM disputes WHERE offer_id = $1", [offerId]);
