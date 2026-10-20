@@ -102,6 +102,17 @@ test("the addresses: for the creator, a party of a trade on the pool (also one j
   chainTrades.set("pooltest-trade-1", freshTrades.get("pooltest-trade-1"));
   freshTrades.clear();
   assert.equal((await get(BUYER)).status, 200, "a party of a trade on the pool");
+  // a trade that was cancelled or refunded shows the other side nothing any more; a live or finished one does
+  for (const state of ["CANCELLED", "REFUNDED"]) {
+    chainTrades.set("pooltest-trade-x", T({ tradeId: "pooltest-trade-x", buyer: OTHER, state }));
+    assert.equal((await get(OTHER)).status, 403, state);
+    assert.equal((await get(OTHER, "&tradeId=pooltest-trade-x")).status, 403, `${state}, asked by trade id`);
+  }
+  for (const state of ["FUNDED", "PAID", "DISPUTED", "COMPLETED"]) {
+    chainTrades.set("pooltest-trade-x", T({ tradeId: "pooltest-trade-x", buyer: OTHER, state }));
+    assert.equal((await get(OTHER)).status, 200, state);
+  }
+  chainTrades.delete("pooltest-trade-x");
   assert.equal((await getJson(`/api/pools/pooltest-none/payout?${q(SELLER)}`)).status, 404);
   assert.equal((await getJson("/api/pools/pooltest-sell/payout")).status, 400, "no wallet");
 });

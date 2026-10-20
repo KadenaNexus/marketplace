@@ -21,6 +21,8 @@ const TRC20 = /^T[1-9A-HJ-NP-Za-km-z]{33}$/, ERC20 = /^0x[0-9a-fA-F]{40}$/;
 /** network -> address shape (same list as the client's new-offer form) */
 export const NETWORKS = { "USDT:TRC20": TRC20, "USDT:ERC20": ERC20, "USDC:ERC20": ERC20 };
 const MAX_NOTES = 500;
+/** A trade's other side sees the pool's addresses only while there is, or was, something to pay. */
+export const PAYOUT_VISIBLE_STATES = ["FUNDED", "PAID", "DISPUTED", "COMPLETED"];
 
 /** Validate a PUT body. Every listed network needs a fitting address; nothing else is kept. */
 export function cleanPoolDetails(body) {
@@ -116,12 +118,14 @@ export function registerPoolRoutes(app, { getPool, requireAuth, sendAuthError, c
     } catch { return chainDown(res); }
     if (!p) return res.status(404).json({ error: "Pool not found" });
     const isMine = p.creator === w;
-    let party = c.trades.some((t) => t.poolId === id && (t.buyer === w || t.seller === w));
+    // a party of a trade on this pool, while that trade is live or done (not one that was cancelled or refunded)
+    const partyOf = (t) => !!t && t.poolId === id && (t.buyer === w || t.seller === w) && PAYOUT_VISIBLE_STATES.includes(t.state);
+    let party = c.trades.some(partyOf);
     const tradeId = typeof req.query.tradeId === "string" ? req.query.tradeId : "";
     if (!party && !isMine && okId(tradeId)) {
       // a take from a moment ago may not be in the cached read yet: check that one trade on the chain
       let t; try { t = await readTradeFn(tradeId); } catch { return chainDown(res); }
-      party = !!t && t.poolId === id && (t.buyer === w || t.seller === w);
+      party = partyOf(t);
     }
     if (!isMine && !party && w !== configFor(c, p.chain).arbiter) return res.status(403).json({ error: "Payment details are shown to the two sides of a trade on this offer" });
     const r = (await getPool().query("SELECT networks, payout, notes, updated_at FROM pool_details WHERE pool_id = $1", [id])).rows[0];

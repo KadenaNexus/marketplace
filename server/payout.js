@@ -28,6 +28,8 @@ const cfg = () => ({
 export const EDITABLE_STATES = ["CREATED", "ACCEPTED"];
 /** v11 BUY pool: the taker (KDA holder) sets where to be paid right after the take, while the buyer has not paid yet. */
 export const EDITABLE_STATES_V11 = ["FUNDED"];
+/** The payer sees where to pay once the trade is accepted and not once it is over without a payment. */
+export const PAYER_HIDDEN_STATES = ["CREATED", "CANCELLED", "REFUNDED", "CLOSED"];
 const MAX_ITEMS = 6;
 
 /**
@@ -124,7 +126,7 @@ export function registerPayoutRoutes(app, { getPool, requireAuth, sendAuthError,
       const { holder, payer } = sidesOf(e);
       const me = auth.wallet;
       const isHolder = !!holder && me === holder;
-      const allowed = isHolder || (!!payer && me === payer && e.state !== "CREATED") || me === e.arbiter;
+      const allowed = isHolder || (!!payer && me === payer && !PAYER_HIDDEN_STATES.includes(e.state)) || (!!e.arbiter && me === e.arbiter);
       if (!allowed) return res.status(403).json({ error: "Payment details are shown to the two sides of the trade once it is accepted" });
       if (e.poolId && e.side === "SELL") {
         // v11 SELL trade: the seller's addresses live on the pool (pool_details), filtered to the trade's currency

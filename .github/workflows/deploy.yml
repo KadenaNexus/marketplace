@@ -63,6 +63,10 @@ jobs:
         run: npm run test:moderation
       - name: Run completed-trade feed tests
         run: npm run test:feed
+      - name: Run chain reading tests
+        run: npm run test:chain
+      - name: Run pool tests
+        run: npm run test:pools
       - name: Run auto-release tests
         run: npm run test:auto-release
       - name: Run dispute authorization tests
