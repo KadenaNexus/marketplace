@@ -325,7 +325,7 @@ const onTradeStepSettled = ({ offerId, ok }) => {
   io.emit("trade-changed", { offerId });
   notifyTradeChangeSoon();
 };
-registerTradeTxRoutes(app, () => pool, { onSettled: (x) => onTradeStepSettled(x) });
+registerTradeTxRoutes(app, () => pool, { onSettled: (x) => onTradeStepSettled(x), requireAuth: (...a) => requireAuth(...a), sendAuthError: (...a) => sendAuthError(...a) });
 registerMarketRoutes(app);
 // one cached read of the v11 chain (pools, trades, config) shared by the routes that list from it
 const chainCache = createChainCache({ fetchOffers: fetchChain, freshMs: 15 * 1000 });

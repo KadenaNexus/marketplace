@@ -5,8 +5,8 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import pg from "pg";
-import { hash } from "@kadena/cryptography-utils";
-import { parseEscrowCall, recordTradeTx, settlePending, listTradeTxs, followTx } from "./tradeTxs.js";
+import { hash, genKeyPair, signHash } from "@kadena/cryptography-utils";
+import { parseEscrowCall, recordTradeTx, settlePending, listTradeTxs, followTx, signedBySender, followingCount, MAX_PENDING_PER_OFFER } from "./tradeTxs.js";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL || "postgresql://postgres:postgres@localhost:5432/kadena_nexus" });
 const OFFER = "offer-test-tradetxs";
@@ -117,4 +117,49 @@ test("a just-sent step is followed closely and announced once it is confirmed", 
   assert.deepEqual(seen.map((x) => [x.offerId, x.fn, x.ok]), [["offer-test-follow", "release", true]]);
   assert.ok(polls >= 3);
   assert.deepEqual((await listTradeTxs(pool, "offer-test-follow")).map((t) => t.status), ["confirmed"]);
+});
+
+test("proof of the sender: the command's own signature, or the signed-in wallet; a stranger's signature is refused", async () => {
+  const kp = genKeyPair(), me = `k:${kp.publicKey}`, other = genKeyPair();
+  const cmd = cmdFor(`(free.p2p-escrow-v10.mark-paid "offer-test-proof")`, me, { signers: [{ pubKey: kp.publicKey, clist: [] }] });
+  const requestKey = hash(cmd);
+  const mine = signHash(requestKey, kp).sig, theirs = signHash(requestKey, other).sig;
+  assert.equal(signedBySender(cmd, requestKey, [{ sig: mine, pubKey: kp.publicKey }], me), true);
+  assert.equal(signedBySender(cmd, requestKey, [{ sig: mine }], me), true, "no pubKey in the signature: the command's signer at that position");
+  assert.equal(signedBySender(cmd, requestKey, [{ signature: mine, pubKey: kp.publicKey }], me), true, "Ecko's field name");
+  assert.equal(signedBySender(cmd, requestKey, [{ sig: theirs, pubKey: other.publicKey }], me), false, "signed by someone else");
+  assert.equal(signedBySender(cmd, requestKey, [{ sig: theirs, pubKey: kp.publicKey }], me), false, "a wrong signature under the right key");
+  assert.equal(signedBySender(cmd, requestKey, [], me), false);
+  assert.equal(signedBySender(cmd, requestKey, [{ sig: mine, pubKey: kp.publicKey }], ""), false, "no k: sender");
+  // the record: with signatures, with the wallet's proof, or (not strict) bare
+  assert.deepEqual((await recordTradeTx(pool, { cmd, requestKey, sigs: [{ sig: theirs, pubKey: other.publicKey }] })), { error: "The signatures are not the sender's", status: 403 });
+  assert.equal((await recordTradeTx(pool, { cmd, requestKey, sigs: [{ sig: mine }] }, { strict: true })).ok, true);
+  assert.equal((await recordTradeTx(pool, { cmd, requestKey }, { proven: me, strict: true })).ok, true);
+  assert.equal((await recordTradeTx(pool, { cmd, requestKey }, { proven: BUYER, strict: true })).status, 403, "signed in as another wallet");
+  assert.equal((await recordTradeTx(pool, { cmd, requestKey }, { strict: true })).status, 403, "strict: no proof at all");
+  assert.equal((await recordTradeTx(pool, { cmd, requestKey }, { strict: false })).ok, true, "not strict: the bare command is still taken");
+  assert.equal(process.env.TRADE_TXS_REQUIRE_PROOF, undefined, "the default is not strict");
+  await pool.query("DELETE FROM trade_txs WHERE request_key = $1", [requestKey]);
+});
+
+test("a trade keeps at most a few unconfirmed steps, and only so many are followed closely at once", async () => {
+  const id = "offer-test-cap";
+  for (let i = 0; i < MAX_PENDING_PER_OFFER; i++) assert.equal((await send(`(free.p2p-escrow-v10.mark-paid "${id}")`, BUYER)).r.ok, true);
+  const over = await send(`(free.p2p-escrow-v10.mark-paid "${id}")`, BUYER);
+  assert.deepEqual(over.r, { error: "Too many unconfirmed transactions for this trade right now", status: 429 });
+  const first = (await pool.query("SELECT request_key FROM trade_txs WHERE offer_id = $1 ORDER BY created_at LIMIT 1", [id])).rows[0].request_key;
+  assert.equal((await recordTradeTx(pool, { cmd: null, requestKey: first })).error, "Invalid transaction");
+  await pool.query("UPDATE trade_txs SET status = 'ok' WHERE offer_id = $1", [id]);
+  assert.equal((await send(`(free.p2p-escrow-v10.release "${id}")`, SELLER)).r.ok, true, "confirmed steps do not count");
+  // following: a never-answering poll keeps each one in the set until its time is up
+  const never = async () => ({});
+  const before = followingCount();
+  const keys = [];
+  for (let i = 0; i < 3; i++) { const t = await send(`(free.p2p-escrow-v10.mark-paid "offer-test-follow-cap-${i}")`, BUYER); keys.push(t.requestKey); }
+  assert.equal(followTx(() => pool, keys[0], () => {}, { everyMs: 50, forMs: 200, poll: never, max: before + 2 }), true);
+  assert.equal(followTx(() => pool, keys[1], () => {}, { everyMs: 50, forMs: 200, poll: never, max: before + 2 }), true);
+  assert.equal(followTx(() => pool, keys[1], () => {}, { everyMs: 50, forMs: 200, poll: never, max: before + 2 }), true, "already followed");
+  assert.equal(followTx(() => pool, keys[2], () => {}, { everyMs: 50, forMs: 200, poll: never, max: before + 2 }), false, "full: left to the 15 s watcher");
+  await new Promise((r) => setTimeout(r, 400));
+  assert.equal(followingCount(), before, "all let go after their time");
 });
