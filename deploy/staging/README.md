@@ -23,8 +23,9 @@ Nothing here changes the live site, its database, its PM2 processes or its nginx
 |---|---|---|---|
 | A | marketplace-advanced | 89.167.14.58 | 1 hour |
 
-**2. Read-only GitHub token (Naif).** The organization does not allow deploy keys, so the server reads this private
-repository with a fine-grained token that can only read it:
+**2. GitHub access.** The repository is **public** (Naif, Oct 20), so the server needs no key or token and setup skips
+this step. Only if it is made private again: the organization does not allow deploy keys, so create a fine-grained
+token that can only read it, and the setup script asks for it:
 
 - github.com → your photo → **Settings** → **Developer settings** → **Personal access tokens** → **Fine-grained tokens** →
   **Generate new token**.

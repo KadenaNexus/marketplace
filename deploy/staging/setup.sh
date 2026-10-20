@@ -30,7 +30,7 @@ APP_USER=${1:-}; PROD_ENV=${2:-}
 [ -n "$APP_USER" ] && id "$APP_USER" >/dev/null 2>&1 || die "give the PM2 account as the first argument, e.g. sudo bash $0 mustafa"
 APP_HOME=$(getent passwd "$APP_USER" | cut -d: -f6)
 APP_DIR=$APP_HOME/apps/marketplace-advanced
-as_app() { sudo -u "$APP_USER" -H bash -lc "$1"; }
+as_app() { sudo -u "$APP_USER" -H bash -lc "cd ~ && $1"; }
 
 say "Checks"
 for c in nginx certbot psql curl git openssl ss visudo; do command -v "$c" >/dev/null || die "$c is not installed."; done
@@ -45,15 +45,17 @@ if ss -ltn "( sport = :$API_PORT )" | grep -q LISTEN && ! as_app "pm2 describe $
 fi
 echo "ok: tools, DNS ($dns), port $API_PORT"
 
-say "Read-only GitHub access for the private repository"
+say "GitHub access (public repository, or a read-only token if it is private)"
 # A fine-grained GitHub token limited to this repository with Contents: Read-only (the organization does not allow
 # deploy keys). It is kept in a file only the app account can read and is never printed. To renew it, delete
 # that file and run this script again.
 CRED_DIR=$APP_HOME/.config/marketplace-advanced
 CRED=$CRED_DIR/git-credentials
 HELPER="store --file=$CRED"
-can_read() { as_app "git -c credential.helper= -c credential.helper='$HELPER' ls-remote '$REPO_URL' HEAD >/dev/null 2>&1"; }
-until [ -f "$CRED" ] && can_read; do
+can_read() { as_app "GIT_TERMINAL_PROMPT=0 git -c credential.helper= -c credential.helper='$HELPER' ls-remote '$REPO_URL' HEAD >/dev/null 2>&1"; }
+public_repo() { as_app "GIT_TERMINAL_PROMPT=0 git -c credential.helper= ls-remote '$REPO_URL' HEAD >/dev/null 2>&1"; }
+if public_repo; then echo "ok: the repository is public, no token needed"; fi
+until public_repo || { [ -f "$CRED" ] && can_read; }; do
   echo
   echo "Paste the read-only GitHub token for KadenaNexus/marketplace-advanced (it starts with github_pat_)."
   echo "Nothing is shown while you paste. Press Enter after it."
@@ -67,7 +69,7 @@ echo "ok: the server can read the repository"
 
 say "Code"
 if [ ! -d "$APP_DIR/.git" ]; then
-  as_app "mkdir -p '$(dirname "$APP_DIR")' && git -c credential.helper= -c credential.helper='$HELPER' clone --quiet --branch main '$REPO_URL' '$APP_DIR'"
+  as_app "mkdir -p '$(dirname "$APP_DIR")' && GIT_TERMINAL_PROMPT=0 git -c credential.helper= -c credential.helper='$HELPER' clone --quiet --branch main '$REPO_URL' '$APP_DIR'"
 fi
 # Deploys fetch with the same token; the remote URL itself never contains it.
 as_app "cd '$APP_DIR' && git remote set-url origin '$REPO_URL' && git config --replace-all credential.helper '' && git config --add credential.helper '$HELPER'"
