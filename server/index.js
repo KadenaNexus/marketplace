@@ -325,7 +325,7 @@ let pool;
 // Offer alerts by email (off until RESEND_API_KEY is set)
 registerAlertRoutes(app, () => pool);
 // Trade notifications: in-page feed and Web Push
-registerNotificationRoutes(app, () => pool);
+registerNotificationRoutes(app, () => pool, { requireAuth: (...a) => requireAuth(...a), sendAuthError: (...a) => sendAuthError(...a) });
 // A trade step confirmed on the chain: tell open pages at once (they re-read that trade) and send the
 // bell / push notifications now instead of at the next round.
 const onTradeStepSettled = ({ offerId, ok }) => {

@@ -1,4 +1,9 @@
 // Trade notifications feed and Web Push (server/notifications.js). Same-origin /api like the other APIs.
+// A wallet's feed and a device tied to a wallet need that wallet's proof (server/session.js), like every other
+// authenticated read: wallet, publicKey and signedCmd (a session token or a fresh signature).
+export type Who = { account: string; publicKey: string; signedCmd: unknown };
+const proofText = (s: unknown) => (typeof s === "string" ? s : JSON.stringify(s));
+
 const base = (): string => {
   const v = import.meta.env?.VITE_PROFILE_API;
   return typeof v === "string" && v.trim() ? v.trim().replace(/\/$/, "") : "";
@@ -24,13 +29,17 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
-export const fetchFeed = (wallet?: string | null) =>
-  json<{ enabled: boolean; items: FeedItem[] }>(`/api/notifications${wallet ? `?wallet=${encodeURIComponent(wallet)}` : ""}`);
+/** The feed for a signed-in wallet, or (null) the new-offer items only. */
+export const fetchFeed = (who?: Who | null) => {
+  const q = who ? `?${new URLSearchParams({ wallet: who.account, publicKey: who.publicKey, signedCmd: proofText(who.signedCmd) })}` : "";
+  return json<{ enabled: boolean; items: FeedItem[] }>(`/api/notifications${q}`);
+};
 export const getPushKey = () => json<{ enabled: boolean; publicKey?: string }>("/api/push/key");
-export const savePushSubscription = (subscription: PushSubscriptionJSON, wallet: string | null, trades: boolean, offers: boolean) =>
+/** Tie this device to a wallet (with its proof), or (null) to the new-offer notifications only. */
+export const savePushSubscription = (subscription: PushSubscriptionJSON, who: Who | null, trades: boolean, offers: boolean) =>
   json<{ ok: true }>("/api/push/subscribe", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ subscription, wallet, trades, offers }),
+    body: JSON.stringify({ subscription, trades, offers, ...(who ? { wallet: who.account, publicKey: who.publicKey, signedCmd: who.signedCmd } : { wallet: null }) }),
   });
 export const removePushSubscription = (endpoint: string) =>
   json<{ ok: true }>("/api/push/unsubscribe", {

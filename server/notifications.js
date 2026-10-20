@@ -422,14 +422,31 @@ const subSchema = z.object({
   offers: z.boolean().default(false),
 });
 
-export function registerNotificationRoutes(app, getPool) {
+/**
+ * Routes. `requireAuth(req, from)` / `sendAuthError(res, auth)` are the server's proof-of-ownership check
+ * (server/index.js): a feed or a push subscription for a wallet is only given to that wallet.
+ */
+export function registerNotificationRoutes(app, getPool, { requireAuth, sendAuthError } = {}) {
+  if (typeof requireAuth !== "function" || typeof sendAuthError !== "function") throw new Error("registerNotificationRoutes needs requireAuth and sendAuthError");
   const limiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, standardHeaders: true, legacyHeaders: false, keyGenerator: ipKey });
+  /** The wallet named in the request, proven; null when none is named; false after an error was sent. */
+  const provenWallet = (req, res, from) => {
+    const d = from === "query" ? req.query : req.body;
+    if (d?.wallet == null || d.wallet === "") return null;
+    const w = walletSchema.safeParse(d.wallet);
+    if (!w.success) { res.status(400).json({ error: "Invalid wallet" }); return false; }
+    const a = requireAuth(req, from);
+    if (!a.ok) { sendAuthError(res, a); return false; }
+    if (a.wallet !== w.data) { res.status(400).json({ error: "Wallet must match authenticated wallet" }); return false; }
+    return w.data;
+  };
 
-  // The feed: this wallet's trade items plus recent new offers by others. Newest first.
+  // The feed: this wallet's trade items (with wallet, publicKey, signedCmd in the query) plus recent new offers
+  // by others; without a wallet, the new offers only. Newest first.
   app.get("/api/notifications", async (req, res) => {
     if (!enabled()) return res.json({ enabled: false, items: [] });
-    const w = walletSchema.safeParse(req.query.wallet);
-    const wallet = w.success ? w.data : null;
+    const wallet = provenWallet(req, res, "query");
+    if (wallet === false) return;
     try {
       const r = await getPool().query(
         `SELECT n.id, n.wallet, n.offer_id, n.kind, n.title, n.body, n.urgent, n.data, n.created_at, od.price, od.fiat_currency, od.payment_method, ts.state
@@ -458,11 +475,15 @@ export function registerNotificationRoutes(app, getPool) {
     catch (err) { console.error("GET /api/push/key", err.message); return res.status(500).json({ error: "Push is not available." }); }
   });
 
+  // Body: { subscription, trades, offers, wallet?, publicKey?, signedCmd? }: a device is tied to a wallet only with
+  // that wallet's proof; without a wallet it gets the new-offer notifications only.
   app.post("/api/push/subscribe", limiter, async (req, res) => {
     if (!enabled()) return res.status(503).json({ error: "Notifications are off." });
     const p = subSchema.safeParse(req.body || {});
     if (!p.success) return res.status(400).json({ error: "Invalid subscription" });
-    const { subscription: s, wallet, trades, offers } = p.data;
+    const wallet = provenWallet(req, res, "body");
+    if (wallet === false) return;
+    const { subscription: s, trades, offers } = p.data;
     try {
       await getPool().query(
         `INSERT INTO push_subscriptions (endpoint, p256dh, auth, wallet, trades, offers) VALUES ($1, $2, $3, $4, $5, $6)

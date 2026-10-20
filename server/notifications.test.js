@@ -23,7 +23,9 @@ let server, base;
 before(async () => {
   await clean();
   const app = express(); app.use(express.json());
-  registerNotificationRoutes(app, () => pool);
+  // the real server checks a wallet signature; here `signedCmd=ok` for the named wallet is taken as proven
+  const requireAuth = (req, from = "body") => { const d = (from === "query" ? req.query : req.body) || {}; if (!d.wallet) return { ok: false, status: 400, error: "Missing wallet" }; if (d.signedCmd == null) return { ok: false, status: 400, error: "Missing signedCmd" }; if (d.signedCmd !== "ok") return { ok: false, status: 403, error: "Proof of ownership failed" }; return { ok: true, wallet: d.wallet }; };
+  registerNotificationRoutes(app, () => pool, { requireAuth, sendAuthError: (res, a) => res.status(a.status).json({ error: a.error }) });
   await new Promise((r) => { server = app.listen(0, "127.0.0.1", r); });
   base = `http://127.0.0.1:${server.address().port}`;
 });
@@ -199,25 +201,38 @@ test("v11: new pool text", () => {
 
 test("feed over HTTP, messages, and subscribing", async () => {
   await notify(pool, { wallet: B, offer_id: "ntest-1", kind: "message:77", title: "New message", body: "k:aaaa…aaaa sent you a message about a trade." }, { send });
-  let r = await (await fetch(`${base}/api/notifications?wallet=${B}`)).json();
+  let r = await (await fetch(`${base}/api/notifications?wallet=${B}&publicKey=x&signedCmd=ok`)).json();
   const kinds = r.items.map((i) => i.kind);
   assert.ok(kinds.includes("funded") && kinds.includes("message") && kinds.includes("new_offer"), kinds.join(","));
   const offer = r.items.find((i) => i.kind === "new_offer");
   assert.equal(offer.scope, "offer");
   assert.match(offer.body, /paid by Wise/);
-  r = await (await fetch(`${base}/api/notifications?wallet=${S}`)).json();
+  r = await (await fetch(`${base}/api/notifications?wallet=${S}&publicKey=x&signedCmd=ok`)).json();
   assert.ok(!r.items.some((i) => i.kind === "new_offer"), "your own offer is not news to you");
   r = await (await fetch(`${base}/api/notifications`)).json();
   assert.deepEqual([...new Set(r.items.map((i) => i.scope))], ["offer"], "no wallet: only new offers");
+  // a wallet's feed is only for that wallet: no proof, a wrong proof, or a proof for another wallet gets nothing
+  assert.equal((await fetch(`${base}/api/notifications?wallet=${B}`)).status, 400, "wallet without proof");
+  assert.equal((await fetch(`${base}/api/notifications?wallet=${B}&publicKey=x&signedCmd=bad`)).status, 403);
+  assert.equal((await fetch(`${base}/api/notifications?wallet=not-a-wallet&publicKey=x&signedCmd=ok`)).status, 400);
 
   const key = await (await fetch(`${base}/api/push/key`)).json();
   assert.equal(key.enabled, true);
   assert.ok(key.publicKey.length > 60);
-  const sub = { subscription: { endpoint: "https://push.example/new", keys: { p256dh: "x", auth: "y" } }, wallet: X, trades: true, offers: true };
-  let res = await fetch(`${base}/api/push/subscribe`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(sub) });
+  const sub = { subscription: { endpoint: "https://push.example/new", keys: { p256dh: "x", auth: "y" } }, wallet: X, trades: true, offers: true, publicKey: "x", signedCmd: "ok" };
+  const subscribe = (body) => fetch(`${base}/api/push/subscribe`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  let res = await subscribe(sub);
   assert.equal(res.status, 200);
-  res = await fetch(`${base}/api/push/subscribe`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...sub, wallet: "not-a-wallet" }) });
+  assert.equal((await pool.query("SELECT wallet FROM push_subscriptions WHERE endpoint = 'https://push.example/new'")).rows[0].wallet, X);
+  res = await subscribe({ ...sub, wallet: "not-a-wallet" });
   assert.equal(res.status, 400);
+  // a device cannot be tied to a wallet without that wallet's proof
+  assert.equal((await subscribe({ ...sub, signedCmd: undefined })).status, 400, "no proof");
+  assert.equal((await subscribe({ ...sub, signedCmd: "bad" })).status, 403, "wrong proof");
+  assert.equal((await pool.query("SELECT wallet FROM push_subscriptions WHERE endpoint = 'https://push.example/new'")).rows[0].wallet, X, "unchanged");
+  res = await subscribe({ subscription: sub.subscription, wallet: null, trades: true, offers: true });
+  assert.equal(res.status, 200, "no wallet: new offers only, no proof needed");
+  assert.equal((await pool.query("SELECT wallet FROM push_subscriptions WHERE endpoint = 'https://push.example/new'")).rows[0].wallet, null);
   res = await fetch(`${base}/api/push/unsubscribe`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ endpoint: "https://push.example/new" }) });
   assert.equal(res.status, 200);
   assert.equal((await pool.query("SELECT count(*)::int n FROM push_subscriptions WHERE endpoint = 'https://push.example/new'")).rows[0].n, 0);
@@ -232,7 +247,7 @@ test("v11 watcher: pools announce themselves at once, trades notify from FUNDED,
   assert.equal(r.offerPushes, 2, "buyer device and the anonymous device");
   assert.equal(sent[0].body, "Selling 900 KDA, 50–500 per trade, 0.01 USDT per KDA.");
   assert.equal(sent[0].url, "/?offer=pool-ntest-p1");
-  let feed = await (await fetch(`${base}/api/notifications?wallet=${B}`)).json();
+  let feed = await (await fetch(`${base}/api/notifications?wallet=${B}&publicKey=x&signedCmd=ok`)).json();
   assert.equal(feed.items.find((i) => i.offerId === "pool-ntest-p1").open, true);
   // a take: the trade appears FUNDED
   sent.length = 0;
@@ -241,6 +256,6 @@ test("v11 watcher: pools announce themselves at once, trades notify from FUNDED,
   // the pool is closed: it leaves the open list and the feed item is no longer open
   await runNotificationsOnce(pool, { chain: [legacy(tradeOf({ fundedAt: new Date(T0 + 1030e3).toISOString() }))], pools: [], now: T0 + 1060e3, send });
   assert.equal((await pool.query("SELECT state FROM trade_states WHERE offer_id = 'pool-ntest-p1'")).rows[0].state, "CLOSED");
-  feed = await (await fetch(`${base}/api/notifications?wallet=${B}`)).json();
+  feed = await (await fetch(`${base}/api/notifications?wallet=${B}&publicKey=x&signedCmd=ok`)).json();
   assert.equal(feed.items.find((i) => i.offerId === "pool-ntest-p1").open, false);
 });
