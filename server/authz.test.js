@@ -10,6 +10,7 @@ import pg from "pg";
 import express from "express";
 import { createDisputeAuthz } from "./authz.js";
 import { ownedFilename, ownerTag, uploadedBy, mayUseAvatar, shouldDeleteOld } from "./avatars.js";
+import { offersPutBodySchema } from "./validation.js";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL || "postgresql://postgres:postgres@localhost:5432/kadena_nexus" });
 const SELLER = "k:" + "a".repeat(64), BUYER = "k:" + "b".repeat(64), OTHER = "k:" + "c".repeat(64), ARB = "k:" + "d".repeat(64);
@@ -131,4 +132,11 @@ test("profile pictures: a wallet can show and delete only the pictures it upload
   assert.equal(shouldDeleteOld(legacy, null, SELLER, false), true, "an untagged picture nobody else shows goes");
   assert.equal(shouldDeleteOld("https://example.com/a.png", null, SELLER, false), false);
   assert.equal(shouldDeleteOld(null, mine, SELLER, false), false);
+});
+
+test("saving offer details needs a signed-in wallet in the body", () => {
+  const details = { offerId: "offer-1", creator: SELLER, amount: 10, side: "SELL", price: 0.01, paymentMethod: '["Wise"]', fiatCurrency: "USD" };
+  assert.equal(offersPutBodySchema.safeParse(details).success, false, "no proof of ownership");
+  assert.equal(offersPutBodySchema.safeParse({ ...details, wallet: SELLER, publicKey: "x", signedCmd: "x" }).success, true);
+  assert.equal(offersPutBodySchema.safeParse({ ...details, wallet: SELLER, publicKey: "x", signedCmd: { cmd: "…" } }).success, true);
 });

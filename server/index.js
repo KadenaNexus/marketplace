@@ -917,14 +917,28 @@ app.get("/api/offers/:offerId", validateParams(offerIdParamSchema), async (req, 
   }
 });
 
-// PUT /api/offers – upsert off-chain offer details (call before or after create-offer on chain)
+// PUT /api/offers – upsert off-chain offer details (call before or after create-offer on chain).
+// Body: { offerId, creator, amount, side, price, paymentMethod?, fiatCurrency?, wallet, publicKey, signedCmd };
+// the signed-in wallet must be the creator, and an existing row can only be changed by its creator.
 app.put("/api/offers", validateBody(offersPutBodySchema), async (req, res) => {
+  const auth = requireAuth(req);
+  if (!auth.ok) return sendAuthError(res, auth);
+  if (req.body.wallet !== auth.wallet) {
+    return res.status(400).json({ error: "Wallet must match authenticated wallet" });
+  }
   const { offerId, creator, amount, side, price, paymentMethod, fiatCurrency } = req.body;
+  if (creator.trim() !== auth.wallet) {
+    return res.status(403).json({ error: "Only the creator of an offer can save its details" });
+  }
   const amt = amount;
   const pr = price;
   const pm = typeof paymentMethod === "string" ? paymentMethod : "[]";
   const fc = typeof fiatCurrency === "string" ? fiatCurrency.trim().slice(0, 10) : "USD";
   try {
+    const existing = await pool.query("SELECT creator FROM offer_details WHERE offer_id = $1", [offerId.trim()]);
+    if (existing.rows[0] && existing.rows[0].creator !== auth.wallet) {
+      return res.status(403).json({ error: "Only the creator of an offer can save its details" });
+    }
     await pool.query(
       `INSERT INTO offer_details (offer_id, creator, amount, side, price, min_amount, max_amount, payment_method, fiat_currency)
        VALUES ($1, $2, $3, $4, $5, $3, $3, $6, $7)
@@ -951,6 +965,17 @@ app.put("/api/offers/:offerId/fund-tx", validateParams(offerIdParamSchema), vali
   const offerId = req.params.offerId;
   const { requestKey } = req.body;
   try {
+    // only the offer's creator (the KDA holder who deposits) can record the deposit transaction
+    const row = (await pool.query("SELECT creator FROM offer_details WHERE offer_id = $1", [offerId])).rows[0];
+    if (!row) return res.status(404).json({ error: "Offer not found" });
+    let allowed = row.creator === auth.wallet;
+    if (!allowed) {
+      let e;
+      try { e = await readEscrowFromChain(offerId); }
+      catch { return res.status(502).json({ error: "Could not check the trade on the chain. Try again." }); }
+      allowed = !!e && (e.creator === auth.wallet || sidesOf(e).holder === auth.wallet);
+    }
+    if (!allowed) return res.status(403).json({ error: "Only the creator of this offer can save its deposit transaction" });
     await pool.query(
       "UPDATE offer_details SET fund_tx_request_key = $1 WHERE offer_id = $2",
       [requestKey.trim(), offerId]
