@@ -30,8 +30,20 @@ You deploy it from Chainweaver with the same two wallets that govern v10. It tak
 
 The deployed module let anyone call `pay-from-trade`, `return-from-trade`, `settle-locked` and `bump` directly (no
 signature), so any open trade's KDA could be moved to any account. `contracts/deploy/upgrade-v11.pact` is the fixed
-module (sha256 2c58b246…4fb7; dry run on both chains: "Loaded module", 46,607 gas). It also makes a revoked agent
-drop out of new trades, validates `set-fee` / `set-arbiter`, and fixes `take-and-settle` when the taker is the fee account.
+module, revision 2 after an outside review (sha256 7d9c064b…1627; dry run on both chains: "Loaded module", 47,338 gas).
+It also:
+- stops a revoked agent from releasing, including trades that were already open;
+- runs instant-swap token modules without the internal capability, so a token that calls back cannot reach the
+  helpers (mainnet dry run: refused with "INTERNAL has not been granted"; before, only the Pact runtime stopped it);
+- settles split disputes when the fee account is the seller; caps an instant payment at the amount due rounded up;
+- lets the seller dispute as soon as the buyer marks paid (the old extra condition never did anything);
+- gives an open BUY offer its capacity back after a cancel or timeout;
+- accepts a w: multi-signature account as arbiter; validates `set-fee` / `set-arbiter`; fixes `take-and-settle` when the
+  taker is the fee account.
+
+**After deploying, check the module hash on both chains** (Chainweaver → Contracts → module explorer, or ask me): it must
+be `R3ER6cBjt19Xu7qTps_qP3LDQTBje4RYH22KsVE3LFc`. The code live before the upgrade has hash
+`1H3wF77L8mzzN3jeo8Z4yXhBUqdPmoi8C02t8pxWIyg`.
 
 Deploy it on **chain 1 and then chain 2** exactly like the first deployment (same gov-keyset, both signers, gas limit
 60000, gas price 0.00000001), with these differences:
