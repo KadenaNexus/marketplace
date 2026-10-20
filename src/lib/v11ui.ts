@@ -4,7 +4,7 @@
  * "keep this page open" countdown.
  */
 import type { IUnsignedCommand } from "@kadena/client";
-import { PLATFORM_ARBITER, getTxExplorerUrl, pollTransaction, signTransaction, submitTransaction, type Escrow } from "./kadena";
+import { PAY_WINDOW_PASSED_MESSAGE, PLATFORM_ARBITER, getTxExplorerUrl, isPayWindowPassed, pollTransaction, signTransaction, submitTransaction, type Escrow } from "./kadena";
 import { setTxLabel, txFinished } from "./txProgress";
 import { readConfigs, readPools, readTrades, tradeToEscrow, type Pool, type Trade, type V11Config } from "./v11";
 import { getPoolDetails, getPoolsIndex } from "./poolsApi";
@@ -53,8 +53,24 @@ export function v11Deadline(e: V11Escrow): { iso?: string; limit: number } {
 }
 
 export const kda = (n: number) => `${n.toLocaleString("en-US", { maximumFractionDigits: 4 })} KDA`;
-/** "USDT 1.20" for the trade; the pool's token symbol for instant trades (with the token's decimals, kb-ETH up to 18). */
-export const payText = (t: Trade) => `${t.currency} ${t.payAmount.toLocaleString("en-US", { maximumFractionDigits: Math.min(20, kadenaToken(t.currency)?.precision ?? 6) })}`;
+/**
+ * The contract's pay-amount exactly as the buyer must send it (up to 6 decimals, no rounding, no thousands
+ * separators): "1.2", "1234.567891". What is shown is what Copy copies, so the buyer never sends a rounded amount.
+ */
+export const exactPay = (n: number) => Number(n).toFixed(6).replace(/\.?0+$/, "");
+/** "USDT 1.2" for the trade (the exact pay-amount); the pool's token symbol for instant trades (with the token's decimals, kb-ETH up to 18). */
+export const payText = (t: Trade) => isInstant(t)
+  ? `${t.currency} ${t.payAmount.toLocaleString("en-US", { maximumFractionDigits: Math.min(20, kadenaToken(t.currency)?.precision ?? 6) })}`
+  : `${t.currency} ${exactPay(t.payAmount)}`;
+
+/**
+ * "I paid" checks the device clock, the contract checks the block time. The button goes 90 s before the window
+ * ends, so a tap a few seconds late is not refused by the chain; under 2 minutes the buyer is told to pay only if
+ * they can tap at once.
+ */
+export const PAY_MARGIN_S = 90;
+export const PAY_WARN_S = 120;
+export const PAY_LAST_MINUTES_NOTE = "Less than 2 minutes left: pay only if you can tap I paid right now.";
 
 /**
  * The trade names the platform's release agent (auto-release): it releases on its own once the exact payment arrives.
@@ -67,7 +83,7 @@ export const hasAgent = (e: V11Escrow) => !!e.trade.agent;
  * One plain sentence for a v11 trade: whose turn it is and what to press. Button names match the trade
  * buttons: I paid, Release, Take KDA back, Cancel, Open dispute.
  */
-export function v11NextStep(e: V11Escrow, me: string | undefined, expired: boolean): string {
+export function v11NextStep(e: V11Escrow, me: string | undefined, expired: boolean, remaining?: number | null): string {
   const t = e.trade;
   const amount = kda(t.amount);
   const seller = !!me && me === t.seller;
@@ -75,19 +91,23 @@ export function v11NextStep(e: V11Escrow, me: string | undefined, expired: boole
   const agent = hasAgent(e);
   const pay = payText(t);
   switch (t.state) {
-    case "FUNDED":
-      if (expired) {
+    case "FUNDED": {
+      // the buyer's I paid button goes PAY_MARGIN_S early (block time vs device time), so their text does too
+      const buyerClosed = expired || (buyer && typeof remaining === "number" && remaining <= PAY_MARGIN_S);
+      if (buyerClosed) {
         if (seller) return "The payment window closed. You can take your KDA back with Take KDA back. If the buyer did pay, you can still release instead.";
-        if (buyer) return "The payment window closed, so the seller can take the KDA back. If you already paid, message the seller in the chat right away.";
+        if (buyer) return "The payment window closed. Paid but too late to tap I paid? Open a dispute now, otherwise the seller can take the KDA back.";
         return "The payment window closed; the seller can take the KDA back.";
       }
-      if (buyer) return agent
+      const lastMinutes = buyer && typeof remaining === "number" && remaining <= PAY_WARN_S ? ` ${PAY_LAST_MINUTES_NOTE}` : "";
+      if (buyer) return (agent
         ? `Your turn: ${amount} is locked for you. Send the exact amount shown below to the address below. The KDA is released automatically when it arrives.`
-        : `Your turn: ${amount} is locked for you. Send exactly ${pay} to the address below, then press I paid before the time runs out.`;
+        : `Your turn: ${amount} is locked for you. Send exactly ${pay} to the address below, then press I paid before the time runs out.`) + lastMinutes;
       if (seller) return agent
         ? `${amount} is locked in escrow. Waiting for the buyer's payment; auto-release sends the KDA when the exact amount arrives. You can still release yourself.`
         : `${amount} is locked in escrow. Waiting for the buyer to send ${pay} and press I paid. Do not release before the money has arrived.`;
       return `${amount} is locked in escrow. Waiting for the buyer's payment.`;
+    }
     case "PAID":
       if (expired) return "The release window closed. Either side can open a dispute; the arbiter then reviews the trade and decides.";
       if (seller) return `Your turn: the buyer says ${pay} was sent. Check that it arrived in full, then press Release to send the ${amount}.`;
@@ -138,6 +158,7 @@ export async function sendV11(label: string, build: () => IUnsignedCommand, { ho
         const o = err as Record<string, unknown>;
         msg = String(o.message ?? o.msg ?? o.info ?? o.detail ?? msg);
       }
+      if (isPayWindowPassed(msg)) msg = PAY_WINDOW_PASSED_MESSAGE;
       const e = new ChainError(msg);
       e.requestKey = requestKey;
       throw e;

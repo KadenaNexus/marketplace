@@ -46,8 +46,8 @@ export function formatCountdown(seconds: number): string {
  * Button names match the trade buttons: Deposit, Mark as Paid, Release to Buyer,
  * Refund, Move to dispute, Close offer.
  */
-export function nextStep(escrow: Escrow, me: string | undefined, expired: boolean): string {
-  if (isV11(escrow)) return v11NextStep(escrow, me, expired);
+export function nextStep(escrow: Escrow, me: string | undefined, expired: boolean, remaining?: number | null): string {
+  if (isV11(escrow)) return v11NextStep(escrow, me, expired, remaining);
   const kda = `${escrow.amount.toLocaleString("en-US", { maximumFractionDigits: 4 })} KDA`;
   const seller = !!me && me === escrow.seller;
   const buyer = !!me && me === escrow.buyer;
@@ -149,8 +149,8 @@ export function TradeTimer({ escrow, me, className }: TradeTimerProps) {
           )}
         </>
       )}
-      {nextStep(escrow, me, expired) && (
-        <p className="basis-full text-muted-foreground">{nextStep(escrow, me, expired)}</p>
+      {nextStep(escrow, me, expired, remaining) && (
+        <p className="basis-full text-muted-foreground">{nextStep(escrow, me, expired, remaining)}</p>
       )}
     </div>
   );

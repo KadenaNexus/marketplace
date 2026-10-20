@@ -122,9 +122,9 @@ export function YourTurnCard({ escrow: e, me, canAccept }: { escrow: Escrow; me?
     text = isV11(e) ? nextStep(e, me, false)
       : e.state === "COMPLETED" ? "The KDA was released to the buyer." : e.state === "REFUNDED" ? "The KDA went back to the seller." : "This offer was closed.";
   } else {
-    const s = nextStep(e, me, expired);
+    const s = nextStep(e, me, expired, remaining);
     if (s.startsWith("Your turn: ")) { eyebrow = "Your turn"; text = s.slice("Your turn: ".length); }
-    else { eyebrow = expired ? "Time is up" : "Waiting"; text = s; }
+    else { eyebrow = expired || s.startsWith("The payment window closed") ? "Time is up" : "Waiting"; text = s; }
     text = text.charAt(0).toUpperCase() + text.slice(1);
   }
   const mine = eyebrow === "Your turn" || eyebrow === "Before you accept";

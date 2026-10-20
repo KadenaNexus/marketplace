@@ -1,4 +1,4 @@
-import { txSettled, txSubmitted } from "./txProgress";
+import { txLabelOf, txSettled, txSubmitted } from "./txProgress";
 import {
   type ChainId,
   IUnsignedCommand,
@@ -359,11 +359,12 @@ const kda = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 4 
 
 /**
  * Null when the account has `needed` KDA (plus gas) on `chain` (default: this app's chain); otherwise a title
- * and a plain explanation naming where the person's KDA actually is and how to move it.
+ * and a plain explanation naming where the person's KDA actually is and how to move it. `gasKda` is what the
+ * transaction can spend on gas (a v11 take needs more than the v10 default, see v11.ts gasKda).
  */
-export async function appChainShortfall(account: string, needed: number, chain: string = CHAIN_ID): Promise<{ title: string; description: string } | null> {
+export async function appChainShortfall(account: string, needed: number, chain: string = CHAIN_ID, gasKda: number = TX_GAS_KDA): Promise<{ title: string; description: string } | null> {
   const c = String(chain);
-  const need = needed + TX_GAS_KDA;
+  const need = needed + gasKda;
   const have = await balanceOnChain(account, c);
   if (have + 1e-9 >= need) return null;
   const others = await readOtherChainBalances(account, c).catch(() => []);
@@ -384,6 +385,60 @@ export async function appChainShortfall(account: string, needed: number, chain: 
 /** True when a chain error is the coin contract's "not enough funds" failure. */
 export function isInsufficientFunds(message: string): boolean {
   return /insufficient (funds|balance)/i.test(message);
+}
+
+/** The node refused the command because its time-to-live ran out or its creation time was off (nothing was sent). */
+export function isTtlRejection(message: string): boolean {
+  return /time[- ]to[- ]live|\bTTL\b|creation[- ]?time|transaction time|too far in the (past|future)/i.test(message);
+}
+export const TTL_REJECTED_MESSAGE = "Approval took too long, nothing was sent. Please try again.";
+/** The contract's mark-paid refusal once the buyer's window has closed. */
+export function isPayWindowPassed(message: string): boolean {
+  return /payment window has passed/i.test(message);
+}
+export const PAY_WINDOW_PASSED_MESSAGE = "The payment window closed before the chain saw your I paid, so it was not recorded. If you did send the money, write to the seller in the chat and open a dispute so the arbiter can check.";
+
+/* ---------- a sent transaction this browser is still waiting for ----------
+ * The result of a send can take longer than we wait for (a slow block, a page closed too soon). The request key is
+ * kept on this device until the chain answers, so the next visit can check it instead of sending again. */
+
+export interface PendingTx { requestKey: string; chain: string; label: string; sentAt: number }
+const PENDING_KEY = "nx-pending-tx";
+/** After this long an unanswered request can no longer be mined (TTL 30 min plus margin): forget it. */
+const PENDING_MAX_MS = 60 * 60 * 1000;
+export function readPendingTx(): PendingTx | null {
+  try {
+    const p = JSON.parse(localStorage.getItem(PENDING_KEY) || "null") as PendingTx | null;
+    if (!p || typeof p.requestKey !== "string" || !p.requestKey) return null;
+    if (Date.now() - Number(p.sentAt || 0) > PENDING_MAX_MS) { forgetPendingTx(p.requestKey); return null; }
+    return p;
+  } catch { return null; }
+}
+function rememberPendingTx(p: PendingTx) { try { localStorage.setItem(PENDING_KEY, JSON.stringify(p)); } catch { /* ignore */ } }
+export function forgetPendingTx(requestKey: string) {
+  try { if (readRaw()?.requestKey === requestKey) localStorage.removeItem(PENDING_KEY); } catch { /* ignore */ }
+}
+function readRaw(): PendingTx | null { try { return JSON.parse(localStorage.getItem(PENDING_KEY) || "null"); } catch { return null; } }
+/** One look at the chain (no waiting): "done" when it has an answer (or the request is too old to land), else "pending". */
+export async function checkPendingTx(p: PendingTx): Promise<"done" | "pending"> {
+  if (Date.now() - p.sentAt > PENDING_MAX_MS) { forgetPendingTx(p.requestKey); return "done"; }
+  try {
+    const r = await clientFor(p.chain).getStatus({ requestKey: p.requestKey, chainId: p.chain as ChainId, networkId: NETWORK_ID });
+    if (r && r[p.requestKey]) { forgetPendingTx(p.requestKey); return "done"; }
+  } catch { /* the node did not answer: still pending */ }
+  return "pending";
+}
+
+/** Polling gave up before the chain answered. The transaction may still land: never send it again. */
+export class TxUnresolvedError extends Error {
+  requestKey: string;
+  chain: string;
+  constructor(requestKey: string, chain: string) {
+    super(`Still confirming on the chain. Do not send it again. Check the explorer link. Request key: ${requestKey} (${getTxExplorerUrl(requestKey)})`);
+    this.name = "TxUnresolvedError";
+    this.requestKey = requestKey;
+    this.chain = chain;
+  }
 }
 
 /** A signed command, a wallet's `{ signedCmd }` answer, or a list of commands. */
@@ -414,6 +469,8 @@ export async function submitTransaction(signedCmd: unknown): Promise<string> {
     if (res.status >= 500) {
       console.error("[submitTransaction] 5xx response body:", text.slice(0, 3000));
     }
+    // the signed command sat in the wallet past its time-to-live: the node drops it, nothing happened
+    if (isTtlRejection(msg)) throw new Error(TTL_REJECTED_MESSAGE);
     throw new Error(`Send failed (${res.status}): ${msg}`);
   }
   const data = JSON.parse(text) as { requestKeys?: string[] };
@@ -422,6 +479,7 @@ export async function submitTransaction(signedCmd: unknown): Promise<string> {
   for (const k of keys) sentOnChain.set(k, chain);
   if (!Array.isArray(cmd)) recordTradeTx(cmd, keys[0]);
   txSubmitted(keys[0]); // the "keep this page open" countdown, until pollTransaction() has the result
+  rememberPendingTx({ requestKey: keys[0], chain, label: txLabelOf() || "Your last transaction", sentAt: Date.now() });
   return keys[0];
 }
 
@@ -467,42 +525,19 @@ export async function fetchTradeTxs(offerId: string): Promise<TradeTx[]> {
 export async function pollTransaction(requestKey: string, chain?: string) {
   const c = String(chain ?? sentOnChain.get(requestKey) ?? CHAIN_ID);
   try {
-    return await clientFor(c).pollOne(
+    const r = await clientFor(c).pollOne(
       { requestKey, chainId: c as ChainId, networkId: NETWORK_ID },
       { interval: 1500, timeout: 4 * 60 * 1000 },
     );
+    forgetPendingTx(requestKey);
+    return r;
+  } catch (e) {
+    // @kadena/client gives up with Error('TIME_OUT_REJECT'): the transaction is not lost, only not answered yet
+    if (e instanceof Error && /TIME_OUT_REJECT/.test(e.message)) throw new TxUnresolvedError(requestKey, c);
+    throw e;
   } finally {
     txSettled(requestKey);
   }
-}
-
-/** Recipient for the "Test transfer 10 KDA" flow. */
-const TEST_TRANSFER_RECIPIENT = "k:665976b8f985c0119c3afa74115fde19f71309cc85428a7104dc2648252b593e";
-
-/**
- * Sign and submit a 10 KDA transfer to the test address. Use to verify the node and signing work.
- * @returns requestKey
- */
-export async function sendTestTransfer(account: string, publicKey: string): Promise<string> {
-  const signer = signerPayloadForAccount(account, publicKey);
-  const amountCap = { decimal: "10" };
-  // meta.sender = gas payer: must match coin-table key (try full k:account; some nodes key by it)
-  // If you see "No value found in table coin_coin-table": account has no KDA on mainnet01 chain 1 — fund it first.
-  const tx = Pact.builder
-    .execution(`(coin.transfer "${account}" "${TEST_TRANSFER_RECIPIENT}" 10.0)`)
-    .addSigner(signer, () => [])
-    .setMeta({
-      chainId: CHAIN_ID,
-      senderAccount: account,
-      gasLimit: GAS_LIMIT,
-      gasPrice: GAS_PRICE,
-      ttl: 600,
-    })
-    .setNetworkId(NETWORK_ID)
-    .createTransaction();
-
-  const signed = await signTransaction(tx);
-  return submitTransaction(signed);
 }
 
 /* ============================================================

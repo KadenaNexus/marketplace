@@ -24,7 +24,19 @@ export { canonicalRef, parseRef, toRef };
 
 /** Gas for v11 calls: a take moves KDA and emits an event, so it needs more than a v10 call. */
 export const GAS_V11 = 9000;
+export const GAS_V11_CREATE = 12000;
+export const GAS_V11_TAKE = 12000;
+export const GAS_V11_SETTLE = 15000;
 export const GAS_V11_READ = 150000;
+/** KDA one transaction can spend on gas at our price (the gas limit × the gas price): what a balance check must leave. */
+export const gasKda = (gasLimit: number) => gasLimit * GAS_PRICE;
+/**
+ * Seconds a signed transaction stays valid (meta.ttl). Approving in a phone wallet can take a while; 30 minutes
+ * leaves room for that. The creation time is set 30 s in the past so a device clock slightly ahead of the chain's
+ * does not get the transaction refused as "from the future".
+ */
+export const TX_TTL_S = 1800;
+export const TX_CREATION_SKEW_S = 30;
 
 export type PoolState = "OPEN" | "CLOSED";
 export type TradeState = "FUNDED" | "PAID" | "DISPUTED" | "COMPLETED" | "SPLIT" | "REFUNDED" | "CANCELLED";
@@ -206,7 +218,7 @@ function tx(chain: string, code: string, account: string, pubKey: string, caps: 
   return b
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     .addSigner(signer, (s) => caps.map((c) => (s as any)(c[0], ...c.slice(1))))
-    .setMeta({ chainId: chain as ChainId, senderAccount: account, gasLimit, gasPrice: GAS_PRICE, ttl: 600 })
+    .setMeta({ chainId: chain as ChainId, senderAccount: account, gasLimit, gasPrice: GAS_PRICE, ttl: TX_TTL_S, creationTime: Math.floor(Date.now() / 1000) - TX_CREATION_SKEW_S })
     .setNetworkId(NETWORK_ID).createTransaction();
 }
 const AUTH = `${V11_FQN}.ACCOUNT_AUTH`;
@@ -226,11 +238,17 @@ export function buildCreatePoolTx(p: CreatePoolParams) {
     if (!p.vault) throw new Error("vault required for a SELL pool");
     caps.push(["coin.TRANSFER", p.creator, p.vault, { decimal: dec(p.total) }]);
   }
-  return tx(chain, code, p.creator, p.pubKey, caps, 12000);
+  return tx(chain, code, p.creator, p.pubKey, caps, GAS_V11_CREATE);
 }
-export function buildTopUpTx(poolRef: string, creator: string, pubKey: string, amount: number, vault: string) {
+/** Add KDA to a pool. Only a SELL pool moves coins (into its vault), so only then is the coin.TRANSFER capability asked for. */
+export function buildTopUpTx(poolRef: string, creator: string, pubKey: string, amount: number, side: "SELL" | "BUY", vault?: string) {
   const { chain, id } = parseRef(poolRef);
-  return tx(chain, `(${V11_FQN}.top-up ${q(id)} ${dec(amount)})`, creator, pubKey, [["coin.GAS"], [AUTH, creator], ["coin.TRANSFER", creator, vault, { decimal: dec(amount) }]]);
+  const caps: Cap[] = [["coin.GAS"], [AUTH, creator]];
+  if (side === "SELL") {
+    if (!vault) throw new Error("vault required to top up a SELL pool");
+    caps.push(["coin.TRANSFER", creator, vault, { decimal: dec(amount) }]);
+  }
+  return tx(chain, `(${V11_FQN}.top-up ${q(id)} ${dec(amount)})`, creator, pubKey, caps);
 }
 export function buildWithdrawTx(poolRef: string, creator: string, pubKey: string, amount: number) {
   const { chain, id } = parseRef(poolRef);
@@ -258,14 +276,14 @@ export function buildTakeTx(tradeRef: string, poolRef: string, taker: string, pu
     if (!tradeVaultAccount) throw new Error("trade vault required for a BUY pool");
     caps.push(["coin.TRANSFER", taker, tradeVaultAccount, { decimal: dec(amount) }]);
   }
-  return tx(chain, `(${V11_FQN}.take-offer ${q(tradeId)} ${q(poolId)} ${q(taker)} ${dec(amount)})`, taker, pubKey, caps, 12000);
+  return tx(chain, `(${V11_FQN}.take-offer ${q(tradeId)} ${q(poolId)} ${q(taker)} ${dec(amount)})`, taker, pubKey, caps, GAS_V11_TAKE);
 }
 /** Instant: pay `pay` (a decimal string from tokenPayFor) of `tokenModule` to the seller and receive the KDA in one transaction. */
 export function buildTakeAndSettleTx(tradeRef: string, poolRef: string, taker: string, pubKey: string, amount: number, tokenModule: string, seller: string, pay: string) {
   const { chain, tradeId, poolId } = sameChain(tradeRef, poolRef);
   if (!/^\d+\.\d+$/.test(pay)) throw new Error(`Bad payment amount: ${pay}`);
   return tx(chain, `(${V11_FQN}.take-and-settle ${q(tradeId)} ${q(poolId)} ${q(taker)} ${dec(amount)} ${tokenModule} ${pay})`, taker, pubKey,
-    [["coin.GAS"], [AUTH, taker], [`${tokenModule}.TRANSFER`, taker, seller, { decimal: pay }]], 15000);
+    [["coin.GAS"], [AUTH, taker], [`${tokenModule}.TRANSFER`, taker, seller, { decimal: pay }]], GAS_V11_SETTLE);
 }
 /** A step on an existing trade, on the trade's chain. */
 const tradeStep = (fn: string, tradeRef: string, caller: string, pubKey: string, extra = "") => {
