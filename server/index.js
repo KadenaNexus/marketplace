@@ -11,7 +11,7 @@
 import "dotenv/config";
 import { registerAlertRoutes, startAlertWatcher } from "./alerts.js";
 import { registerMarketRoutes } from "./market.js";
-import { registerTrustRoutes, recheckCompletedOffers } from "./trust.js";
+import { registerTrustRoutes, recheckCompletedOffers, ratingSummaries } from "./trust.js";
 import { registerOfferModerationRoutes, startPoolExpiryWatcher, expiryDays } from "./offerModeration.js";
 import { registerCompletedFeedRoutes, completedItem } from "./completedFeed.js";
 import { registerTradeEmailRoutes, emailNotification } from "./tradeEmails.js";
@@ -2022,40 +2022,7 @@ app.get("/api/ratings/trade/:offerId", validateParams(offerIdParamSchema), async
 app.get("/api/ratings/summary/:wallet", validateParams(walletParamSchema), async (req, res) => {
   const wallet = req.params.wallet;
   try {
-    const completed = await pool.query(
-      "SELECT COUNT(*) AS cnt FROM completed_offers WHERE buyer_wallet = $1 OR seller_wallet = $1",
-      [wallet]
-    );
-    const completedTrades = parseInt(completed.rows[0]?.cnt ?? "0", 10);
-
-    const disputed = await pool.query(
-      `SELECT COUNT(DISTINCT d.id) AS cnt
-       FROM disputes d
-       INNER JOIN completed_offers c ON c.offer_id = d.offer_id
-       WHERE c.buyer_wallet = $1 OR c.seller_wallet = $1`,
-      [wallet]
-    );
-    const disputedCount = parseInt(disputed.rows[0]?.cnt ?? "0", 10);
-
-    // Completion rate: share of completed trades that had no dispute
-    const completionRate = completedTrades > 0
-      ? Math.max(0, (completedTrades - disputedCount) / completedTrades)
-      : 1;
-
-    const agg = await pool.query(
-      "SELECT COALESCE(AVG(rating), 0) AS avg_rating, COUNT(*) AS cnt FROM ratings WHERE rated_wallet = $1",
-      [wallet]
-    );
-    const averageRating = parseFloat(agg.rows[0]?.avg_rating ?? "0");
-    const totalRatings = parseInt(agg.rows[0]?.cnt ?? "0", 10);
-
-    return res.json({
-      averageRating: Math.round(averageRating * 10) / 10,
-      totalRatings,
-      completedTrades,
-      disputedCount,
-      completionRate: Math.round(completionRate * 100) / 100,
-    });
+    return res.json((await ratingSummaries(pool, [wallet]))[wallet]);
   } catch (err) {
     console.error("GET /api/ratings/summary/:wallet", err);
     return res.status(500).json({ error: err.message || "Database error" });
@@ -2063,43 +2030,12 @@ app.get("/api/ratings/summary/:wallet", validateParams(walletParamSchema), async
 });
 
 // POST /api/ratings/summary/bulk – body: { wallets: string[] }; returns { [wallet]: { averageRating, totalRatings, completedTrades, disputedCount, completionRate } }
+// Three grouped queries for the whole list (server/trust.js), not three per wallet.
 app.post("/api/ratings/summary/bulk", validateBody(ratingsSummaryBulkBodySchema), async (req, res) => {
   const list = req.body.wallets;
   if (list.length === 0) return res.json({});
   try {
-    const out = {};
-    for (const w of list) {
-      const completed = await pool.query(
-        "SELECT COUNT(*) AS cnt FROM completed_offers WHERE buyer_wallet = $1 OR seller_wallet = $1",
-        [w]
-      );
-      const completedTrades = parseInt(completed.rows[0]?.cnt ?? "0", 10);
-      const disputed = await pool.query(
-        `SELECT COUNT(DISTINCT d.id) AS cnt
-         FROM disputes d
-         INNER JOIN completed_offers c ON c.offer_id = d.offer_id
-         WHERE c.buyer_wallet = $1 OR c.seller_wallet = $1`,
-        [w]
-      );
-      const disputedCount = parseInt(disputed.rows[0]?.cnt ?? "0", 10);
-      const completionRate = completedTrades > 0
-        ? Math.max(0, (completedTrades - disputedCount) / completedTrades)
-        : 1;
-      const agg = await pool.query(
-        "SELECT COALESCE(AVG(rating), 0) AS avg_rating, COUNT(*) AS cnt FROM ratings WHERE rated_wallet = $1",
-        [w]
-      );
-      const averageRating = parseFloat(agg.rows[0]?.avg_rating ?? "0");
-      const totalRatings = parseInt(agg.rows[0]?.cnt ?? "0", 10);
-      out[w] = {
-        averageRating: Math.round(averageRating * 10) / 10,
-        totalRatings,
-        completedTrades,
-        disputedCount,
-        completionRate: Math.round(completionRate * 100) / 100,
-      };
-    }
-    return res.json(out);
+    return res.json(await ratingSummaries(pool, list));
   } catch (err) {
     console.error("POST /api/ratings/summary/bulk", err);
     return res.status(500).json({ error: err.message || "Database error" });
