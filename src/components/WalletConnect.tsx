@@ -1,10 +1,7 @@
-import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useWallet } from "@/hooks/useWallet";
 import { useV11ChainBalances } from "@/hooks/useAppChainBalance";
-import { sendTestTransfer } from "@/lib/kadena";
-import { Wallet, LogOut, AlertCircle, Loader2, Send } from "lucide-react";
-import { toast } from "sonner";
+import { Wallet, LogOut, AlertCircle } from "lucide-react";
 import { linxStoreLink } from "./OpenInLinx";
 import { useLang } from "./NexusLanding";
 
@@ -16,20 +13,6 @@ export function WalletConnect({ inHeader = false }: { inHeader?: boolean } = {})
   const t = lang === "ar"
     ? { short: "ربط", full: "اربط المحفظة", connecting: "جارٍ الربط..." }
     : { short: "Connect", full: "Connect Wallet", connecting: "Connecting..." };
-  const [isSending, setIsSending] = useState(false);
-
-  const handleTestTransfer = async () => {
-    if (!account) return;
-    setIsSending(true);
-    try {
-      const requestKey = await sendTestTransfer(account.account, account.publicKey);
-      toast.success("10 KDA sent!", { description: `Request key: ${requestKey.slice(0, 16)}...` });
-    } catch (e) {
-      toast.error("Transfer failed", { description: e instanceof Error ? e.message : "Unknown error" });
-    } finally {
-      setIsSending(false);
-    }
-  };
 
   const shortenAddress = (address: string) => {
     return `${address.slice(0, 8)}...${address.slice(-6)}`;
@@ -66,21 +49,6 @@ export function WalletConnect({ inHeader = false }: { inHeader?: boolean } = {})
             </span>
           )}
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleTestTransfer}
-          disabled={isSending}
-          className="gap-2 hidden"
-          title="Send 10 KDA to test address to verify node and signing"
-        >
-          {isSending ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Send className="h-4 w-4" />
-          )}
-          Test 10 KDA
-        </Button>
         <Button 
           variant="outline" 
           size="sm" 

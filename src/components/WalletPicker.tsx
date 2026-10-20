@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BellRing, Check, ChevronRight, Copy, Loader2, Monitor, QrCode, Smartphone, X } from "lucide-react";
+import { AlertTriangle, BellRing, Check, ChevronRight, Copy, Loader2, Monitor, QrCode, Smartphone, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { isPhone, onPendingApproval } from "@/lib/walletconnect";
@@ -110,7 +110,7 @@ function LinxExpectations() {
       <p className="font-semibold">What to expect in Linx</p>
       <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
         <li>Now: <b className="text-foreground">2 approvals</b>, Connect and Sign in. Once per phone.</li>
-        <li>Then <b className="text-foreground">1 approval for every trade step</b>: create, accept, deposit, mark as paid, release. Switch to Linx, approve, come back.</li>
+        <li>Then <b className="text-foreground">1 approval for every trade step</b>: post a pool, take, I paid, release. Switch to Linx, approve, come back.</li>
       </ul>
       <p className="pt-1 text-xs text-muted-foreground">
         No Linx yet? <a href={linxStoreLink()} target="_blank" rel="noopener noreferrer" className="font-medium text-primary underline">Get Linx Wallet</a>
@@ -125,7 +125,7 @@ function LinxExpectations() {
  * (No generic "open wallet" wc: link: iPhone hands it to whichever wallet app claimed wc: links,
  * which may not be a Kadena wallet.)
  */
-export function PhoneWalletSheet({ state }: { state: { uri: string | null; cancel: () => void } | null }) {
+export function PhoneWalletSheet({ state }: { state: { uri: string | null; cancel: () => void; error?: string; retry?: () => void } | null }) {
   const phone = typeof navigator !== "undefined" && isPhone();
   const [qr, setQr] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -167,7 +167,15 @@ export function PhoneWalletSheet({ state }: { state: { uri: string | null; cance
           <DialogTitle className="font-display text-xl">Connect Linx Wallet</DialogTitle>
           <DialogDescription>The marketplace works with the Linx wallet app. Your keys stay in Linx.</DialogDescription>
         </DialogHeader>
-        {!uri ? (
+        {state?.error ? (
+          <div className="space-y-4">
+            <p role="alert" className="flex items-start gap-2 rounded-xl border border-destructive/50 bg-destructive/10 p-3 text-sm"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />{state.error}</p>
+            <div className="flex flex-col gap-2">
+              {state.retry && <Button className="h-11 w-full" onClick={state.retry}>Retry</Button>}
+              <Button variant="outline" className="h-11 w-full" onClick={state.cancel}>Cancel</Button>
+            </div>
+          </div>
+        ) : !uri ? (
           <p className="flex items-center gap-2 py-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Preparing a secure connection link…</p>
         ) : phone ? (
           <div className="space-y-4">
