@@ -29,7 +29,7 @@ After the v11 deployment, in Chainweaver on **chain 1**, signed by **both** gove
 
     (free.p2p-escrow-v11.set-agent "k:<the printed account>")
 
-- **Turn it off for everyone:** `(free.p2p-escrow-v11.set-agent "")`. Open trades keep the agent they started with.
+- **Turn it off for everyone:** `(free.p2p-escrow-v11.set-agent "")`. It takes effect at once, open trades included (upgrade of Oct 20): those trades are then released by their seller as usual.
 
 ## 4. Payment-watching keys (in the server's `.env`)
 
