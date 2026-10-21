@@ -43,13 +43,16 @@ function isComputer(): boolean {
 
 /**
  * Fallback if Linx's browser is ever not recognised: "?inlinx=1" in the address (or the small link on the
- * screen) lets this device through, so a real Linx user is never locked out.
+ * screen) lets this visit through, so a real Linx user is never locked out. It lasts only for this tab
+ * (sessionStorage): a phone browser that once used it gets the Linx screen again on its next visit.
+ * Earlier versions kept it forever in localStorage; that old flag is removed here.
  */
 const PASS_KEY = "nx-in-wallet";
 function passed(): boolean {
+  try { localStorage.removeItem(PASS_KEY); } catch { /* ignore */ }
   try {
-    if (new URLSearchParams(window.location.search).get("inlinx") === "1") { localStorage.setItem(PASS_KEY, "1"); return true; }
-    return localStorage.getItem(PASS_KEY) === "1";
+    if (new URLSearchParams(window.location.search).get("inlinx") === "1") { sessionStorage.setItem(PASS_KEY, "1"); return true; }
+    return sessionStorage.getItem(PASS_KEY) === "1";
   } catch { return false; }
 }
 
@@ -63,7 +66,7 @@ export function PhoneFirst({ children }: { children: ReactNode }) {
     isComputer() ? "computer" : inWalletBrowser() || passed() ? "ok" : "browser");
   const [through, setThrough] = useState(false);
   if (where === "ok" || through) return <>{children}</>;
-  return <LinxOnlyScreen computer={where === "computer"} onContinue={() => { try { localStorage.setItem(PASS_KEY, "1"); } catch { /* ignore */ } setThrough(true); }} />;
+  return <LinxOnlyScreen computer={where === "computer"} onContinue={() => { try { sessionStorage.setItem(PASS_KEY, "1"); } catch { /* ignore */ } setThrough(true); }} />;
 }
 
 function Qr({ url, label }: { url: string; label: string }) {
