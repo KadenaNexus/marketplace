@@ -10,7 +10,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useWallet } from "@/hooks/useWallet";
 import { fetchProfile } from "@/lib/profileApi";
-import { CHAIN_ID, NETWORK_ID, PLATFORM_ARBITER, readEscrow } from "@/lib/kadena";
+import { NETWORK_ID, PLATFORM_ARBITER, readEscrow } from "@/lib/kadena";
+import { V11_CHAINS, canonicalRef, parseRef, readPool, readTrade } from "@/lib/v11";
+import { useV11Config } from "@/hooks/useV11";
 import { LogOut, Shield, Megaphone, Bell } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -48,13 +50,16 @@ const Index = () => {
     enabled: !!account && isConnected,
   });
 
-  const isArbiter = !!account && account.account === PLATFORM_ARBITER;
+  const { data: v11Config } = useV11Config();
+  const isArbiter = !!account && (account.account === PLATFORM_ARBITER || account.account === v11Config?.arbiter);
 
   // Offer alerts: sign-up strip, and links from alert emails (?offer=ID)
   const [lang] = useLang();
   const alerts = useAlertsStatus();
   const [params] = useSearchParams();
-  const linkedOffer = params.get("offer");
+  // a v11 link names (chain, id): "?offer=2:trade-…" (chain 2); no chain = chain 1, so older links keep working
+  const linkedRaw = params.get("offer") ?? params.get("pool");
+  const linkedOffer = linkedRaw ? canonicalRef(linkedRaw) : null;
   // Links to an offer or trade (?offer=ID) from alert emails and notifications: an open offer opens on the
   // side that can accept it; a trade you are part of opens in Active Trades on the home view.
   const linkHandled = useRef<string | null>(null);
@@ -64,14 +69,32 @@ const Index = () => {
     if (!linkedOffer || !isConnected || !account || linkHandled.current === location.key) return;
     linkHandled.current = location.key;
     const me = account.account;
-    readEscrow(linkedOffer)
-      .then((e) => {
+    // v11 first: a trade I am part of opens in My trades; a pool opens in the market on the side that can take it
+    const rawId = parseRef(linkedOffer).id;
+    const v11 = rawId.startsWith("trade-")
+      ? readTrade(linkedOffer).then((t) => (t ? { trade: t } : null))
+      : rawId.startsWith("pool-")
+        ? readPool(linkedOffer).then((p) => (p ? { pool: p } : null))
+        : Promise.resolve(null);
+    v11.then((r) => {
+      if (r && "trade" in r) {
+        if (r.trade.seller === me || r.trade.buyer === me) { setRole(null); setMobileTab("trades"); }
+        else toast.info(ALERTS_COPY[lang].offerGone);
+        return;
+      }
+      if (r && "pool" in r) {
+        if (r.pool.creator === me) { setRole(null); setMobileTab("trades"); }
+        else { setRole(r.pool.side === "SELL" ? "buyer" : "seller"); setMobileTab("offers"); }
+        return;
+      }
+      if (parseRef(linkedOffer).chain !== "1") return toast.info(ALERTS_COPY[lang].offerGone); // v10 is on chain 1 only
+      return readEscrow(linkedOffer).then((e) => {
         if (!e) return toast.info(ALERTS_COPY[lang].offerGone);
         if (e.state === "CREATED" && e.creator !== me) { setRole(e.side === "SELL" ? "buyer" : "seller"); setMobileTab("offers"); }
         else if (e.creator === me || e.buyer === me || e.seller === me) { setRole(null); setMobileTab("trades"); }
         else toast.info(ALERTS_COPY[lang].offerGone);
-      })
-      .catch(() => {});
+      });
+    }).catch(() => {});
   }, [linkedOffer, isConnected, account, lang, location.key]);
 
   // "Post again" on a finished offer: open New offer on the same side (the form fills itself in)
@@ -116,7 +139,7 @@ const Index = () => {
           <AppLogo />
           <div className="ml-auto flex min-w-0 items-center gap-2 sm:gap-4">
             <span className="hidden rounded-full border border-border bg-secondary px-3 py-1 text-xs font-medium text-muted-foreground sm:inline-flex">
-              {NETWORK_ID === "mainnet01" ? "Mainnet" : NETWORK_ID} · Chain {CHAIN_ID}
+              {NETWORK_ID === "mainnet01" ? "Mainnet" : NETWORK_ID} · Chain{V11_CHAINS.length > 1 ? "s" : ""} {V11_CHAINS.join(" & ")}
             </span>
             <span className="hidden sm:inline-flex"><ThemeToggle /></span>
             <NotificationBell />
@@ -172,9 +195,9 @@ const Index = () => {
                   <Megaphone className="h-5 w-5 text-white" />
                 </div>
                 <div className="space-y-1">
-                  <h2 className="text-lg font-semibold text-white">New: sell KDA for $BRO</h2>
+                  <h2 className="text-lg font-semibold text-white">New: take any amount from an offer</h2>
                   <p className="text-sm text-white/95 leading-relaxed">
-                    Choose BRO (Kadena token) as the currency of an offer and get paid in BRO on the Kadena chain.
+                    Offers are pools with a min and max per trade. Sellers lock the KDA when posting, so a buyer's take is funded at once: no accept step, no waiting for a deposit. Kadena tokens settle instantly.
                   </p>
                 </div>
               </CardContent>

@@ -3,17 +3,16 @@ import { MarketLine } from "@/components/MarketTag";
 import { TradeFeed, TradeFeedToasts } from "@/components/TradeFeed";
 import { PushPrompt } from "@/components/PushPrompt";
 import { Link } from "react-router-dom";
-import { Bell, Clock, List, Megaphone, Plus, SlidersHorizontal, X } from "lucide-react";
+import { Bell, Clock, List, Megaphone, Plus, X } from "lucide-react";
 import { EscrowActions } from "@/components/EscrowActions";
-import { CreateOfferForm } from "@/components/CreateOfferForm";
-import { OfferFiltersComponent, type OfferFilters } from "@/components/OfferFilters";
+import { CreatePoolForm } from "@/components/pools/CreatePoolForm";
+import { MyPools, PoolMarket } from "@/components/pools/PoolMarket";
 import { OfferAlertsButton } from "@/components/OfferAlerts";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { useWallet } from "@/hooks/useWallet";
-import { useAppChainBalance } from "@/hooks/useAppChainBalance";
+import { useV11ChainBalances } from "@/hooks/useAppChainBalance";
 import { useNotifications } from "@/hooks/useNotifications";
-import { CHAIN_ID } from "@/lib/kadena";
 import { ALERTS_COPY } from "@/lib/alertsCopy";
 import { cn } from "@/lib/utils";
 import type { Lang } from "@/components/NexusLanding";
@@ -21,14 +20,7 @@ import type { Lang } from "@/components/NexusLanding";
 export type MobileTab = "offers" | "trades" | "new";
 type Side = "buyer" | "seller";
 
-const emptyFilters = (): OfferFilters => ({
-  state: "ALL", side: "ALL", minAmount: "", maxAmount: "", minPrice: "", maxPrice: "",
-  paymentMethod: "", seller: "", buyer: "", minStars: "", onlineNow: false,
-});
-const activeFilterCount = (f: OfferFilters) =>
-  [f.minAmount, f.maxAmount, f.minPrice, f.maxPrice, f.paymentMethod, f.seller, f.buyer, f.minStars].filter(Boolean).length + (f.onlineNow ? 1 : 0);
-
-const NOTICE_KEY = "nx-bro-notice-hidden"; // new key: the BRO news shows again to people who closed the older notice
+const NOTICE_KEY = "nx-v11-notice-hidden"; // new key: the pools news shows again to people who closed the older notice
 
 /** Buy KDA / Sell KDA switch. "Buy" lists sell offers; "Sell" lists buy offers. */
 function SideSwitch({ side, onSide, label }: { side: Side; onSide: (s: Side) => void; label: string }) {
@@ -64,11 +56,8 @@ export function MobileMarket({
   refreshTrigger: number; lang: Lang; alertsEnabled: boolean; avatar?: string | null;
 }) {
   const { account } = useWallet();
-  const { data: balance } = useAppChainBalance(account?.account);
-  const [filters, setFilters] = useState<OfferFilters>(emptyFilters);
-  const [showFilters, setShowFilters] = useState(false);
+  const { data: balances } = useV11ChainBalances(account?.account);
   const [noticeHidden, setNoticeHidden] = useState(() => { try { return localStorage.getItem(NOTICE_KEY) === "1"; } catch { return false; } });
-  const nFilters = activeFilterCount(filters);
   // Reload the lists when a notification says something changed (new offer, trade step)
   const { items } = useNotifications();
   const newest = items.reduce((m, i) => Math.max(m, i.id), 0);
@@ -91,31 +80,22 @@ export function MobileMarket({
           {!noticeHidden && (
             <div className="flex items-start gap-3 rounded-xl bg-gradient-to-r from-orange-600 to-orange-500 p-3 text-white">
               <Megaphone className="mt-0.5 h-4 w-4 shrink-0" />
-              <p className="flex-1 text-sm leading-snug">New: sell KDA for $BRO, paid on the Kadena chain.</p>
+              <p className="flex-1 text-sm leading-snug">New: take any amount from an offer. No accept step, no waiting for a deposit.</p>
               <button type="button" onClick={hideNotice} aria-label="Hide this notice" className="-m-1 rounded p-1 hover:bg-white/20"><X className="h-4 w-4" /></button>
             </div>
           )}
           <div className="flex items-baseline justify-between gap-3">
             <h1 className="font-display text-3xl font-bold">Offers</h1>
-            {balance !== undefined && (
-              <p className="text-sm text-muted-foreground tabular-nums">Chain {CHAIN_ID}: {balance.toLocaleString("en-US", { maximumFractionDigits: 4 })} KDA</p>
+            {balances && (
+              <p className="text-right text-sm text-muted-foreground tabular-nums">
+                {balances.map((b) => <span key={b.chain} className="block">Chain {b.chain}: {b.balance.toLocaleString("en-US", { maximumFractionDigits: 4 })} KDA</span>)}
+              </p>
             )}
           </div>
           <SideSwitch side={side} onSide={onSide} label="What do you want to do" />
           <MarketLine />
           <TradeFeed />
-          <div>
-            <Button variant="outline" className="h-10 gap-2 rounded-full" aria-expanded={showFilters} onClick={() => setShowFilters((v) => !v)}>
-              <SlidersHorizontal className="h-4 w-4" />
-              Filters{nFilters ? ` (${nFilters})` : ""}
-            </Button>
-            {showFilters && (
-              <div className="mt-3">
-                <OfferFiltersComponent filters={filters} onFiltersChange={setFilters} role={side} />
-              </div>
-            )}
-          </div>
-          <EscrowActions key={side} refreshTrigger={refresh} filters={filters} role={side} viewMode="new" />
+          <PoolMarket key={side} side={side} refreshTrigger={refresh} />
           {alertsEnabled && (
             // the whole strip opens the sign-up form (email + what to be told about)
             <OfferAlertsButton lang={lang}>
@@ -144,6 +124,7 @@ export function MobileMarket({
             )}
           </div>
           <PushPrompt />
+          <MyPools />
           <EscrowActions refreshTrigger={refresh} role="seller" viewMode="mine" />
         </div>
       )}
@@ -154,10 +135,10 @@ export function MobileMarket({
           <SideSwitch side={side} onSide={onSide} label="Do you want to buy or sell KDA" />
           <p className="text-sm text-muted-foreground">
             {side === "buyer"
-              ? "Post what you want to buy. A seller accepts it and locks the KDA in escrow before you pay."
-              : "Post what you want to sell. When a buyer accepts, you lock the KDA in escrow; they pay you, then you release it."}
+              ? "Post how much you want to buy. Sellers take slices of it and lock their KDA; you pay them and they release."
+              : "Post a pool of KDA. It is locked when you post; buyers take slices in your min–max range, pay you, and you release each one."}
           </p>
-          <CreateOfferForm key={side} role={side} compact onSuccess={() => onTab("trades")} />
+          <CreatePoolForm key={side} role={side} compact onSuccess={() => onTab("trades")} />
         </div>
       )}
 

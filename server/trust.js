@@ -9,10 +9,11 @@
  *   POST /api/terms/accept                  { wallet, publicKey, signedCmd, version }
  */
 import { fetchChainOffers } from "./alerts.js";
+import { configFor, fetchChain, poolsById, tradeAsLegacyEscrow } from "./chain.js";
 
 export const TERMS_VERSION = "2026-10-14"; // BRO added as a way to pay
 
-/** Completed trades per wallet from all escrows (either side counts). */
+/** Completed trades per wallet from all escrows (either side counts): v10 offers and v11 trades alike. */
 export function completedCounts(offers) {
   const n = new Map();
   for (const o of offers) {
@@ -22,7 +23,22 @@ export function completedCounts(offers) {
   return n;
 }
 
-export function createChainCache({ fetchOffers = fetchChainOffers, freshMs = 60 * 1000, now = () => Date.now() } = {}) {
+/**
+ * v10 escrows (history) plus every v11 trade in the same legacy shape, for the counts. Read one after the other
+ * (a single Pact server rejects parallel reads). If one contract cannot be read, the other still counts; both
+ * failing throws, so the cache keeps its last good read.
+ */
+export async function fetchAllEscrows() {
+  const out = [];
+  let failed = 0;
+  try { out.push(...await fetchChainOffers()); } catch (e) { failed++; console.warn("[trust] v10 read failed:", e.message); }
+  try { const c = await fetchChain(); const by = poolsById(c.pools); out.push(...c.trades.map((t) => tradeAsLegacyEscrow(t, by, configFor(c, t.chain).arbiter))); }
+  catch (e) { failed++; console.warn("[trust] v11 read failed:", e.message); }
+  if (failed === 2) throw new Error("chain not reachable");
+  return out;
+}
+
+export function createChainCache({ fetchOffers = fetchAllEscrows, freshMs = 60 * 1000, now = () => Date.now() } = {}) {
   let last = null, at = 0, inflight = null;
   return async function offers() {
     if (last && now() - at < freshMs) return last;
@@ -31,6 +47,38 @@ export function createChainCache({ fetchOffers = fetchChainOffers, freshMs = 60 
     if (!last) throw new Error("chain not reachable");
     return last;
   };
+}
+
+/**
+ * Reputation per wallet from the server's tables, for many wallets in three grouped queries (not three per
+ * wallet): { [wallet]: { averageRating, totalRatings, completedTrades, disputedCount, completionRate } }.
+ * A wallet nobody traded with or rated gets zeros and a completion rate of 1.
+ */
+export async function ratingSummaries(pool, wallets) {
+  const list = [...new Set(wallets)];
+  const out = Object.fromEntries(list.map((w) => [w, { averageRating: 0, totalRatings: 0, completedTrades: 0, disputedCount: 0, completionRate: 1 }]));
+  if (!list.length) return out;
+  const [completed, disputed, agg] = await Promise.all([
+    pool.query(
+      `SELECT w AS wallet, COUNT(c.offer_id)::int AS cnt FROM unnest($1::text[]) AS w
+         LEFT JOIN completed_offers c ON c.buyer_wallet = w OR c.seller_wallet = w GROUP BY w`, [list]),
+    pool.query(
+      `SELECT w AS wallet, COUNT(DISTINCT d.id)::int AS cnt FROM unnest($1::text[]) AS w
+         JOIN completed_offers c ON c.buyer_wallet = w OR c.seller_wallet = w
+         JOIN disputes d ON d.offer_id = c.offer_id GROUP BY w`, [list]),
+    pool.query(
+      `SELECT rated_wallet AS wallet, AVG(rating)::float AS avg_rating, COUNT(*)::int AS cnt FROM ratings
+        WHERE rated_wallet = ANY($1::text[]) GROUP BY rated_wallet`, [list]),
+  ]);
+  for (const r of completed.rows) out[r.wallet].completedTrades = r.cnt;
+  for (const r of disputed.rows) out[r.wallet].disputedCount = r.cnt;
+  for (const r of agg.rows) { out[r.wallet].averageRating = Math.round(r.avg_rating * 10) / 10; out[r.wallet].totalRatings = r.cnt; }
+  for (const o of Object.values(out)) {
+    // completion rate: share of completed trades that had no dispute
+    const rate = o.completedTrades > 0 ? Math.max(0, (o.completedTrades - o.disputedCount) / o.completedTrades) : 1;
+    o.completionRate = Math.round(rate * 100) / 100;
+  }
+  return out;
 }
 
 /** Owners of a trade on the chain: { seller (KDA holder), buyer (payer) }. */

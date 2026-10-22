@@ -6,7 +6,8 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import pg from "pg";
 import express from "express";
-import { completedCounts, createChainCache, recheckCompletedOffers, registerTrustRoutes, TERMS_VERSION } from "./trust.js";
+import { completedCounts, createChainCache, recheckCompletedOffers, registerTrustRoutes, ratingSummaries, TERMS_VERSION } from "./trust.js";
+import { tradeAsLegacyEscrow, poolsById } from "./chain.js";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL || "postgresql://postgres:postgres@localhost:5432/kadena_nexus" });
 const A = "k:" + "a".repeat(64), B = "k:" + "b".repeat(64), C = "k:" + "c".repeat(64), T = "k:" + "7".repeat(64);
@@ -19,6 +20,7 @@ const clean = async () => {
   await pool.query("DELETE FROM ratings_removed WHERE offer_id LIKE 'trust-test-%'");
   await pool.query("DELETE FROM completed_offers WHERE offer_id LIKE 'trust-test-%'");
   await pool.query("DELETE FROM completed_offers_removed WHERE offer_id LIKE 'trust-test-%'");
+  await pool.query("DELETE FROM disputes WHERE offer_id LIKE 'trust-test-%'");
   await pool.query("DELETE FROM terms_acceptances WHERE wallet = $1", [T]);
   await pool.query("DELETE FROM alert_state WHERE key = $1", [KEY]);
 };
@@ -48,6 +50,18 @@ test("completed trades are counted per wallet, either side", () => {
     { state: "REFUNDED", creator: C, buyer: "" },
   ]);
   assert.deepEqual([n.get(A), n.get(B), n.get(C)], [3, 2, 1]);
+});
+
+test("v11 trades count with v10 offers, seller and buyer alike; only COMPLETED", () => {
+  const pools = poolsById([{ poolId: "p1", creator: A, side: "SELL" }, { poolId: "p2", creator: C, side: "BUY" }]);
+  const t = (o) => tradeAsLegacyEscrow({ tradeId: "t", poolId: "p1", seller: A, buyer: B, amount: 1, state: "COMPLETED", ...o }, pools);
+  const n = completedCounts([
+    { state: "COMPLETED", creator: A, buyer: B },                              // v10
+    t({ tradeId: "t1" }), t({ tradeId: "t2", buyer: C }),                     // v11 SELL pool: seller A
+    t({ tradeId: "t3", poolId: "p2", seller: B, buyer: C }),                  // v11 BUY pool: creator C pays, B holds
+    t({ tradeId: "t4", state: "FUNDED" }), t({ tradeId: "t5", state: "CANCELLED" }), t({ tradeId: "t6", state: "SPLIT" }),
+  ]);
+  assert.deepEqual([n.get(A), n.get(B), n.get(C)], [3, 3, 2]);
 });
 
 test("chain cache reuses a fresh read and keeps the last one if the chain fails", async () => {
@@ -109,4 +123,20 @@ test("old rating registrations are checked against the chain once", async () => 
   assert.equal((await pool.query("SELECT count(*)::int AS n FROM ratings_removed WHERE offer_id LIKE 'trust-test-%'")).rows[0].n, 2, "fake ratings kept aside");
 
   assert.deepEqual(await recheckCompletedOffers(pool, { fetchOffers: async () => { throw new Error("must not read again"); }, key: KEY }), { skipped: true });
+});
+
+test("rating summaries for many wallets at once: trades on either side, disputes, the average, zeros for the unknown", async () => {
+  await clean();
+  const D = "k:" + "d".repeat(64), E = "k:" + "e".repeat(64);
+  await pool.query("INSERT INTO completed_offers (offer_id, buyer_wallet, seller_wallet) VALUES ('trust-test-s1', $1, $2), ('trust-test-s2', $3, $1), ('trust-test-s3', $2, $3)", [A, B, C]);
+  await pool.query("INSERT INTO disputes (offer_id, opened_by, reason, opened_by_wallet) VALUES ('trust-test-s1', 'buyer', 'late', $1), ('trust-test-s1', 'seller', 'twice', $2)", [A, B]);
+  await pool.query("INSERT INTO ratings (offer_id, rater_wallet, rated_wallet, rating) VALUES ('trust-test-s1', $1, $2, 5), ('trust-test-s2', $3, $2, 4), ('trust-test-s3', $1, $3, 2), ('trust-test-s1', $2, $1, 3)", [B, A, C]);
+  const r = await ratingSummaries(pool, [A, B, C, D, D]);
+  assert.deepEqual(r[A], { averageRating: 4.5, totalRatings: 2, completedTrades: 2, disputedCount: 2, completionRate: 0 }, "two disputes on one trade both count, as before");
+  assert.deepEqual(r[B], { averageRating: 3, totalRatings: 1, completedTrades: 2, disputedCount: 2, completionRate: 0 });
+  assert.deepEqual(r[C], { averageRating: 2, totalRatings: 1, completedTrades: 2, disputedCount: 0, completionRate: 1 });
+  assert.deepEqual(r[D], { averageRating: 0, totalRatings: 0, completedTrades: 0, disputedCount: 0, completionRate: 1 }, "never traded");
+  assert.deepEqual(Object.keys(r).sort(), [A, B, C, D].sort(), "asked twice, answered once; E was not asked");
+  assert.deepEqual(await ratingSummaries(pool, []), {});
+  assert.equal(r[E], undefined);
 });

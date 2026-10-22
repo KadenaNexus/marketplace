@@ -2,23 +2,37 @@
  * Trade transaction history: every on-chain step of a trade, for both sides, on any device.
  *
  * After the site sends an escrow transaction it posts the signed command here. The command is checked
- * (its hash must be the request key, it must call the escrow contract on mainnet chain 1) and saved as
- * pending; a watcher asks the chain for the result and keeps it only if it succeeded. Nothing here is
- * taken on trust from the browser: the action and the offer come from the signed command itself.
+ * (its hash must be the request key, it must call the escrow contract on mainnet: v10 on chain 1, v11 on one
+ * of V11_CHAINS) and saved as pending; a watcher asks that chain for the result and keeps it only if it
+ * succeeded. Nothing here is taken on trust from the browser: the action, the offer and the chain come from the
+ * signed command itself. The offer is saved as a reference ("2:trade-…" on chain 2, see chain.js), which is also
+ * how the watcher knows which chain to poll.
  *
- *   POST /api/trade-txs              { cmd, requestKey }
+ *   POST /api/trade-txs              { cmd, requestKey, sigs? } or { cmd, requestKey, wallet, publicKey, signedCmd }
  *   GET  /api/trades/:offerId/txs    -> [{ requestKey, action, fn, sender, status, at }]
+ *
+ * Proof that the poster is the transaction's sender: the command's own signatures (`sigs`, at least one by the
+ * sender's key over the request key), or the usual proof of ownership for a wallet equal to the sender. With
+ * TRADE_TXS_REQUIRE_PROOF=1 a post without either is refused; without it (the default, for sites that still post
+ * the bare command) it is accepted but, like every post, limited: at most MAX_PENDING_PER_OFFER pending rows per
+ * trade and MAX_FOLLOWING transactions followed closely at once.
  */
-import { hash as blakeHash } from "@kadena/cryptography-utils";
+import { hash as blakeHash, base64UrlDecodeArr, hexToBin, verifySig } from "@kadena/cryptography-utils";
+import { chainConfig, parseRef, toRef } from "./chain.js";
+
+export const MAX_PENDING_PER_OFFER = 20;
+export const MAX_FOLLOWING = 50;
+const requireProof = () => process.env.TRADE_TXS_REQUIRE_PROOF === "1";
 
 const env = (k, d) => (process.env[k] ?? d);
 const cfg = () => ({
   contract: `${env("VITE_CONTRACT_NAMESPACE", "free")}.${env("VITE_CONTRACT_MODULE", "p2p-escrow-v10")}`,
+  contractV11: `${env("VITE_CONTRACT_NAMESPACE", "free")}.${env("VITE_CONTRACT_MODULE_V11", "p2p-escrow-v11")}`,
   apis: env("ALERTS_CHAIN_API", "https://api.chainweb-community.org,https://chainweb.chaddex.com,https://api.chainweb.com")
     .split(",").map((s) => s.trim().replace(/\/$/, "")).filter(Boolean),
 });
 
-/** Contract function -> what people see. */
+/** Contract function -> what people see (v10 and v11 names; the first string argument is the offer, pool or trade id). */
 export const ACTIONS = {
   "create-offer": "Create offer",
   "accept-offer": "Accept",
@@ -32,32 +46,75 @@ export const ACTIONS = {
   "timeout-accepted-close": "Closed: deposit time ran out",
   "timeout-funded-refund": "Refund: payment time ran out",
   "timeout-paid-dispute": "Dispute: release time ran out",
+  // v11
+  "top-up": "Top up",
+  "withdraw": "Withdraw",
+  "update-offer": "Edit offer",
+  "take-offer": "Take",
+  "take-and-settle": "Swap",
+  "cancel": "Cancel",
+  "timeout-refund": "Refund: payment time ran out",
+  "open-dispute": "Open dispute",
+  "resolve": "Resolved by the arbiter",
 };
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** The escrow call in a signed command, or null when it is something else. */
-export function parseEscrowCall(cmd, contract = cfg().contract) {
+/**
+ * The escrow call in a signed command, or null when it is something else. `contract` = one module name or a list.
+ * v10 is only on chain 1; v11 on any chain in V11_CHAINS. `offerId` is the reference on that chain.
+ */
+export function parseEscrowCall(cmd, contract = [cfg().contract, cfg().contractV11], v11Chains = chainConfig().chains) {
   let c;
   try { c = JSON.parse(cmd); } catch { return null; }
   if (c?.networkId !== "mainnet01" && c?.networkId !== env("TRADE_TXS_NETWORK", "mainnet01")) return null;
-  if (String(c?.meta?.chainId) !== "1") return null;
+  const chain = String(c?.meta?.chainId ?? "");
   const code = c?.payload?.exec?.code;
   if (typeof code !== "string" || code.length > 4000) return null;
-  const m = code.match(new RegExp(`\\(\\s*${escapeRe(contract)}\\.([a-z-]+)\\s+"([^"]{1,255})"`));
-  if (!m || !ACTIONS[m[1]]) return null;
+  const modules = (Array.isArray(contract) ? contract : [contract]).map(escapeRe).join("|");
+  const m = code.match(new RegExp(`\\(\\s*(${modules})\\.([a-z-]+)\\s+"([^"]{1,255})"`));
+  if (!m || !ACTIONS[m[2]]) return null;
+  const isV11 = m[1] === cfg().contractV11;
+  if (!(chain === "1" || (isV11 && v11Chains.includes(chain)))) return null;
   const sender = typeof c.meta?.sender === "string" && /^k:[0-9a-f]{64}$/i.test(c.meta.sender) ? c.meta.sender : "";
-  return { fn: m[1], offerId: m[2], sender };
+  return { fn: m[2], offerId: toRef(chain, m[3]), sender, chain };
 }
 
-/** Save a just-sent escrow transaction as pending. Returns { ok } or { error }. */
-export async function recordTradeTx(pool, { cmd, requestKey }) {
+/**
+ * Is one of `sigs` the sender's signature over the request key? A signature without pubKey (some wallets omit
+ * it) is taken as the command's signer at the same position.
+ */
+export function signedBySender(cmd, requestKey, sigs, sender) {
+  if (!Array.isArray(sigs) || !/^k:[0-9a-f]{64}$/i.test(sender || "")) return false;
+  const key = sender.slice(2).toLowerCase();
+  let signers = [];
+  try { signers = JSON.parse(cmd)?.signers || []; } catch { return false; }
+  let msg;
+  try { msg = base64UrlDecodeArr(requestKey); } catch { return false; }
+  return sigs.slice(0, 20).some((s, i) => {
+    const sig = s && (s.sig ?? s.signature);
+    const pub = String((s && s.pubKey) || signers[i]?.pubKey || "").toLowerCase();
+    if (typeof sig !== "string" || pub !== key) return false;
+    try { return verifySig(msg, hexToBin(sig), hexToBin(pub)); } catch { return false; }
+  });
+}
+
+/**
+ * Save a just-sent escrow transaction as pending. `proven`: a wallet whose proof of ownership the route already
+ * checked (null when none was sent). Returns { ok } or { error, status? }.
+ */
+export async function recordTradeTx(pool, { cmd, requestKey, sigs }, { proven = null, strict = requireProof() } = {}) {
   if (typeof cmd !== "string" || cmd.length > 20000 || typeof requestKey !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(requestKey)) {
     return { error: "Invalid transaction" };
   }
   if (blakeHash(cmd) !== requestKey) return { error: "The command does not match the request key" };
   const call = parseEscrowCall(cmd);
   if (!call) return { error: "Not a marketplace escrow transaction" };
+  if (sigs != null && !signedBySender(cmd, requestKey, sigs, call.sender)) return { error: "The signatures are not the sender's", status: 403 };
+  const proof = (sigs != null) || (!!proven && proven === call.sender);
+  if (strict && !proof) return { error: "Proof that you sent this transaction is required", status: 403 };
+  const pending = await pool.query(`SELECT count(*)::int AS n FROM trade_txs WHERE offer_id = $1 AND status = 'pending' AND request_key <> $2`, [call.offerId, requestKey]);
+  if (pending.rows[0].n >= MAX_PENDING_PER_OFFER) return { error: "Too many unconfirmed transactions for this trade right now", status: 429 };
   await pool.query(
     `INSERT INTO trade_txs (request_key, offer_id, fn, sender) VALUES ($1, $2, $3, $4) ON CONFLICT (request_key) DO NOTHING`,
     [requestKey, call.offerId, call.fn, call.sender]
@@ -65,12 +122,12 @@ export async function recordTradeTx(pool, { cmd, requestKey }) {
   return { ok: true, offerId: call.offerId, fn: call.fn };
 }
 
-/** Results for request keys from the chain: { key: { status: "success"|"failure", blockTime } } (missing = not mined yet). */
-export async function pollChain(keys) {
+/** Results for request keys from `chain`: { key: { status: "success"|"failure", blockTime } } (missing = not mined yet). */
+export async function pollChain(keys, chain = "1") {
   let last;
   for (const base of cfg().apis) {
     try {
-      const r = await fetch(`${base}/chainweb/0.0/mainnet01/chain/1/pact/api/v1/poll`, {
+      const r = await fetch(`${base}/chainweb/0.0/mainnet01/chain/${encodeURIComponent(chain)}/pact/api/v1/poll`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ requestKeys: keys }), signal: AbortSignal.timeout(10000),
       });
@@ -94,7 +151,11 @@ export async function settlePending(pool, poll = pollChain, onSettled = () => {}
     ? await pool.query(`SELECT request_key, offer_id, fn FROM trade_txs WHERE status = 'pending' AND request_key = ANY($1)`, [keys])
     : await pool.query(`SELECT request_key, offer_id, fn FROM trade_txs WHERE status = 'pending' ORDER BY created_at LIMIT 50`);
   if (!rows.length) return 0;
-  const res = await poll(rows.map((r) => r.request_key));
+  // ask each chain about its own transactions (the offer reference says which chain: "2:…" or chain 1)
+  const byChain = new Map();
+  for (const r of rows) { const ch = parseRef(r.offer_id).chain; byChain.set(ch, [...(byChain.get(ch) || []), r.request_key]); }
+  const res = {};
+  for (const [ch, ks] of byChain) Object.assign(res, await poll(ks, ch));
   let n = 0;
   for (const [key, v] of Object.entries(res)) {
     const upd = await pool.query(`UPDATE trade_txs SET status = $2, block_time = $3 WHERE request_key = $1 AND status = 'pending' RETURNING offer_id, fn, status`, [key, v.status === "success" ? "ok" : "failed", v.blockTime]);
@@ -105,11 +166,14 @@ export async function settlePending(pool, poll = pollChain, onSettled = () => {}
 
 /**
  * Watch one just-sent transaction closely (every 3 s, up to 4 minutes), so the other side hears about the
- * step within seconds of the block, not at the next 15 s round.
+ * step within seconds of the block, not at the next 15 s round. At most MAX_FOLLOWING at once; the rest are
+ * settled by the 15 s watcher. Returns whether it is being followed.
  */
 const following = new Set();
-export function followTx(getPool, requestKey, onSettled, { everyMs = 3000, forMs = 4 * 60 * 1000, poll = pollChain } = {}) {
-  if (following.has(requestKey)) return;
+export const followingCount = () => following.size;
+export function followTx(getPool, requestKey, onSettled, { everyMs = 3000, forMs = 4 * 60 * 1000, poll = pollChain, max = MAX_FOLLOWING } = {}) {
+  if (following.has(requestKey)) return true;
+  if (following.size >= max) return false;
   following.add(requestKey);
   const until = Date.now() + forMs;
   const step = async () => {
@@ -121,6 +185,7 @@ export function followTx(getPool, requestKey, onSettled, { everyMs = 3000, forMs
     setTimeout(step, everyMs).unref?.();
   };
   setTimeout(step, everyMs).unref?.();
+  return true;
 }
 
 export async function listTradeTxs(pool, offerId) {
@@ -133,14 +198,21 @@ export async function listTradeTxs(pool, offerId) {
   return rows.map((r) => ({ requestKey: r.request_key, fn: r.fn, action: ACTIONS[r.fn] || r.fn, sender: r.sender, status: r.status === "ok" ? "confirmed" : "pending", at: r.at }));
 }
 
-export function registerTradeTxRoutes(app, getPool, { onSettled = () => {} } = {}) {
+export function registerTradeTxRoutes(app, getPool, { onSettled = () => {}, requireAuth = null, sendAuthError = null } = {}) {
   app.post("/api/trade-txs", async (req, res) => {
     const pool = getPool();
     if (!pool) return res.status(503).json({ error: "Database not ready" });
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    let proven = null;
+    if (requireAuth && (body.wallet != null || body.signedCmd != null)) {
+      const a = requireAuth(req, "body");
+      if (!a.ok) return sendAuthError ? sendAuthError(res, a) : res.status(a.status).json({ error: a.error });
+      proven = a.wallet;
+    }
     try {
-      const r = await recordTradeTx(pool, req.body || {});
-      if (r.error) return res.status(400).json(r);
-      followTx(getPool, req.body.requestKey, onSettled);
+      const r = await recordTradeTx(pool, body, { proven });
+      if (r.error) return res.status(r.status || 400).json({ error: r.error });
+      followTx(getPool, body.requestKey, onSettled);
       return res.json(r);
     } catch (e) {
       console.error("POST /api/trade-txs", e);

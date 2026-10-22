@@ -23,6 +23,9 @@ export function txSubmitted(requestKey: string) {
   emit();
 }
 
+/** The title of the transaction being confirmed right now (for the saved "last transaction" note). */
+export const txLabelOf = () => current?.label ?? next?.label ?? "";
+
 /** The chain answered (or polling gave up). */
 export function txSettled(requestKey: string) {
   if (current?.requestKey !== requestKey) return;

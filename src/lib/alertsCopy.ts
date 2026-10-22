@@ -61,7 +61,7 @@ export const ALERTS_COPY: Record<Lang, AlertsCopy> = {
     resubscribe: "Turn alerts back on",
     badLink: "This link is not valid or has expired. Sign up again from the Marketplace.",
     backToMarket: "Go to the Marketplace",
-    offerNotice: "Connect your Ecko wallet to see the offer from your alert.",
+    offerNotice: "Connect your Linx wallet to see the offer from your alert.",
     offerGone: "That offer has already been taken or closed. Here are the open offers.",
   },
   ar: {
@@ -103,7 +103,7 @@ export const ALERTS_COPY: Record<Lang, AlertsCopy> = {
     resubscribe: "إعادة تفعيل التنبيهات",
     badLink: "هذا الرابط غير صالح أو منتهي. اشترك مرة أخرى من السوق.",
     backToMarket: "الذهاب إلى السوق",
-    offerNotice: "اربط محفظة Ecko لرؤية العرض الذي وصلك في التنبيه.",
+    offerNotice: "اربط محفظة Linx لرؤية العرض الذي وصلك في التنبيه.",
     offerGone: "هذا العرض أُخذ أو أُغلق بالفعل. هذه هي العروض المفتوحة.",
   },
 };

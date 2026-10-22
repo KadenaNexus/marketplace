@@ -18,9 +18,9 @@ import { tradeCode } from "./notifications.js";
 const emailSchema = z.string().trim().toLowerCase().email().max(254);
 const newToken = () => crypto.randomBytes(24).toString("base64url");
 
-/** Which notifications are emailed: trade steps, deadlines, proofs and disputes. Not chat, not new offers. */
+/** Which notifications are emailed: trade steps (v10 and v11: taken, cancelled, split), deadlines, proofs and disputes. Not chat, not new offers. */
 export function emailable(kind) {
-  return /^(accepted|started|funded|locked|paid|marked|completed|refunded|closed|disputed|due-|expired-|proof:|hidden$|expiring-)/.test(String(kind || ""));
+  return /^(accepted|started|funded|locked|taken|paid|marked|completed|refunded|cancelled|split|closed|disputed|due-|expired-|proof:|hidden$|expiring-)/.test(String(kind || ""));
 }
 
 const T = {

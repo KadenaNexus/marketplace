@@ -6,12 +6,17 @@
  *   - write: the KDA holder (SELL offer: its creator; BUY offer: whoever accepted it), only while the trade is
  *     CREATED or ACCEPTED. From FUNDED on the details are locked, so the buyer pays to what they saw.
  *   - read: the KDA holder; the payer once the offer is accepted; the arbiter.
+ * Escrow v11 (offerId = a trade id): a trade on a SELL pool answers with the pool's addresses (pool_details,
+ * set by the creator through /api/pools/:poolId/details, read only); a trade on a BUY pool works as above,
+ * with the taker setting the details while the trade is FUNDED.
  *
  *   GET /api/offers/:offerId/payout   (wallet, publicKey, signedCmd in the query)
  *   PUT /api/offers/:offerId/payout   { wallet, publicKey, signedCmd, details: [{ method, value }] }
  */
-import { isToken, KADENA_ACCOUNT, TOKENS } from "./tokens.js";
+import { KADENA_ACCOUNT, TOKENS } from "./tokens.js";
 import { hash as blakeHash } from "@kadena/cryptography-utils";
+import { parseRef, readTradeWithPool, tradeAsLegacyEscrow } from "./chain.js";
+import { legacyPayoutDetails } from "./pools.js";
 
 const env = (k, d) => (process.env[k] ?? d);
 const cfg = () => ({
@@ -21,10 +26,28 @@ const cfg = () => ({
 });
 
 export const EDITABLE_STATES = ["CREATED", "ACCEPTED"];
+/** v11 BUY pool: the taker (KDA holder) sets where to be paid right after the take, while the buyer has not paid yet. */
+export const EDITABLE_STATES_V11 = ["FUNDED"];
+/** The payer sees where to pay once the trade is accepted and not once it is over without a payment. */
+export const PAYER_HIDDEN_STATES = ["CREATED", "CANCELLED", "REFUNDED", "CLOSED"];
 const MAX_ITEMS = 6;
 
-/** One escrow from the chain: { creator, buyer, arbiter, side, state } or null. */
+/**
+ * One escrow from the chain: { creator, buyer, arbiter, side, state } or null. A v10 offer id, or a v11 trade
+ * reference (then in the legacy shape with `poolId`, see chain.js). Ids made by the site say which contract to ask
+ * first; v10 lives on chain 1 only, so a "2:…" reference is v11.
+ */
 export async function readEscrowFromChain(offerId) {
+  const { chain, id } = parseRef(offerId);
+  if (chain !== "1") return readV11(offerId);
+  if (/^trade-/.test(id)) return (await readV11(offerId)) ?? readV10(offerId);
+  return (await readV10(offerId)) ?? readV11(offerId);
+}
+async function readV11(tradeId) {
+  const r = await readTradeWithPool(tradeId);
+  return r ? tradeAsLegacyEscrow(r.trade, new Map([[r.pool.poolId, r.pool]]), r.config.arbiter) : null;
+}
+async function readV10(offerId) {
   const c = cfg();
   const ct = Math.floor(Date.now() / 1000);
   const code = `(${c.contract}.get-escrow ${JSON.stringify(offerId)})`;
@@ -71,9 +94,10 @@ export function cleanDetails(raw) {
       out.push({ method, value, network });
       continue;
     }
-    if (isToken(method)) {
-      // a Kadena token: paid to a Kadena account on one chain
-      const t = TOKENS[method.toUpperCase()], network = String(it?.network ?? "");
+    const t = TOKENS[method.toUpperCase()];
+    if (t) {
+      // a v10 Kadena token (BRO): paid to a Kadena account on one chain
+      const network = String(it?.network ?? "");
       if (!t.chains.includes(network)) return { error: `${method}: choose the chain (${t.chains.map((c) => `chain ${c}`).join(" or ")})` };
       if (!KADENA_ACCOUNT.test(value)) return { error: `${method}: that doesn't look like a Kadena account (k:…)` };
       out.push({ method: method.toUpperCase(), value, network });
@@ -87,6 +111,7 @@ export function cleanDetails(raw) {
 
 export function registerPayoutRoutes(app, { getPool, requireAuth, sendAuthError, readEscrow = readEscrowFromChain }) {
   const offerIdOk = (s) => typeof s === "string" && s.length > 0 && s.length <= 255;
+  const editable = (e) => (e.poolId ? EDITABLE_STATES_V11 : EDITABLE_STATES).includes(e.state);
 
   app.get("/api/offers/:offerId/payout", async (req, res) => {
     const auth = requireAuth(req, "query");
@@ -101,13 +126,17 @@ export function registerPayoutRoutes(app, { getPool, requireAuth, sendAuthError,
       const { holder, payer } = sidesOf(e);
       const me = auth.wallet;
       const isHolder = !!holder && me === holder;
-      const allowed = isHolder || (!!payer && me === payer && e.state !== "CREATED") || me === e.arbiter;
+      const allowed = isHolder || (!!payer && me === payer && !PAYER_HIDDEN_STATES.includes(e.state)) || (!!e.arbiter && me === e.arbiter);
       if (!allowed) return res.status(403).json({ error: "Payment details are shown to the two sides of the trade once it is accepted" });
+      if (e.poolId && e.side === "SELL") {
+        // v11 SELL trade: the seller's addresses live on the pool (pool_details), filtered to the trade's currency
+        return res.json({ details: await legacyPayoutDetails(pool, e.poolId, e.currency), updatedAt: null, isMine: isHolder, editable: false, state: e.state, poolId: e.poolId });
+      }
       const { rows } = await pool.query("SELECT wallet, details, updated_at FROM trade_payouts WHERE offer_id = $1", [offerId]);
       const row = rows[0];
       // details saved by someone who is no longer the holder (e.g. a refunded BUY trade re-accepted) are not shown
       const details = row && row.wallet === holder ? row.details : [];
-      return res.json({ details, updatedAt: row && row.wallet === holder ? row.updated_at : null, isMine: isHolder, editable: isHolder && EDITABLE_STATES.includes(e.state), state: e.state });
+      return res.json({ details, updatedAt: row && row.wallet === holder ? row.updated_at : null, isMine: isHolder, editable: isHolder && editable(e), state: e.state });
     } catch (err) {
       console.error("GET /api/offers/:offerId/payout", err);
       return res.status(502).json({ error: "Could not check the offer on the chain. Try again." });
@@ -129,7 +158,8 @@ export function registerPayoutRoutes(app, { getPool, requireAuth, sendAuthError,
       if (!e) return res.status(404).json({ error: "Offer not found" });
       const { holder } = sidesOf(e);
       if (!holder || holder !== auth.wallet) return res.status(403).json({ error: "Only the side that holds the KDA sets where to be paid" });
-      if (!EDITABLE_STATES.includes(e.state)) return res.status(409).json({ error: "The KDA is already locked, so the payment details can no longer change" });
+      if (e.poolId && e.side === "SELL") return res.status(409).json({ error: "The receiving addresses of this offer are set on the offer itself (My offers)" });
+      if (!editable(e)) return res.status(409).json({ error: "The KDA is already locked, so the payment details can no longer change" });
       await pool.query(
         `INSERT INTO trade_payouts (offer_id, wallet, details, updated_at) VALUES ($1, $2, $3, NOW())
          ON CONFLICT (offer_id) DO UPDATE SET wallet = EXCLUDED.wallet, details = EXCLUDED.details, updated_at = NOW()`,

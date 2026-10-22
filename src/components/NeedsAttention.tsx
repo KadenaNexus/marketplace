@@ -10,6 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Loader2 } from "lucide-react";
+import { isV11 } from "@/lib/v11ui";
 
 /**
  * Trades that need the arbiter's eye, read from the chain (not from opened disputes).
@@ -32,6 +33,8 @@ export function needsAttention(escrows: Escrow[], arbiter: string, now = Date.no
   for (const e of escrows) {
     if (e.arbiter !== arbiter) continue;
     if (e.state === "DISPUTED") out.push({ e, kind: "disputed", since: ms(e.paidAt) || ms(e.fundedAt) || now });
+    // v11: the parties handle their own timeouts (cancel, take back); the arbiter only settles disputes
+    else if (isV11(e)) continue;
     else if (e.state === "PAID" && now > ms(e.paidAt) + T3_SECONDS * 1000) out.push({ e, kind: "paid-expired", since: ms(e.paidAt) + T3_SECONDS * 1000 });
     else if (e.state === "FUNDED" && now > ms(e.fundedAt) + T2_SECONDS * 1000) out.push({ e, kind: "funded-expired", since: ms(e.fundedAt) + T2_SECONDS * 1000 });
     else if (e.state === "ACCEPTED" && now > ms(e.acceptedAt) + T1_SECONDS * 1000) out.push({ e, kind: "accepted-expired", since: ms(e.acceptedAt) + T1_SECONDS * 1000 });

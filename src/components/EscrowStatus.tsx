@@ -60,10 +60,20 @@ const stateConfig: Record<EscrowState, {
     icon: XCircle, 
     className: "status-cancelled" 
   },
-  DISPUTED: { 
-    label: "Disputed", 
-    icon: AlertTriangle, 
-    className: "status-cancelled" 
+  DISPUTED: {
+    label: "Disputed",
+    icon: AlertTriangle,
+    className: "status-cancelled"
+  },
+  CANCELLED: {
+    label: "Cancelled",
+    icon: XCircle,
+    className: "status-cancelled",
+  },
+  SPLIT: {
+    label: "Split",
+    icon: CheckCircle,
+    className: "status-completed",
   },
 };
 

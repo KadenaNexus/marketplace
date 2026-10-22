@@ -43,6 +43,9 @@ type Client = {
 
 let clientPromise: Promise<Client> | null = null;
 
+/** Drop the client so the next connection starts from scratch (after the relay could not be reached). */
+export function resetWalletConnectClient() { clientPromise = null; }
+
 export function getClient(): Promise<Client> {
   if (!walletConnectReady()) return Promise.reject(new Error("Phone wallets are not set up on this site yet."));
   if (!clientPromise) {
@@ -205,6 +208,17 @@ const STEP_NAMES: Record<string, string> = {
   "timeout-accepted-close": "Close trade",
   "timeout-funded-refund": "Refund",
   "timeout-paid-dispute": "Open dispute",
+  // escrow v11 (pools)
+  "take-offer": "Take offer",
+  "take-and-settle": "Swap now",
+  "top-up": "Top up pool",
+  "withdraw": "Withdraw from pool",
+  "update-offer": "Update pool",
+  "cancel": "Cancel trade",
+  "timeout-refund": "Take KDA back",
+  "open-dispute": "Open dispute",
+  "resolve": "Resolve dispute",
+  "set-agent": "Set release agent",
 };
 /** "Deposit KDA", "Sign in", … for the approval banner. */
 function stepName(cmd: string): string {
