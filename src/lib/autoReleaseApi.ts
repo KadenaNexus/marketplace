@@ -30,6 +30,8 @@ export interface TradeAuto {
   matchedTx?: string | null;
   matchedNetwork?: string | null;
   releaseRequestKey?: string | null;
+  /** networks (with the seller's address) where a buyer who paid from an exchange can give the transaction ID */
+  byTxid?: { id: string; address: string }[];
 }
 
 const OFF: AutoReleaseInfo = { enabled: false, agent: "", networks: [] };
@@ -53,6 +55,21 @@ export async function getTradeAuto(tradeRef: string, a: Auth): Promise<TradeAuto
   if (r.status === 403 || r.status === 404) return null;
   if (!r.ok) throw new Error("Could not load auto-release");
   return (await r.json()) as TradeAuto;
+}
+
+/**
+ * POST /api/v11/trades/:ref/claim-payment (the buyer): paid from an exchange, so the amount is not the exact one; the
+ * server checks the transaction ID and releases when it fits this trade and no other. `error` says why not.
+ */
+export async function claimPayment(tradeRef: string, network: string, txid: string, a: Auth): Promise<{ ok: true; auto: TradeAuto } | { ok: false; error: string }> {
+  try {
+    const r = await fetch(`/api/v11/trades/${encodeURIComponent(tradeRef)}/claim-payment`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ wallet: a.wallet, publicKey: a.publicKey, signedCmd: proof(a.signedCmd), network, txid }),
+    });
+    const d = await r.json().catch(() => ({}));
+    return r.ok ? { ok: true, auto: d as TradeAuto } : { ok: false, error: String(d?.error || "Could not check the payment") };
+  } catch { return { ok: false, error: "Could not reach the server. Try again." }; }
 }
 
 /** The trade is on the automatic path (watching, found, releasing or done). */

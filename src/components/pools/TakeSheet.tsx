@@ -204,8 +204,11 @@ export function TakeSheet({ pool: p, open, onOpenChange, profileMap = {}, onTake
               {auto && (
                 <p className="flex items-start gap-2 rounded-xl border border-primary/40 bg-primary/5 p-3 text-sm">
                   <Radar className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
-                  <span>{autoPoolNote(p.side, p.currency)}</span>
+                  <span>{autoPoolNote(p.side, p.currency)}{p.side === "SELL" ? " Paying from an exchange works too: you give the transaction ID after withdrawing." : ""}</span>
                 </p>
+              )}
+              {p.side === "SELL" && !instant && !free && valid && pay > 0 && pay < 10 && (
+                <p className="text-xs text-muted-foreground">Paying from an exchange? Most need at least 2–10 {p.currency} per withdrawal, plus a fee. A larger slice may be easier.</p>
               )}
 
               <p className="text-xs text-muted-foreground">

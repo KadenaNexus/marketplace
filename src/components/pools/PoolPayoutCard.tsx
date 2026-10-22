@@ -113,7 +113,9 @@ export function PoolPayoutCard({ escrow: e }: { escrow: V11Escrow }) {
 
       {buyer && (
         <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">
-          <li>Send <b className="text-foreground">exactly this amount</b> from a wallet <b className="text-foreground">you control</b>, not from an exchange account.</li>
+          {agent
+            ? <li>From a wallet <b className="text-foreground">you control</b>, send <b className="text-foreground">exactly this amount</b>. Paying from an exchange? Use <b className="text-foreground">Paying from an exchange</b> in the Auto-release box: you give the transaction ID instead.</li>
+            : <li><b className="text-foreground">This amount must arrive in full.</b> Paying from an exchange? Add its withdrawal fee on top, and give the transaction ID (TXID) with I paid.</li>}
           <li>Pay only to the address shown here, never to one sent in chat.</li>
           {!agent && <li>After sending, press I paid and add the transaction hash or a screenshot.</li>}
         </ul>

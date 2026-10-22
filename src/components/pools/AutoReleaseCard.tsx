@@ -1,8 +1,12 @@
 import { useState } from "react";
-import { Check, CheckCircle2, Copy, ExternalLink, Loader2, Radar } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { Building2, Check, CheckCircle2, Copy, ExternalLink, Loader2, Radar } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useWallet } from "@/hooks/useWallet";
 import { useTradeAuto } from "@/hooks/useAutoRelease";
-import { isAutoActive, paymentTxUrl, type TradeAuto } from "@/lib/autoReleaseApi";
+import { authProof } from "@/lib/session";
+import { claimPayment, isAutoActive, paymentTxUrl, type TradeAuto } from "@/lib/autoReleaseApi";
 import { networkLabel, paymentNetwork } from "@/lib/markets";
 import type { V11Escrow } from "@/lib/v11ui";
 
@@ -39,6 +43,72 @@ function MatchedTx({ a }: { a: TradeAuto }) {
   );
 }
 
+/** The smallest amount an exchange payer must make arrive: the pay amount rounded up to cents (exchanges round). */
+const atLeast = (payAmount: string) => (Math.ceil(Number(payAmount) * 100 - 1e-9) / 100).toFixed(2);
+
+/**
+ * Paid from an exchange: the fee or rounding changes the amount, so the identifying digits are lost. The buyer gives
+ * the transaction ID from the withdrawal history; the server checks it on the network and releases.
+ */
+function ExchangePay({ e, a, open: startOpen = false }: { e: V11Escrow; a: TradeAuto; open?: boolean }) {
+  const { account } = useWallet();
+  const qc = useQueryClient();
+  const nets = a.byTxid ?? [];
+  const [open, setOpen] = useState(startOpen);
+  const [network, setNetwork] = useState(nets[0]?.id ?? "");
+  const [txid, setTxid] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  if (!nets.length || !account) return null;
+  const currency = a.currency || e.trade.currency;
+  const min = atLeast(a.payAmount ?? String(e.trade.payAmount));
+  async function check() {
+    if (!account) return;
+    setBusy(true); setMsg(null);
+    try {
+      const signedCmd = await authProof(account.account, account.publicKey);
+      const r = await claimPayment(e.trade.tradeId, network, txid.trim(), { wallet: account.account, publicKey: account.publicKey, signedCmd });
+      if (r.ok) {
+        setMsg({ ok: true, text: "Payment found. The KDA is being released to you." });
+        qc.setQueryData(["trade-auto", e.trade.tradeId, account.account], r.auto);
+        void qc.invalidateQueries({ queryKey: ["trade-auto", e.trade.tradeId] });
+      } else setMsg({ ok: false, text: "error" in r ? r.error : "Could not check the payment" });
+    } catch (err) {
+      setMsg({ ok: false, text: err instanceof Error ? err.message : "Could not check the payment" });
+    } finally { setBusy(false); }
+  }
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} className="flex items-center gap-2 text-sm font-medium text-primary underline-offset-2 hover:underline">
+        <Building2 className="h-4 w-4" aria-hidden="true" />Paying from an exchange (Binance, OKX…)?
+      </button>
+    );
+  }
+  return (
+    <div className="space-y-2 rounded-lg border border-border bg-card p-3 text-sm">
+      <p className="flex items-center gap-2 font-semibold"><Building2 className="h-4 w-4 text-primary" aria-hidden="true" />Paid from an exchange</p>
+      <ol className="list-decimal space-y-1 pl-5 text-muted-foreground">
+        <li>Withdraw {currency} to the seller's address above, on the right network, so that <b className="text-foreground">at least {min} {currency} arrives</b>. Exchanges take a fee: add it on top. Most exchanges also need 2–10 {currency} per withdrawal.</li>
+        <li>When the withdrawal is done, copy its <b className="text-foreground">transaction ID (TXID)</b> from the exchange's withdrawal history and paste it here.</li>
+      </ol>
+      {nets.length > 1 && (
+        <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Network you paid on">
+          {nets.map((n) => (
+            <button key={n.id} type="button" role="radio" aria-checked={network === n.id} onClick={() => setNetwork(n.id)}
+              className={`h-9 rounded-full border px-3 text-xs ${network === n.id ? "border-primary bg-primary/10 font-semibold" : "border-border"}`}>{networkLabel(n.id)}</button>
+          ))}
+        </div>
+      )}
+      <Input value={txid} onChange={(ev) => setTxid(ev.target.value)} placeholder={network.endsWith("ERC20") ? "0x…" : "Transaction ID (64 characters)"} className="font-mono text-xs" autoCapitalize="off" autoCorrect="off" spellCheck={false} aria-label="Transaction ID" />
+      <Button type="button" className="h-11 w-full" disabled={busy || txid.trim().length < 64} onClick={() => void check()}>
+        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Check my payment"}
+      </Button>
+      {msg && <p className={`text-sm ${msg.ok ? "text-emerald-700 dark:text-emerald-300" : "text-destructive"}`} role="status">{msg.text}</p>}
+      <p className="text-xs text-muted-foreground">If the check can't release it (for example, the payment could be someone else's), tap I paid and add the transaction ID; the seller checks and releases.</p>
+    </div>
+  );
+}
+
 /**
  * Auto-release on a USDT/USDC trade: the exact amount to send (payer), what the agent waits for (KDA holder), and the
  * live state. Nothing shows when the trade is not on the automatic path; "I paid" and Release stay as they are.
@@ -56,9 +126,12 @@ export function AutoReleaseCard({ escrow: e }: { escrow: V11Escrow }) {
     // it was automatic and left that path (address changed, dispute, window passed…): say so once, plainly
     if (!a.enabled || !a.status || !["manual", "expired"].includes(a.status) || !["FUNDED", "PAID"].includes(t.state)) return null;
     return (
-      <p className="rounded-xl border border-border bg-muted p-3 text-sm text-muted-foreground">
-        Auto-release is off for this trade{a.reason ? ` (${a.reason.replace(/\.$/, "").toLowerCase()})` : ""}. {payer ? "After paying, press I paid." : "Release yourself once you've checked the payment."}
-      </p>
+      <div className="space-y-3 rounded-xl border border-border bg-muted p-3">
+        <p className="text-sm text-muted-foreground">
+          Auto-release is off for this trade{a.reason ? ` (${a.reason.replace(/\.$/, "").toLowerCase()})` : ""}. {payer ? "After paying, press I paid." : "Release yourself once you've checked the payment."}
+        </p>
+        {payer && a.status === "expired" && <ExchangePay e={e} a={a} />}
+      </div>
     );
   }
 
@@ -85,8 +158,9 @@ export function AutoReleaseCard({ escrow: e }: { escrow: V11Escrow }) {
               <p className="text-sm">Send exactly <b className="font-mono">{a.amount} {currency}</b>.</p>
             )}
             <p className="text-sm text-muted-foreground">
-              The last digits identify your payment, so the KDA is released automatically when it arrives. Send this exact amount from a wallet; some exchanges change the amount.
+              From a wallet: send this exact amount. The last digits identify your payment, so the KDA is released automatically when it arrives.
             </p>
+            <ExchangePay e={e} a={a} />
             {someManual && where && <p className="text-xs text-muted-foreground">Automatic on {where} only. On another network, press I paid after sending.</p>}
           </>
         )
