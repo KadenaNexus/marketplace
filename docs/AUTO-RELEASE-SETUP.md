@@ -44,17 +44,28 @@ Restart the server. The log should show:
 
 ## What happens when a payment doesn't match
 
-Nothing automatic happens; the trade continues the normal way (the buyer taps "I paid", the seller checks and releases). Typical causes:
+The watcher only takes the exact amount. Typical causes of a mismatch:
 
-- an exchange withdrawal that took its fee out of the amount;
+- an exchange withdrawal that took its fee out of the amount or rounded it;
 - the bare amount sent without the extra digits;
 - the wrong network.
+
+**Paid from an exchange:** the buyer opens "Paying from an exchange?" in the Auto-release box and pastes the
+transaction ID (TXID) from the exchange's withdrawal history (`POST /api/v11/trades/:ref/claim-payment`). The server
+looks the transfer up on Tron or Ethereum and releases when it is the official token, went to the trade's address,
+brought **at least** the trade's amount, was sent inside the trade's window, is confirmed and was never used before,
+and when **no other trade with this seller** (open, or closed but still inside its window, with or without
+auto-release) could be what it paid for. That last rule stops someone with a trade of their own from claiming another
+buyer's payment. This also works after the window passed with no exact payment, as long as the trade is still open.
+
+Otherwise nothing automatic happens; the trade continues the normal way (the buyer taps "I paid", the seller checks
+and releases).
 
 ## Checks the agent makes before every release
 
 1. **Token:** the official contract (Tron USDT `TR7NHq…`, Ethereum USDT `0xdAC1…`, USDC `0xA0b8…`).
 2. **Recipient:** the seller's address as it was when the trade started.
-3. **Amount:** exactly the trade's amount.
+3. **Amount:** exactly the trade's amount (with a transaction ID from the buyer: at least the trade's amount, and no other trade of this seller fits it).
 4. **Time:** inside the trade's time window.
 5. **Confirmations:** confirmed on Tron, 12 confirmations on Ethereum.
 6. **Payment used once:** each payment can release only one trade.
