@@ -103,7 +103,7 @@ before(async () => {
   const app = express();
   app.use(express.json());
   // the real server checks a wallet signature; here the wallet in the request is taken as proven
-  const requireAuth = (req) => { const w = req.query?.wallet; return w ? { ok: true, wallet: w } : { ok: false, status: 400, error: "Missing wallet" }; };
+  const requireAuth = (req, from = "body") => { const w = (from === "query" ? req.query : req.body)?.wallet; return w ? { ok: true, wallet: w } : { ok: false, status: 400, error: "Missing wallet" }; };
   registerAutoReleaseRoutes(app, { getPool: () => pool, requireAuth, sendAuthError: (res, a) => res.status(a.status).json({ error: a.error }), auto });
   await new Promise((r) => { server = app.listen(0, "127.0.0.1", r); });
   base = `http://127.0.0.1:${server.address().port}`;
@@ -518,4 +518,106 @@ test("before taking the KDA back: payments that reached the seller's address dur
   trades.set("arttest-i", rawTrade({ agent: "", state: "PAID", "paid-at": { timep: iso(T0 + 600e3) } }));
   r = await getIncoming("arttest-i", SELLER);
   assert.deepEqual([r.body.checked, r.body.payments], [false, []]);
+});
+
+/* ---------------- paid from an exchange: the transaction ID ---------------- */
+const claim = (ref, wallet, txid, network = "USDT:TRC20") => fetch(`${base}/api/v11/trades/${encodeURIComponent(ref)}/claim-payment`, {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ wallet, publicKey: "x", signedCmd: "x", network, txid }),
+}).then(async (r) => ({ status: r.status, body: await r.json() }));
+const hex = (c) => c.repeat(64);
+
+test("paid from an exchange: a transaction ID that brought at least the amount, to the address, in the window, releases", async () => {
+  await sellDetails();
+  trades.set("arttest-x1", rawTrade());
+  await auto.tick(); await pin("arttest-x1");
+  // the exchange took its fee and rounded: 0.54 arrived (the trade is 0.533, the identifying amount 0.533017)
+  tron = [tronTx({ transaction_id: hex("e"), value: "540000" })];
+  assert.deepEqual((await auto.tick()).matched, [], "the watcher alone does not take it: not the exact amount");
+  let r = await claim("arttest-x1", OTHER, hex("e"));
+  assert.equal(r.status, 403, "only the buyer");
+  r = await claim("arttest-x1", BUYER, hex("E"));
+  assert.equal(r.status, 200);
+  assert.deepEqual([r.body.status, r.body.matchedTx], ["releasing", hex("e")]);
+  assert.equal(sent.length, 1, "released at once");
+  assert.equal(JSON.parse(sent[0].cmd).payload.exec.code, '(free.p2p-escrow-v11.release "arttest-x1")');
+  // the same transaction cannot pay a second trade
+  trades.set("arttest-x2", rawTrade({ buyer: OTHER, "funded-at": { timep: iso(T0 + 30e3) } }));
+  await auto.tick();
+  NOW += 20e3;
+  r = await claim("arttest-x2", OTHER, hex("e"));
+  assert.deepEqual([r.status, r.body.error], [409, "That transaction was already used for a trade"]);
+});
+
+test("paid from an exchange: refusals", async () => {
+  await sellDetails();
+  trades.set("arttest-x3", rawTrade());
+  await auto.tick();
+  tron = [
+    tronTx({ transaction_id: hex("1"), value: "500000" }),                                  // less than 0.533
+    tronTx({ transaction_id: hex("2"), token_info: { symbol: "USDT", address: FAKE_TRON } }),  // not official USDT
+    tronTx({ transaction_id: hex("3"), block_timestamp: T0 - 10 * 60e3 }),                  // before the take
+  ];
+  const step = async (txid, network) => { NOW += 11e3; return claim("arttest-x3", BUYER, txid, network); };
+  let r = await step("not-a-txid");
+  assert.equal(r.status, 400);
+  assert.match((await step(hex("1"))).body.error, /brought 0\.500000 USDT; this trade needs at least 0\.533000/);
+  assert.equal((await step(hex("2"))).status, 422);
+  assert.equal((await step(hex("3"))).status, 404, "before the take: not even listed (the lookup starts at the take)");
+  r = await step(hex("9"));
+  assert.equal(r.status, 404);
+  assert.match(r.body.error, /No USDT transfer with this ID/);
+  r = await claim("arttest-x3", BUYER, hex("9"));
+  assert.equal(r.status, 429, "one check every few seconds per trade");
+  r = await step(hex("1"), "USDC:ERC20");
+  assert.equal(r.status, 400, "not a network of this trade");
+  eth = [ethTx({ hash: "0x" + hex("a"), value: "600000", confirmations: "3" })];
+  r = await step("0x" + hex("A"), "USDT:ERC20");
+  assert.deepEqual([r.status, r.body.error], [409, "Waiting for confirmations (3 of 12). Try again in a few minutes."]);
+  assert.equal(sent.length, 0);
+  assert.equal((await row("arttest-x3")).status, "watching");
+});
+
+test("paid from an exchange: a payment that could belong to another trade with this seller is not released", async () => {
+  await sellDetails();
+  // another open trade on the same address, by another buyer, also covered by 0.54
+  trades.set("arttest-x4", rawTrade());
+  trades.set("arttest-x5", rawTrade({ buyer: OTHER, "funded-at": { timep: iso(T0 + 60e3) } }));
+  await auto.tick();
+  tron = [tronTx({ transaction_id: hex("4"), value: "540000", block_timestamp: T0 + 2 * 60e3 })];
+  NOW += 20e3;
+  let r = await claim("arttest-x5", OTHER, hex("4"));
+  assert.equal(r.status, 409);
+  assert.match(r.body.error, /could also belong to another trade/);
+  assert.equal(sent.length, 0);
+  assert.equal((await row("arttest-x5")).status, "watching", "nothing changed: the seller decides");
+  // a trade of the same seller on a pool without auto-release (no row) counts too
+  await clean(); trades.clear(); pools.clear(); pools.set("arttest-pool", rawPool());
+  await sellDetails();
+  await sellDetails({ "USDT:TRC20": TRON }, "arttest-poolm");
+  pools.set("arttest-poolm", rawPool({ agent: "" }));
+  trades.set("arttest-x6", rawTrade());
+  trades.set("arttest-m1", rawTrade({ offer: "arttest-poolm", agent: "", buyer: OTHER }));
+  await auto.tick();
+  NOW += 20e3;
+  r = await claim("arttest-x6", BUYER, hex("4"));
+  assert.equal(r.status, 409, "the manual trade's buyer may have sent it");
+  // on another address it is not ambiguous
+  await sellDetails({ "USDT:TRC20": TRON2 }, "arttest-poolm");
+  NOW += 20e3;
+  r = await claim("arttest-x6", BUYER, hex("4"));
+  assert.deepEqual([r.status, r.body.status], [200, "releasing"]);
+});
+
+test("paid from an exchange: after the window passed unmatched, a payment made inside it still releases", async () => {
+  await sellDetails();
+  trades.set("arttest-x7", rawTrade());
+  await auto.tick();
+  tron = [tronTx({ transaction_id: hex("7"), value: "600000", block_timestamp: T0 + 25 * 60e3 })];
+  NOW = tradeDeadline(toTrade("arttest-x7", trades.get("arttest-x7"), "1")) + 16 * 60e3; // the window, its grace and our 15 minutes passed
+  await auto.tick();
+  assert.equal((await row("arttest-x7")).status, "expired");
+  const v = await getAuto("arttest-x7", BUYER);
+  assert.deepEqual(v.body.byTxid.map((x) => x.id).sort(), ["USDT:ERC20", "USDT:TRC20"], "still offered after the window passed");
+  const r = await claim("arttest-x7", BUYER, hex("7"));
+  assert.deepEqual([r.status, r.body.status], [200, "releasing"]);
 });

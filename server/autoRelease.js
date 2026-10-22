@@ -35,6 +35,11 @@ export const AUTO_NETWORKS = {
   "USDC:ERC20": { kind: "erc20", contract: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", decimals: 6 },
 };
 export const OPEN_STATUSES = ["watching", "matched", "releasing"];
+/** Rows a buyer can still prove a payment for with its transaction ID: being watched, or the window passed unmatched. */
+export const CLAIMABLE = ["watching", "expired"];
+/** What a transaction ID looks like on each kind of network. */
+const TXID_SHAPE = { tron: /^[0-9a-f]{64}$/, erc20: /^0x[0-9a-f]{64}$/ };
+const CLAIM_EVERY_MS = 10 * 1000;
 export const EARLY_MS = 2 * 60 * 1000;        // a transfer may be stamped a little before the take
 export const GRACE_MS = 15 * 60 * 1000;       // and arrive a little after the deadline
 /**
@@ -402,6 +407,8 @@ export function createAutoRelease({
       deadline: new Date(row.deadline).toISOString(),
       agent: row.agent,
       ...(row.status === "manual" || row.status === "expired" ? { reason: row.last_error || null } : {}),
+      // where a buyer who paid from an exchange can prove it with the transaction ID (claimByTxid)
+      byTxid: CLAIMABLE.includes(row.status) ? row.watches.map((w) => ({ id: w.network, address: w.address })) : [],
     };
   }
 
@@ -507,6 +514,95 @@ export function createAutoRelease({
     return { trade, arbiter, body: { checked: Object.keys(addresses).length > failed.length, failed, payments, hold: payments.some((x) => x.covers) } };
   }
 
+  /**
+   * The buyer paid from an exchange: the fee or rounding changed the amount, so the identifying digits are gone. They
+   * give the transaction ID instead, and the payment is accepted when every one of these holds:
+   *   the official token contract, to the trade's snapshot address, at least the trade's pay amount, inside the trade's
+   *   window, confirmed (Ethereum: 12 blocks), never used for another trade (the database enforces it), and no other
+   *   trade with this seller (open, or closed but still inside its window) could be what it paid for.
+   * The last rule stops someone with a trade of their own from claiming another buyer's payment: when a payment could
+   * belong to two trades, nothing is released and the seller decides. Returns { status, body } for the route.
+   */
+  const lastClaim = new Map();
+  async function claimByTxid(ref, wallet, network, txidIn) {
+    const fail = (status, error) => ({ status, body: { error } });
+    const n = AUTO_NETWORKS[network];
+    if (!n || !config.networks.includes(network)) return fail(400, "Auto-release does not watch this network");
+    const txid = String(txidIn || "").trim().toLowerCase();
+    if (!TXID_SHAPE[n.kind].test(txid)) {
+      return fail(400, n.kind === "tron" ? "A Tron transaction ID has 64 letters and digits (0-9, a-f)" : "An Ethereum transaction ID starts with 0x followed by 64 letters and digits");
+    }
+    const fresh = await readTrade(ref);
+    if (!fresh) return fail(404, "Trade not found");
+    const { trade, pool, config: cfg } = fresh;
+    if (wallet !== trade.buyer) return fail(403, "Only the buyer can do this");
+    // one check every few seconds per trade (counted only for the buyer, so nobody else can hold theirs up)
+    if (now() - (lastClaim.get(ref) ?? 0) < CLAIM_EVERY_MS) return fail(429, "Checked a moment ago. Try again in a few seconds.");
+    if (lastClaim.size > 5000) lastClaim.clear();
+    lastClaim.set(ref, now());
+    const why = disqualify(trade);
+    if (why) return fail(409, why);
+    let row = await loadRow(trade.tradeId);
+    if (!row) row = (await ensureRow(trade, pool, cfg)).row;
+    if (!row) return fail(409, "Auto-release is not on for this trade. Press I paid; the seller checks and releases.");
+    if (["matched", "releasing", "released"].includes(row.status)) return { status: 200, body: view(row) };
+    if (!CLAIMABLE.includes(row.status)) return fail(409, `Auto-release is off for this trade${row.last_error ? ` (${row.last_error.replace(/\.$/, "")})` : ""}. Press I paid; the seller checks and releases.`);
+    const w = row.watches.find((x) => x.network === network);
+    if (!w) return fail(400, `This trade is not paid on ${network}`);
+
+    let list;
+    try { list = await fetchTransfers(network, w.address, new Date(row.funded_at).getTime() - EARLY_MS); }
+    catch (e) { log.warn?.(`[auto-release] claim ${ref}: ${e.message}`); return fail(503, "Could not reach the network to check. Try again in a minute."); }
+    const tr = list.find((x) => String(x.txid).toLowerCase() === txid);
+    const cur = row.currency;
+    if (!tr) return fail(404, `No ${cur} transfer with this ID has reached the seller's address since the trade started. If you just sent it, wait a minute${n.kind === "erc20" ? " (Ethereum needs about 3 minutes)" : ""} and try again.`);
+    if (!sameContract(network, tr.contract)) return fail(422, `That transfer is not official ${cur}`);
+    if (addressKey(network, tr.to) !== w.address_key) return fail(422, "That transfer went to a different address");
+    if (n.kind === "erc20" && !(Number(tr.confirmations) >= ERC20_CONFIRMATIONS)) return fail(409, `Waiting for confirmations (${Number(tr.confirmations) || 0} of ${ERC20_CONFIRMATIONS}). Try again in a few minutes.`);
+    let value; try { value = BigInt(String(tr.value)); } catch { return fail(422, "Could not read the amount of that transfer"); }
+    if (value < BigInt(row.pay_units)) return fail(422, `That transfer brought ${fromUnits6(value.toString())} ${cur}; this trade needs at least ${fromUnits6(row.pay_units)} ${cur}. Message the seller in the chat.`);
+    if (!inWindow(row, tr.timeMs)) return fail(422, "That transfer was sent before this trade started or after its time ran out. Message the seller in the chat.");
+    if ((await db().query("SELECT 1 FROM auto_release WHERE matched_tx = $1", [tr.txid])).rowCount) return fail(409, "That transaction was already used for a trade");
+
+    // could it be another trade's payment? rows on this address (any status), then open trades with no row
+    const rows = (await db().query(
+      `SELECT a.trade_ref, a.funded_at, a.deadline, a.pay_units FROM auto_release a JOIN auto_release_watch w ON w.trade_ref = a.trade_ref
+        WHERE w.network = $1 AND w.address_key = $2 AND a.trade_ref <> $3`, [network, w.address_key, row.trade_ref])).rows;
+    let other = rows.find((o) => inWindow(o, tr.timeMs) && BigInt(o.pay_units) <= value)?.trade_ref;
+    if (!other) {
+      let snap = null;
+      try { snap = await chain(); } catch (e) { log.warn?.("[auto-release] chain read:", e.message); return fail(503, "Could not check the seller's other trades. Try again in a minute."); }
+      const seen = new Set([row.trade_ref, ...rows.map((o) => o.trade_ref)]);
+      const pools = new Map((snap.pools || []).map((p) => [p.poolId, p]));
+      for (const t of snap.trades || []) {
+        if (seen.has(t.tradeId) || t.seller !== trade.seller || t.currency !== trade.currency || !["FUNDED", "PAID", "DISPUTED"].includes(t.state) || !t.fundedAt) continue;
+        if (BigInt(Math.round(t.payAmount * 10 ** n.decimals)) > value) continue;
+        const win = { funded_at: t.fundedAt, deadline: new Date(tradeDeadline(t, configFor(snap, t.chain)?.tRelease)) };
+        if (!inWindow(win, tr.timeMs)) continue;
+        const addr = (await currentAddresses(t, pools.get(t.poolId)))[network];
+        if (addr && addressKey(network, addr) === w.address_key) { other = t.tradeId; break; }
+      }
+    }
+    if (other) {
+      log.warn?.(`[auto-release] claim ${ref}: ${tr.txid} could also pay ${other}; not released`);
+      return fail(409, "This payment could also belong to another trade with this seller, so it cannot be released automatically. Press I paid with this transaction ID; the seller checks and releases.");
+    }
+
+    try {
+      const u = await db().query(
+        `UPDATE auto_release SET status = 'matched', matched_tx = $2, matched_network = $3, matched_at = now(), last_error = 'Matched by the transaction ID the buyer gave', updated_at = now()
+          WHERE trade_ref = $1 AND status = ANY($4)`, [row.trade_ref, tr.txid, network, CLAIMABLE]);
+      if (!u.rowCount) return { status: 200, body: view(await loadRow(row.trade_ref)) };
+    } catch (e) {
+      if (e.code === "23505") return fail(409, "That transaction was already used for a trade");
+      throw e;
+    }
+    log.log?.(`[auto-release] ${row.trade_ref}: payment ${tr.txid} on ${network} (transaction ID from the buyer)`);
+    onChange(row.trade_ref, "matched");
+    try { await releaseStep(row.trade_ref); } catch (e) { log.warn?.(`[auto-release] ${row.trade_ref}: release after claim: ${e.message}`); }
+    return { status: 200, body: view(await loadRow(row.trade_ref)) };
+  }
+
   /** Match transfers to the watching rows, grouped by network + address (one request per address). */
   async function matchTransfers(rows) {
     const groups = new Map();
@@ -609,7 +705,7 @@ export function createAutoRelease({
     return { fresh };
   }
 
-  return { config, tick, readTrade, ensureRow, loadRow, view, forTrade, housekeep, releaseStep, fetchTransfers, disqualify, buildRelease, incomingDuring };
+  return { config, tick, readTrade, ensureRow, loadRow, view, forTrade, housekeep, releaseStep, fetchTransfers, disqualify, buildRelease, incomingDuring, claimByTxid };
 }
 
 /* ---------------- routes and the loop ---------------- */
@@ -670,6 +766,25 @@ export function registerAutoReleaseRoutes(app, { getPool, requireAuth, sendAuthE
     } catch (e) {
       console.error("GET /api/v11/trades/:ref/incoming", e.message);
       return res.status(500).json({ error: "Could not check incoming payments" });
+    }
+  });
+
+  // The buyer paid from an exchange: they give the transaction ID and the server checks it (auto.claimByTxid)
+  app.post("/api/v11/trades/:ref/claim-payment", async (req, res) => {
+    const a = requireAuth(req, "body");
+    if (!a.ok) return sendAuthError(res, a);
+    if (req.body?.wallet !== a.wallet) return res.status(400).json({ error: "Wallet must match authenticated wallet" });
+    const { id } = parseRef(req.params.ref);
+    if (!id || id.length > 128) return res.status(400).json({ error: "Bad trade id" });
+    if (!getPool()) return res.status(503).json({ error: "Database not ready" });
+    if (!auto.config.enabled) return res.status(409).json({ error: "Auto-release is off" });
+    res.set("Cache-Control", "no-store");
+    try {
+      const r = await auto.claimByTxid(req.params.ref, a.wallet, String(req.body?.network ?? ""), String(req.body?.txid ?? ""));
+      return res.status(r.status).json(r.body);
+    } catch (e) {
+      console.error("POST /api/v11/trades/:ref/claim-payment", e.message);
+      return res.status(500).json({ error: "Could not check the payment" });
     }
   });
 }
