@@ -40,6 +40,9 @@
   (defconst PAY_WINDOW_MIN:integer 900)       ; 15 minutes
   (defconst PAY_WINDOW_MAX:integer 86400)     ; 24 hours
   (defconst MIN_AMOUNT:decimal 0.000001)
+  ;; After the payment window the buyer has this long to mark paid or open a dispute before the seller can take
+  ;; the KDA back, so a buyer who paid but was late to tap "I paid" is not refunded away by a fast seller.
+  (defconst GRACE_S:integer 1800)
 
   ;; --------------------------------------------------------------- capabilities
 
@@ -115,10 +118,29 @@
     cancelsCount:integer
     volumeKda:decimal)
 
+  ;; Kadena tokens an instant-swap offer may use (module name -> approved), set by governance. An offer naming any
+  ;; other module cannot be created, and an existing one cannot be taken once its token is no longer approved.
+  (defschema token-row approved:bool)
+
+  ;; Free takes: the gas station account that may pay for a buyer's take (and that trade's later buyer steps), and
+  ;; its limits. Key "global". No row, or station "", means no free takes.
+  (defschema sponsor-row
+    station:string             ; principal account of free.p2p-escrow-v11-gas
+    daily:integer              ; free takes per UTC day, all buyers together
+    per-buyer:integer          ; free takes per buyer per UTC day
+    max-amount:decimal)        ; largest slice a free take may lock (KDA)
+
+  (defschema count-row count:integer)          ; "day:YYYY-MM-DD" and "buyer:<account>:YYYY-MM-DD"
+  (defschema sponsored-trade-row sponsored:bool)
+
   (deftable config:{config-row})
   (deftable offers:{offer})
   (deftable trades:{trade})
   (deftable reputation:{reputation-row})
+  (deftable tokens:{token-row})
+  (deftable sponsorship:{sponsor-row})
+  (deftable sponsor-counts:{count-row})
+  (deftable sponsored-trades:{sponsored-trade-row})
 
   ;; --------------------------------------------------------------- governance
 
@@ -167,6 +189,21 @@
     (with-capability (GOVERNANCE)
       (update config "global" { "paused": paused })))
 
+  ;; Approve (or withdraw approval of) a token module for instant swaps on this chain.
+  (defun set-token (module-name:string approved:bool)
+    (with-capability (GOVERNANCE)
+      (enforce (> (length module-name) 0) "Token module required")
+      (write tokens module-name { "approved": approved })))
+
+  ;; Free takes. station "" turns them off. Limits keep the station's cost and any abuse small.
+  (defun set-sponsorship (station:string daily:integer per-buyer:integer max-amount:decimal)
+    (with-capability (GOVERNANCE)
+      (enforce (or (= station "") (> (length station) 2)) "Invalid station account")
+      (enforce (and (>= daily 0) (<= daily 10000)) "daily must be 0 to 10000")
+      (enforce (and (>= per-buyer 0) (<= per-buyer 100)) "per-buyer must be 0 to 100")
+      (enforce (>= max-amount 0.0) "max-amount must not be negative")
+      (write sponsorship "global" { "station": station, "daily": daily, "per-buyer": per-buyer, "max-amount": max-amount })))
+
   (defun get-config () (read config "global"))
   (defun get-arbiter:string () (at "arbiter" (read config "global")))
   (defun get-agent:string () (at "agent" (read config "global")))
@@ -174,6 +211,37 @@
     (enforce (or (= (length agent) 0) (= agent (get-agent))) "Agent must be the platform's release agent or none"))
   (defun not-paused () (enforce (not (at "paused" (read config "global"))) "Marketplace is paused"))
   (defun now:time () (at "block-time" (chain-data)))
+  (defun token-approved:bool (module-name:string)
+    (with-default-read tokens module-name { "approved": false } { "approved" := ok } ok))
+  (defun get-sponsorship ()
+    (with-default-read sponsorship "global" { "station": "", "daily": 0, "per-buyer": 0, "max-amount": 0.0 }
+      { "station" := s, "daily" := d, "per-buyer" := p, "max-amount" := m }
+      { "station": s, "daily": d, "per-buyer": p, "max-amount": m }))
+  (defun utc-day:string () (format-time "%F" (now)))
+  (defun sponsor-count:integer (key:string)
+    (with-default-read sponsor-counts key { "count": 0 } { "count" := c } c))
+  (defun free-takes-left:object (buyer:string)
+    @doc "How many free takes are left today, overall and for this buyer."
+    (let ((sp (get-sponsorship)) (day (utc-day)))
+      { "station": (at "station" sp), "max-amount": (at "max-amount" sp)
+      , "today": (- (at "daily" sp) (sponsor-count (+ "day:" day)))
+      , "buyer": (- (at "per-buyer" sp) (sponsor-count (format "buyer:{}:{}" [buyer day]))) }))
+  (defun is-sponsored-trade:bool (trade-id:string)
+    (with-default-read sponsored-trades trade-id { "sponsored": false } { "sponsored" := s } s))
+  ;; Is the gas payer of this transaction the free-take station?
+  (defun station-pays:bool ()
+    (let ((station (at "station" (get-sponsorship))))
+      (and (!= station "") (= (at "sender" (chain-data)) station))))
+  ;; A buyer who has no account on this chain yet (new wallet, or KDA only on other chains): the account is created
+  ;; from the guard in the transaction data ("taker-guard"), which must match the k: address.
+  (defun account-exists:bool (account:string)
+    (try false (let ((d (coin.details account))) true)))
+  (defun account-guard:guard (account:string)
+    (if (account-exists account)
+      (at "guard" (coin.details account))
+      (let ((g (read-keyset "taker-guard")))
+        (enforce (validate-principal g account) "taker-guard does not match the account")
+        g)))
 
   ;; ---------------------------------------------------------------- helpers
 
@@ -281,6 +349,7 @@
       (enforce (> (length currency) 0) "Currency required")
       (enforce (or (> price 0.0) (and (= side "SELL") (= (length token) 0))) "A free giveaway must be a SELL offer paid outside Kadena")
       (enforce (or (= (length token) 0) (= side "SELL")) "Instant token settlement is for SELL offers")
+      (enforce (or (= (length token) 0) (token-approved token)) "This token is not approved for instant swaps")
       (valid-window pay-window)
       (enforce (or (= expires-at EPOCH) (> expires-at (now))) "Expiry must be in the future")
       (enforce (!= creator (get-arbiter)) "The arbiter cannot trade")
@@ -379,14 +448,53 @@
     (with-default-read trades trade-id { "offer": "" } { "offer" := existing }
       (enforce (= (length existing) 0) "Trade exists")))
 
+  ;; Checks and counts a free take. The station itself refuses to pay unless (sponsor-take-ok) passes, so a free
+  ;; take that fails here costs the station nothing it had not already agreed to.
+  (defun sponsor-take (trade-id:string offer-id:string taker:string amount:decimal)
+    (require-capability (INTERNAL))
+    (sponsor-take-ok offer-id taker amount)
+    (let* ((day (utc-day)) (dk (+ "day:" day)) (bk (format "buyer:{}:{}" [taker day])))
+      (write sponsor-counts dk { "count": (+ 1 (sponsor-count dk)) })
+      (write sponsor-counts bk { "count": (+ 1 (sponsor-count bk)) })
+      (write sponsored-trades trade-id { "sponsored": true })))
+
+  ;; Read-only: may the station pay for this take? Used by the station before paying and by sponsor-take.
+  (defun sponsor-take-ok:bool (offer-id:string taker:string amount:decimal)
+    (let ((sp (get-sponsorship)) (left (free-takes-left taker)))
+      (enforce (!= (at "station" sp) "") "Free takes are off")
+      (with-read offers offer-id { "side" := side, "token" := token, "price" := price }
+        (enforce (= side "SELL") "Free takes are for SELL offers")
+        (enforce (= (length token) 0) "Free takes are not for instant swaps")
+        (enforce (> price 0.0) "Free takes are not for giveaways"))
+      (enforce (<= amount (at "max-amount" sp)) "Above the largest free take")
+      (enforce (> (at "today" left) 0) "No free takes left today")
+      (enforce (> (at "buyer" left) 0) "No free takes left today for this buyer")
+      true))
+
+  ;; Read-only: may the station pay for this buyer step (mark-paid, cancel, open-dispute) on a free-take trade?
+  (defun sponsor-step-ok:bool (which:string trade-id:string)
+    (enforce (is-sponsored-trade trade-id) "Only trades taken for free")
+    (with-read trades trade-id { "state" := state, "funded-at" := funded-at, "pay-window" := window }
+      (enforce (contains which ["mark-paid" "cancel" "open-dispute"]) "Unknown step")
+      (if (= which "mark-paid")
+        (enforce (and (= state "FUNDED") (<= (now) (add-time funded-at (+ window GRACE_S)))) "Cannot mark paid now")
+        (if (= which "cancel")
+          (enforce (= state "FUNDED") "Cannot cancel now")
+          (enforce (contains state ["FUNDED" "PAID"]) "Cannot dispute now")))
+      true))
+
   ;; Take a slice of an offer. SELL: the KDA moves from the pool to the trade's vault, so the
   ;; trade starts FUNDED (a free giveaway goes straight to the taker). BUY: the taker locks the
   ;; KDA themselves in the same transaction.
+  ;; A buyer with no account on this chain yet gets one, created from "taker-guard" in the transaction data.
+  ;; When the free-take gas station pays for the transaction, the take must fit its limits (see sponsor-take).
   (defun take-offer (trade-id:string offer-id:string taker:string amount:decimal)
     (with-capability (INTERNAL)
     (not-paused)
     (new-trade-id trade-id)
     (check-take offer-id taker amount)
+    (if (account-exists taker) "account exists" (coin.create-account taker (account-guard taker)))
+    (if (station-pays) (sponsor-take trade-id offer-id taker amount) "buyer pays gas")
     (with-capability (ACCOUNT_AUTH taker)
       (with-read offers offer-id
         { "creator" := creator, "side" := side, "available" := available, "locked" := locked
@@ -449,6 +557,7 @@
         (enforce (= side "SELL") "Instant settlement is for SELL offers")
         (enforce (> (length token-name) 0) "This offer is paid outside Kadena: use take-offer")
         (enforce (= (format "{}" [token]) token-name) "Wrong token module for this offer")
+        (enforce (token-approved token-name) "This token is no longer approved for instant swaps")
         (let* ((agent (if (= agent (get-agent)) agent ""))
                (fee  (fee-for amount))
                (prec (token::precision))
@@ -491,7 +600,8 @@
     (with-read trades trade-id { "offer" := offer, "buyer" := buyer, "seller" := seller, "state" := state, "funded-at" := funded-at, "pay-window" := window, "amount" := amount }
       (with-capability (ACCOUNT_AUTH buyer)
         (enforce (= state "FUNDED") "Trade is not waiting for payment")
-        (enforce (<= (now) (add-time funded-at window)) "Payment window has passed")
+        (enforce (<= (now) (add-time funded-at (+ window GRACE_S))) "Payment window and grace period have passed")
+        (enforce (or (not (station-pays)) (sponsor-step-ok "mark-paid" trade-id)) "Not a free-take trade")
         (update trades trade-id { "state": "PAID", "paid-at": (now) })
         (emit-event (TRADE_EVENT trade-id offer "PAID" seller buyer amount))
         trade-id)))
@@ -523,20 +633,21 @@
     (with-read trades trade-id { "offer" := offer, "seller" := seller, "buyer" := buyer, "amount" := amount, "state" := state }
       (with-capability (ACCOUNT_AUTH buyer)
         (enforce (= state "FUNDED") "Only an unpaid trade can be cancelled")
+        (enforce (or (not (station-pays)) (sponsor-step-ok "cancel" trade-id)) "Not a free-take trade")
         (return-from-trade trade-id offer seller amount)
         (update trades trade-id { "state": "CANCELLED", "closed-at": (now) })
         (bump buyer false false true 0.0)
         (emit-event (TRADE_EVENT trade-id offer "CANCELLED" seller buyer amount))
         trade-id))))
 
-  ;; The buyer never marked paid within the window: the seller takes the KDA back.
+  ;; The buyer never marked paid within the window and the grace period after it: the seller takes the KDA back.
   (defun timeout-refund (trade-id:string)
     (with-capability (INTERNAL)
     (with-read trades trade-id
       { "offer" := offer, "seller" := seller, "buyer" := buyer, "amount" := amount, "state" := state, "funded-at" := funded-at, "pay-window" := window }
       (with-capability (ACCOUNT_AUTH seller)
         (enforce (= state "FUNDED") "Trade is not waiting for payment")
-        (enforce (> (now) (add-time funded-at window)) "Payment window has not passed yet")
+        (enforce (> (now) (add-time funded-at (+ window GRACE_S))) "Payment window and grace period have not passed yet")
         (return-from-trade trade-id offer seller amount)
         (update trades trade-id { "state": "REFUNDED", "closed-at": (now) })
         (bump buyer false false true 0.0)
@@ -550,6 +661,7 @@
     (with-read trades trade-id
       { "offer" := offer, "seller" := seller, "buyer" := buyer, "amount" := amount, "state" := state }
       (enforce (contains state ["FUNDED" "PAID"]) "Trade cannot be disputed from this state")
+      (enforce (or (not (station-pays)) (sponsor-step-ok "open-dispute" trade-id)) "Not a free-take trade")
       (enforce-one "Only the buyer, or the seller after mark-paid, can dispute"
         [ (with-capability (ACCOUNT_AUTH buyer) true)
           (and (enforce (= state "PAID") "Seller can dispute after mark-paid") (with-capability (ACCOUNT_AUTH seller) true)) ])
