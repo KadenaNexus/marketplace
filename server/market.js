@@ -4,11 +4,12 @@
  * directly, so there is no browser CORS or rate-limit trouble). If CoinGecko is down, the last price is kept
  * for up to 30 minutes, then the site simply shows no comparison.
  *
- *   GET /api/market/kda -> { prices: { USD, EUR, SAR, AED, BRO }, change24h: {...}, updatedAt, source }
+ *   GET /api/market/kda -> { prices: { USD, EUR, SAR, AED, BRO, FLUX, kb-USDC, kb-ETH, kb-USDT }, change24h: {...}, updatedAt, source }
  *
- * Kadena tokens (BRO) are priced from their KDA pool on Mercatus (server/tokens.js): tokens per KDA.
+ * Kadena tokens are priced from their KDA pool on Mercatus (server/tokens.js): tokens per KDA. kb-USDT has no pool
+ * and falls back to the USD price (1 USDT = 1 USD), see tokens.js PRICE_SOURCES.
  */
-import { tokenPricesPerKda } from "./tokens.js";
+import { peggedPrices, tokenPricesPerKda } from "./tokens.js";
 const env = (k, d) => (process.env[k] ?? d);
 export const MARKET_CURRENCIES = ["USD", "EUR", "SAR", "AED"];
 const url = () => env("MARKET_PRICE_URL", `https://api.coingecko.com/api/v3/simple/price?ids=kadena&vs_currencies=${MARKET_CURRENCIES.join(",").toLowerCase()}&include_24hr_change=true&include_last_updated_at=true`);
@@ -40,7 +41,8 @@ export function createMarket({ fetcher = (u) => fetch(u, { signal: AbortSignal.t
           tokens = { ...tokens, ...t }; // a token whose pool read failed keeps its last price
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
           const m = parseCoinGecko(await r.json());
-          if (m) { last = { ...m, prices: { ...m.prices, ...tokens } }; lastAt = now(); }
+          // pegged tokens (fallback) first, so a real pool price would win
+          if (m) { last = { ...m, prices: { ...m.prices, ...peggedPrices(m.prices), ...tokens } }; lastAt = now(); }
         } catch (e) {
           console.warn("[market] price fetch failed:", e.message);
         } finally { inflight = null; }

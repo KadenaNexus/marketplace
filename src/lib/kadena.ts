@@ -1,4 +1,4 @@
-import { txSettled, txSubmitted } from "./txProgress";
+import { txLabelOf, txSettled, txSubmitted } from "./txProgress";
 import {
   type ChainId,
   IUnsignedCommand,
@@ -59,6 +59,37 @@ export const PLATFORM_ARBITER = "k:eda1ef1f1528f5f72e153fcb9c2c8178317749429bd48
 
 export const kadenaClient = createClient(API_HOST);
 
+/** Escrow v11 module (deployed on every chain in V11_CHAINS, see shared/v11-chains.js). */
+const CONTRACT_MODULE_V11 =
+  (typeof import.meta.env?.VITE_CONTRACT_MODULE_V11 === "string" && import.meta.env.VITE_CONTRACT_MODULE_V11.trim()) || "p2p-escrow-v11";
+export const CONTRACT_FQN_V11 = CONTRACT_NAMESPACE ? `${CONTRACT_NAMESPACE}.${CONTRACT_MODULE_V11}` : CONTRACT_MODULE_V11;
+
+/**
+ * The Pact API of a chain. CHAIN_ID uses API_HOST as configured; another chain swaps the chain in a Chainweb URL,
+ * or adds the Chainweb path to a bare base URL (the local chain's proxy routes on it).
+ */
+export function apiHostFor(chain: string): string {
+  const c = String(chain);
+  if (c === CHAIN_ID) return API_HOST;
+  if (/\/chain\/[^/]+\/pact\/?$/.test(API_HOST)) return API_HOST.replace(/\/chain\/[^/]+\/pact(\/?)$/, `/chain/${c}/pact$1`);
+  return `${API_HOST.replace(/\/$/, "")}/chainweb/0.0/${NETWORK_ID}/chain/${c}/pact`;
+}
+const chainClients = new Map<string, ReturnType<typeof createClient>>();
+/** A Pact client for one chain (reads, preflight, poll). */
+export function clientFor(chain: string): ReturnType<typeof createClient> {
+  const c = String(chain);
+  if (c === CHAIN_ID) return kadenaClient;
+  let cl = chainClients.get(c);
+  if (!cl) { cl = createClient(apiHostFor(c)); chainClients.set(c, cl); }
+  return cl;
+}
+/** The chain a command is built for (its meta.chainId), CHAIN_ID when it cannot be read. */
+export function chainOfCmd(cmd: unknown): string {
+  try { const c = JSON.parse(String(cmd)) as { meta?: { chainId?: string } }; return String(c?.meta?.chainId || CHAIN_ID); } catch { return CHAIN_ID; }
+}
+// request key -> chain, so pollTransaction() asks the chain a command was sent to without every caller passing it
+const sentOnChain = new Map<string, string>();
+
 /** Gas: lower values = cheaper txs. Mainnet-appropriate defaults. */
 export const GAS_PRICE = 0.0000001; // 1e-7 KDA per unit (was 1e-5)
 export const GAS_LIMIT = 2500; // sufficient for single Pact calls (create, accept, fund, pay, refund, etc.)
@@ -88,7 +119,10 @@ export type EscrowState =
   | "REFUNDED"
   | "CLOSED"
   | "DELETED"
-  | "DISPUTED";
+  | "DISPUTED"
+  // escrow v11 trades shown through the same views (src/lib/v11.ts tradeToEscrow)
+  | "CANCELLED"
+  | "SPLIT";
 
 export const T1_SECONDS = 3600;
 export const T2_SECONDS = 14400;
@@ -138,12 +172,19 @@ export interface ChainReputation {
    WALLET
 ============================================================ */
 
+/** The Ecko extension's injected provider: only what this file calls. */
+interface EckoProvider {
+  isKadena?: boolean;
+  request: (args: { method: string; networkId: string }) => Promise<{ status?: string; message?: string; account?: { account: string; publicKey: string; chainId?: string } }>;
+}
+const ecko = (): EckoProvider | undefined => (window as unknown as { kadena?: EckoProvider }).kadena;
+
 export function isEckoWalletAvailable(): boolean {
-  return typeof window !== "undefined" && !!(window as any).kadena?.isKadena;
+  return typeof window !== "undefined" && !!ecko()?.isKadena;
 }
 
 export async function connectEckoWallet(): Promise<WalletAccount> {
-  const kadena = (window as any).kadena;
+  const kadena = ecko();
 
   const res = await kadena.request({
     method: "kda_connect",
@@ -191,7 +232,7 @@ export async function preflightSignedTransaction(signedFromWallet: unknown): Pro
   const cmd = raw as { cmd?: string; hash?: string; sigs?: unknown };
   if (!cmd?.cmd) throw new Error("Invalid signed command for preflight");
   const body = { cmd: cmd.cmd, hash: cmd.hash ?? "", sigs: (cmd.sigs ?? []) as [] };
-  return kadenaClient.local(body, { preflight: true, signatureVerification: true });
+  return clientFor(chainOfCmd(cmd.cmd)).local(body, { preflight: true, signatureVerification: true });
 }
 
 /** Walk nested Chainweb /poll and /local shapes until we find `{ status, error? }`. */
@@ -250,14 +291,14 @@ export function describePactFailure(
   return `${op} failed: ${msg}`;
 }
 
-/** Verify coin account exists on this chain (local read). */
-export async function readCoinDetailsLocal(account: string): Promise<{ balance: number } | null> {
+/** Verify coin account exists on a chain (default: this app's chain; local read). */
+export async function readCoinDetailsLocal(account: string, chain: string = CHAIN_ID): Promise<{ balance: number } | null> {
   const safe = account.replace(/"/g, '\\"');
   const pactCode = `(coin.details "${safe}")`;
   const command = Pact.builder
     .execution(pactCode)
     .setMeta({
-      chainId: CHAIN_ID,
+      chainId: chain as ChainId,
       senderAccount: "free",
       gasLimit: GAS_LIMIT,
       gasPrice: GAS_PRICE,
@@ -265,7 +306,7 @@ export async function readCoinDetailsLocal(account: string): Promise<{ balance: 
     })
     .setNetworkId(NETWORK_ID)
     .createTransaction();
-  const result = await kadenaClient.local(
+  const result = await clientFor(chain).local(
     { cmd: command.cmd, hash: command.hash, sigs: [] },
     { preflight: false }
   );
@@ -277,22 +318,22 @@ export async function readCoinDetailsLocal(account: string): Promise<{ balance: 
   return { balance: Number.isFinite(n) ? n : 0 };
 }
 
-/* ---------- Balance on chain 1 vs. other chains ----------
- * Wallets such as Ecko show the total KDA across all 20 chains, but this app only uses
- * CHAIN_ID. These helpers explain a shortfall in plain words before anything is signed. */
+/* ---------- Balance on the trade's chain vs. other chains ----------
+ * Wallets such as Ecko show the total KDA across all 20 chains, but a trade only uses KDA on its own chain
+ * (CHAIN_ID for v10; chain 1 or 2 for v11, by currency). These helpers explain a shortfall in plain words
+ * before anything is signed. */
 
 /** KDA paid in gas by one transaction at our gas settings (limit x price). */
 export const TX_GAS_KDA = GAS_LIMIT * GAS_PRICE;
 
-async function balanceOnChain(account: string, chain: string): Promise<number> {
+export async function balanceOnChain(account: string, chain: string): Promise<number> {
   const safe = account.replace(/"/g, '\\"');
   const command = Pact.builder
     .execution(`(try 0.0 (coin.get-balance "${safe}"))`)
     .setMeta({ chainId: chain as ChainId, senderAccount: "free", gasLimit: GAS_LIMIT_READ, gasPrice: GAS_PRICE, ttl: 600 })
     .setNetworkId(NETWORK_ID)
     .createTransaction();
-  const client = chain === CHAIN_ID ? kadenaClient : createClient(API_HOST.replace(`/chain/${CHAIN_ID}/`, `/chain/${chain}/`));
-  const result = await client.local({ cmd: command.cmd, hash: command.hash, sigs: [] }, { preflight: false, signatureVerification: false });
+  const result = await clientFor(chain).local({ cmd: command.cmd, hash: command.hash, sigs: [] }, { preflight: false, signatureVerification: false });
   if (result.result.status !== "success") return 0;
   const v = result.result.data as unknown;
   const n = typeof v === "number" ? v : typeof v === "object" && v && "decimal" in (v as object) ? Number((v as { decimal: string }).decimal) : Number(v);
@@ -305,8 +346,8 @@ export function readAppChainBalance(account: string): Promise<number> {
 }
 
 /** KDA the account holds on the other 19 chains (only chains with a balance), largest first. */
-export async function readOtherChainBalances(account: string): Promise<{ chain: string; balance: number }[]> {
-  const chains = Array.from({ length: 20 }, (_, i) => String(i)).filter((c) => c !== CHAIN_ID);
+export async function readOtherChainBalances(account: string, exceptChain: string = CHAIN_ID): Promise<{ chain: string; balance: number }[]> {
+  const chains = Array.from({ length: 20 }, (_, i) => String(i)).filter((c) => c !== String(exceptChain));
   const settled = await Promise.allSettled(chains.map((c) => balanceOnChain(account, c)));
   return chains
     .map((chain, i) => ({ chain, balance: settled[i].status === "fulfilled" ? (settled[i] as PromiseFulfilledResult<number>).value : 0 }))
@@ -317,25 +358,27 @@ export async function readOtherChainBalances(account: string): Promise<{ chain: 
 const kda = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 4 });
 
 /**
- * Null when the account has `needed` KDA (plus gas) on this app's chain; otherwise a title and a
- * plain explanation naming where the person's KDA actually is and how to move it.
+ * Null when the account has `needed` KDA (plus gas) on `chain` (default: this app's chain); otherwise a title
+ * and a plain explanation naming where the person's KDA actually is and how to move it. `gasKda` is what the
+ * transaction can spend on gas (a v11 take needs more than the v10 default, see v11.ts gasKda).
  */
-export async function appChainShortfall(account: string, needed: number): Promise<{ title: string; description: string } | null> {
-  const need = needed + TX_GAS_KDA;
-  const have = await readAppChainBalance(account);
+export async function appChainShortfall(account: string, needed: number, chain: string = CHAIN_ID, gasKda: number = TX_GAS_KDA): Promise<{ title: string; description: string } | null> {
+  const c = String(chain);
+  const need = needed + gasKda;
+  const have = await balanceOnChain(account, c);
   if (have + 1e-9 >= need) return null;
-  const others = await readOtherChainBalances(account).catch(() => []);
+  const others = await readOtherChainBalances(account, c).catch(() => []);
   const top = others[0];
   const move = Math.ceil((need - have + 0.005) * 100) / 100;
   const where = others.length
     ? `Your other KDA: ${others.slice(0, 3).map((o) => `${kda(o.balance)} KDA on chain ${o.chain}`).join(", ")}.`
     : `This account has no KDA on any other chain either.`;
   const how = top && top.balance >= move
-    ? `In your wallet, send at least ${kda(move)} KDA from chain ${top.chain} to chain ${CHAIN_ID} (to your same account), wait until it completes, then try again.`
-    : `Add at least ${kda(move)} KDA to this account on chain ${CHAIN_ID}, then try again.`;
+    ? `In Linx Wallet (or your wallet), send at least ${kda(move)} KDA from chain ${top.chain} to chain ${c} (to your same account), wait until it completes, then try again.`
+    : `Add at least ${kda(move)} KDA to this account on chain ${c}, then try again.`;
   return {
-    title: `Not enough KDA on chain ${CHAIN_ID}`,
-    description: `This marketplace only uses chain ${CHAIN_ID}; your wallet may show your total across all chains. On chain ${CHAIN_ID} you have ${kda(have)} KDA, and this needs ${kda(need)} KDA (${kda(needed)} KDA plus gas). ${where} ${how}`,
+    title: `Not enough KDA on chain ${c}`,
+    description: `The KDA for this must be on chain ${c}; your wallet may show your total across all chains. On chain ${c} you have ${kda(have)} KDA, and this needs ${kda(need)} KDA (${kda(needed)} KDA plus gas). ${where} ${how}`,
   };
 }
 
@@ -344,10 +387,68 @@ export function isInsufficientFunds(message: string): boolean {
   return /insufficient (funds|balance)/i.test(message);
 }
 
-export async function submitTransaction(signedCmd: any): Promise<string> {
-  const cmd = signedCmd?.signedCmd ?? signedCmd;
+/** The node refused the command because its time-to-live ran out or its creation time was off (nothing was sent). */
+export function isTtlRejection(message: string): boolean {
+  return /time[- ]to[- ]live|\bTTL\b|creation[- ]?time|transaction time|too far in the (past|future)/i.test(message);
+}
+export const TTL_REJECTED_MESSAGE = "Approval took too long, nothing was sent. Please try again.";
+/** The contract's mark-paid refusal once the buyer's window has closed. */
+export function isPayWindowPassed(message: string): boolean {
+  return /payment window has passed/i.test(message);
+}
+export const PAY_WINDOW_PASSED_MESSAGE = "The payment window closed before the chain saw your I paid, so it was not recorded. If you did send the money, write to the seller in the chat and open a dispute so the arbiter can check.";
+
+/* ---------- a sent transaction this browser is still waiting for ----------
+ * The result of a send can take longer than we wait for (a slow block, a page closed too soon). The request key is
+ * kept on this device until the chain answers, so the next visit can check it instead of sending again. */
+
+export interface PendingTx { requestKey: string; chain: string; label: string; sentAt: number }
+const PENDING_KEY = "nx-pending-tx";
+/** After this long an unanswered request can no longer be mined (TTL 30 min plus margin): forget it. */
+const PENDING_MAX_MS = 60 * 60 * 1000;
+export function readPendingTx(): PendingTx | null {
+  try {
+    const p = JSON.parse(localStorage.getItem(PENDING_KEY) || "null") as PendingTx | null;
+    if (!p || typeof p.requestKey !== "string" || !p.requestKey) return null;
+    if (Date.now() - Number(p.sentAt || 0) > PENDING_MAX_MS) { forgetPendingTx(p.requestKey); return null; }
+    return p;
+  } catch { return null; }
+}
+function rememberPendingTx(p: PendingTx) { try { localStorage.setItem(PENDING_KEY, JSON.stringify(p)); } catch { /* ignore */ } }
+export function forgetPendingTx(requestKey: string) {
+  try { if (readRaw()?.requestKey === requestKey) localStorage.removeItem(PENDING_KEY); } catch { /* ignore */ }
+}
+function readRaw(): PendingTx | null { try { return JSON.parse(localStorage.getItem(PENDING_KEY) || "null"); } catch { return null; } }
+/** One look at the chain (no waiting): "done" when it has an answer (or the request is too old to land), else "pending". */
+export async function checkPendingTx(p: PendingTx): Promise<"done" | "pending"> {
+  if (Date.now() - p.sentAt > PENDING_MAX_MS) { forgetPendingTx(p.requestKey); return "done"; }
+  try {
+    const r = await clientFor(p.chain).getStatus({ requestKey: p.requestKey, chainId: p.chain as ChainId, networkId: NETWORK_ID });
+    if (r && r[p.requestKey]) { forgetPendingTx(p.requestKey); return "done"; }
+  } catch { /* the node did not answer: still pending */ }
+  return "pending";
+}
+
+/** Polling gave up before the chain answered. The transaction may still land: never send it again. */
+export class TxUnresolvedError extends Error {
+  requestKey: string;
+  chain: string;
+  constructor(requestKey: string, chain: string) {
+    super(`Still confirming on the chain. Do not send it again. Check the explorer link. Request key: ${requestKey} (${getTxExplorerUrl(requestKey)})`);
+    this.name = "TxUnresolvedError";
+    this.requestKey = requestKey;
+    this.chain = chain;
+  }
+}
+
+/** A signed command, a wallet's `{ signedCmd }` answer, or a list of commands. */
+type Sendable = { cmd?: string; hash?: string; sigs?: unknown };
+export async function submitTransaction(signedCmd: unknown): Promise<string> {
+  const cmd = ((signedCmd as { signedCmd?: unknown })?.signedCmd ?? signedCmd) as Sendable | Sendable[];
   const body = { cmds: Array.isArray(cmd) ? cmd : [cmd] };
-  const url = `${API_HOST}/api/v1/send`;
+  // sent to the chain the command was built for (escrow v11 runs on chains 1 and 2)
+  const chain = chainOfCmd((Array.isArray(cmd) ? cmd[0] : cmd)?.cmd);
+  const url = `${apiHostFor(chain)}/api/v1/send`;
   if (typeof console !== "undefined" && console.debug) {
     console.debug("[Chainweb] POST", url, getChainwebDebugInfo());
   }
@@ -368,13 +469,17 @@ export async function submitTransaction(signedCmd: any): Promise<string> {
     if (res.status >= 500) {
       console.error("[submitTransaction] 5xx response body:", text.slice(0, 3000));
     }
+    // the signed command sat in the wallet past its time-to-live: the node drops it, nothing happened
+    if (isTtlRejection(msg)) throw new Error(TTL_REJECTED_MESSAGE);
     throw new Error(`Send failed (${res.status}): ${msg}`);
   }
   const data = JSON.parse(text) as { requestKeys?: string[] };
   const keys = data?.requestKeys;
   if (!keys?.length) throw new Error("No requestKeys in send response");
+  for (const k of keys) sentOnChain.set(k, chain);
   if (!Array.isArray(cmd)) recordTradeTx(cmd, keys[0]);
   txSubmitted(keys[0]); // the "keep this page open" countdown, until pollTransaction() has the result
+  rememberPendingTx({ requestKey: keys[0], chain, label: txLabelOf() || "Your last transaction", sentAt: Date.now() });
   return keys[0];
 }
 
@@ -385,7 +490,7 @@ export async function submitTransaction(signedCmd: any): Promise<string> {
  */
 function recordTradeTx(cmd: unknown, requestKey: string) {
   const c = (cmd as { cmd?: unknown } | null)?.cmd;
-  if (typeof c !== "string" || !c.includes(`${CONTRACT_FQN}.`)) return;
+  if (typeof c !== "string" || !(c.includes(`${CONTRACT_FQN}.`) || c.includes(`${CONTRACT_FQN_V11}.`))) return;
   try {
     fetch("/api/trade-txs", {
       method: "POST",
@@ -414,46 +519,25 @@ export async function fetchTradeTxs(offerId: string): Promise<TradeTx[]> {
 
 /**
  * Wait for a sent transaction. Kadena makes a block about every 30 s; asking every 1.5 s (the client's
- * default is 5 s) shows the result a few seconds sooner on average.
+ * default is 5 s) shows the result a few seconds sooner on average. The chain defaults to the one
+ * submitTransaction() sent it to.
  */
-export async function pollTransaction(requestKey: string) {
+export async function pollTransaction(requestKey: string, chain?: string) {
+  const c = String(chain ?? sentOnChain.get(requestKey) ?? CHAIN_ID);
   try {
-    return await kadenaClient.pollOne(
-      { requestKey, chainId: CHAIN_ID, networkId: NETWORK_ID },
+    const r = await clientFor(c).pollOne(
+      { requestKey, chainId: c as ChainId, networkId: NETWORK_ID },
       { interval: 1500, timeout: 4 * 60 * 1000 },
     );
+    forgetPendingTx(requestKey);
+    return r;
+  } catch (e) {
+    // @kadena/client gives up with Error('TIME_OUT_REJECT'): the transaction is not lost, only not answered yet
+    if (e instanceof Error && /TIME_OUT_REJECT/.test(e.message)) throw new TxUnresolvedError(requestKey, c);
+    throw e;
   } finally {
     txSettled(requestKey);
   }
-}
-
-/** Recipient for the "Test transfer 10 KDA" flow. */
-const TEST_TRANSFER_RECIPIENT = "k:665976b8f985c0119c3afa74115fde19f71309cc85428a7104dc2648252b593e";
-
-/**
- * Sign and submit a 10 KDA transfer to the test address. Use to verify the node and signing work.
- * @returns requestKey
- */
-export async function sendTestTransfer(account: string, publicKey: string): Promise<string> {
-  const signer = signerPayloadForAccount(account, publicKey);
-  const amountCap = { decimal: "10" };
-  // meta.sender = gas payer: must match coin-table key (try full k:account; some nodes key by it)
-  // If you see "No value found in table coin_coin-table": account has no KDA on mainnet01 chain 1 — fund it first.
-  const tx = Pact.builder
-    .execution(`(coin.transfer "${account}" "${TEST_TRANSFER_RECIPIENT}" 10.0)`)
-    .addSigner(signer, () => [])
-    .setMeta({
-      chainId: CHAIN_ID,
-      senderAccount: account,
-      gasLimit: GAS_LIMIT,
-      gasPrice: GAS_PRICE,
-      ttl: 600,
-    })
-    .setNetworkId(NETWORK_ID)
-    .createTransaction();
-
-  const signed = await signTransaction(tx);
-  return submitTransaction(signed);
 }
 
 /* ============================================================
@@ -1150,7 +1234,7 @@ export async function getReputation(wallet: string): Promise<ChainReputation> {
 export async function disconnectEckoWallet(): Promise<void> {
   if (typeof window === "undefined") return;
 
-  const kadena = (window as any).kadena;
+  const kadena = ecko();
   if (!kadena) return;
 
   await kadena.request({
@@ -1162,7 +1246,7 @@ export async function disconnectEckoWallet(): Promise<void> {
 export async function getAccountInfo() {
   if (typeof window === "undefined") return null;
 
-  const kadena = (window as any).kadena;
+  const kadena = ecko();
   if (!kadena) return null;
 
   try {

@@ -63,6 +63,16 @@ test("sell offer: the creator sets details; the buyer sees them only after accep
   assert.equal((await put(id, SELLER, [{ method: "USDT", value: "0x52908400098527886E0F7030069857D2E4169EE7", network: "ERC20" }])).status, 409, "locked");
   assert.deepEqual((await get(id, BUYER)).body.details, USDT);
   assert.equal((await get(id, SELLER)).body.editable, false);
+  // a trade that ended without a payment (a v11 trade keeps its buyer on the chain) shows the payer nothing any more
+  for (const state of ["CANCELLED", "REFUNDED", "CLOSED"]) {
+    chain.set(id, { side: "SELL", creator: SELLER, buyer: BUYER, arbiter: ARB, state });
+    assert.equal((await get(id, BUYER)).status, 403, state);
+    assert.equal((await get(id, SELLER)).status, 200, `${state}: the holder still sees its own`);
+  }
+  for (const state of ["PAID", "DISPUTED", "COMPLETED"]) {
+    chain.set(id, { side: "SELL", creator: SELLER, buyer: BUYER, arbiter: ARB, state });
+    assert.equal((await get(id, BUYER)).status, 200, state);
+  }
 });
 
 test("buy offer: the person who accepts (KDA holder) sets the details; the creator (payer) sees them", async () => {

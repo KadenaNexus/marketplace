@@ -1,8 +1,10 @@
 import { OFFER_LISTING_DAYS, isGiveaway } from "@/lib/markets";
 import { useEffect, useState } from "react";
 import { Check, Clock } from "lucide-react";
-import { T1_SECONDS, T2_SECONDS, T3_SECONDS, type Escrow } from "@/lib/kadena";
-import { formatCountdown, getRemainingSeconds, nextStep } from "./TradeTimer";
+import type { Escrow } from "@/lib/kadena";
+import { deadlineFor, formatCountdown, getRemainingSeconds, nextStep } from "./TradeTimer";
+import { hasAgent, isV11, payText } from "@/lib/v11ui";
+import { isGiveawayPool, isInstant } from "@/lib/markets";
 import { cn } from "@/lib/utils";
 
 /** Which side of this trade the connected wallet is on (or would be, if it accepts the offer). */
@@ -24,12 +26,8 @@ export function tradeTitle(e: Escrow, me?: string) {
   return `${e.side === "SELL" ? "Sell" : "Buy"} offer: ${kdaAmount(e.amount)} KDA`;
 }
 
-function deadline(e: Escrow): { iso?: string; limit: number } {
-  if (e.state === "ACCEPTED") return { iso: e.acceptedAt, limit: T1_SECONDS };
-  if (e.state === "FUNDED") return { iso: e.fundedAt, limit: T2_SECONDS };
-  if (e.state === "PAID") return { iso: e.paidAt, limit: T3_SECONDS };
-  return { limit: 0 };
-}
+const deadline = deadlineFor;
+const FINISHED = ["COMPLETED", "REFUNDED", "CLOSED", "CANCELLED", "SPLIT"];
 
 /** "42 min left", "3 h 12 min left" */
 export function leftText(seconds: number): string {
@@ -46,6 +44,17 @@ export function turnInfo(e: Escrow, me?: string): { mine: boolean; label: string
   const { iso, limit } = deadline(e);
   const remaining = iso && limit ? getRemainingSeconds(iso, limit) : null;
   if (remaining === 0) return { mine: true, label: "Time is up: open the trade to see what you can do", remaining };
+  if (isV11(e)) {
+    const agent = hasAgent(e);
+    const pay = payText(e.trade);
+    if (e.state === "FUNDED") return buyer
+      ? { mine: true, label: agent ? "Your turn: send the exact amount (auto-release)" : `Your turn: send ${pay}, then tap I paid`, remaining }
+      : { mine: false, label: agent ? "Waiting for the buyer's payment (auto-release)" : `Waiting for the buyer's ${pay}`, remaining };
+    if (e.state === "PAID") return seller
+      ? { mine: true, label: `Your turn: check ${pay} arrived, then release`, remaining }
+      : { mine: false, label: "Waiting for the seller to release", remaining };
+    return null;
+  }
   if (e.state === "ACCEPTED") return seller ? { mine: true, label: "Your turn: deposit the KDA", remaining } : { mine: false, label: "Waiting for the seller to deposit", remaining };
   const free = isGiveaway(e);
   if (e.state === "FUNDED") return buyer ? { mine: true, label: free ? "Your turn: tap Mark as Paid (nothing to pay)" : "Your turn: pay and mark as paid", remaining } : { mine: false, label: free ? "Waiting for the winner to confirm" : "Waiting for the buyer's payment", remaining };
@@ -108,13 +117,14 @@ export function YourTurnCard({ escrow: e, me, canAccept }: { escrow: Escrow; me?
   } else if (e.state === "DISPUTED") {
     eyebrow = "In dispute";
     text = "The arbiter is reviewing this trade. Use the Dispute tab to add evidence, and the chat to talk to the other side.";
-  } else if (["COMPLETED", "REFUNDED", "CLOSED"].includes(e.state)) {
+  } else if (FINISHED.includes(e.state)) {
     eyebrow = "Finished";
-    text = e.state === "COMPLETED" ? "The KDA was released to the buyer." : e.state === "REFUNDED" ? "The KDA went back to the seller." : "This offer was closed.";
+    text = isV11(e) ? nextStep(e, me, false)
+      : e.state === "COMPLETED" ? "The KDA was released to the buyer." : e.state === "REFUNDED" ? "The KDA went back to the seller." : "This offer was closed.";
   } else {
-    const s = nextStep(e, me, expired);
+    const s = nextStep(e, me, expired, remaining);
     if (s.startsWith("Your turn: ")) { eyebrow = "Your turn"; text = s.slice("Your turn: ".length); }
-    else { eyebrow = expired ? "Time is up" : "Waiting"; text = s; }
+    else { eyebrow = expired || s.startsWith("The payment window closed") ? "Time is up" : "Waiting"; text = s; }
     text = text.charAt(0).toUpperCase() + text.slice(1);
   }
   const mine = eyebrow === "Your turn" || eyebrow === "Before you accept";
@@ -143,17 +153,38 @@ export function YourTurnCard({ escrow: e, me, canAccept }: { escrow: Escrow; me?
 
 /** Four steps of a trade with the current one marked. Shown once an offer is accepted. */
 export function TradeSteps({ escrow: e, me }: { escrow: Escrow; me?: string }) {
-  const order = ["ACCEPTED", "FUNDED", "PAID", "COMPLETED"];
-  const at = order.indexOf(e.state);
-  if (at < 0) return null;
   const side = myTradeSide(e, me);
   const kda = `${kdaAmount(e.amount)} KDA`;
-  const steps = [
+  let order: string[];
+  let steps: string[];
+  if (isV11(e)) {
+    // v11: the KDA is locked by the take itself, so there is no accept step
+    if (isInstant(e.trade) || isGiveawayPool(e.trade)) return null;
+    const agent = hasAgent(e);
+    order = ["FUNDED", "PAID", "COMPLETED"];
+    steps = [
+      `${kda} locked in escrow`,
+      side === "buyer" ? (agent ? "You pay" : "You pay and tap I paid") : (agent ? "Buyer pays" : "Buyer pays and taps I paid"),
+      agent ? "The KDA is released automatically when the payment arrives" : side === "buyer" ? "Seller releases the KDA to you" : side === "seller" ? "You release the KDA to the buyer" : "Seller releases the KDA",
+    ];
+    // the first step is done the moment the trade exists
+    const at = order.indexOf(e.state);
+    if (at < 0) return null;
+    return <StepList steps={steps} at={at} />;
+  }
+  order = ["ACCEPTED", "FUNDED", "PAID", "COMPLETED"];
+  const at = order.indexOf(e.state);
+  if (at < 0) return null;
+  steps = [
     side === "buyer" && e.creator !== me ? "Accepted by you" : "Offer accepted",
     `${kda} locked in escrow`,
     side === "buyer" ? "You pay and mark it paid" : "Buyer pays and marks it paid",
     side === "buyer" ? "Seller releases the KDA to you" : side === "seller" ? "You release the KDA to the buyer" : "Seller releases the KDA",
   ];
+  return <StepList steps={steps} at={at} />;
+}
+
+function StepList({ steps, at }: { steps: string[]; at: number }) {
   return (
     <ol className="space-y-2.5 rounded-2xl border border-border bg-card p-4" aria-label="Trade steps">
       {steps.map((label, i) => {

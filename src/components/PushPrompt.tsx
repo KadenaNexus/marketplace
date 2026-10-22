@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { BellRing, Loader2, PlusSquare, Share, Smartphone, X } from "lucide-react";
+import { BellRing, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useNotifications } from "@/hooks/useNotifications";
 import { useWallet } from "@/hooks/useWallet";
@@ -30,25 +30,6 @@ export function PushPrompt() {
       <p className="flex items-center gap-2 pr-6 font-semibold"><BellRing className="h-5 w-5 text-primary" />Don't miss your turn</p>
       {!askPush ? (
         <p className="mt-1 text-sm text-muted-foreground">Add your email: it's needed to trade, and every step of your trades comes there.</p>
-      ) : push === "needs-install" ? (
-        <>
-          <p className="mt-1 text-sm text-muted-foreground">Get a notification when a trade needs you, even with the page closed. On iPhone, add the Marketplace to your Home Screen first:</p>
-          <ol className="mt-3 space-y-2 text-sm">
-            {[
-              [Share, <>Tap <b>Share</b> at the bottom of Safari</>],
-              [PlusSquare, <>Scroll down and tap <b>Add to Home Screen</b>, then <b>Add</b></>],
-              [Smartphone, <>Open the Marketplace from the new icon and tap <b>Turn on notifications</b></>],
-            ].map(([Icon, text], i) => {
-              const I = Icon as typeof Share;
-              return (
-                <li key={i} className="flex items-center gap-3">
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-background text-primary shadow-sm"><I className="h-4 w-4" /></span>
-                  <span>{text as React.ReactNode}</span>
-                </li>
-              );
-            })}
-          </ol>
-        </>
       ) : (
         <>
           <p className="mt-1 text-sm text-muted-foreground">Get a notification when a trade needs you (accepted, funded, paid, deadlines), even with the page closed.</p>

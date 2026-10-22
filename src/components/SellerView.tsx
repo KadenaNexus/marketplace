@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CreateOfferForm } from "@/components/CreateOfferForm";
+import { CreatePoolForm } from "@/components/pools/CreatePoolForm";
+import { MyPools, PoolMarket } from "@/components/pools/PoolMarket";
 import { EscrowActions } from "@/components/EscrowActions";
 import { OfferFiltersComponent, type OfferFilters } from "@/components/OfferFilters";
 import { Plus, Store, Activity, Sparkles } from "lucide-react";
@@ -61,23 +62,19 @@ export function SellerView({ refreshTrigger = 0 }: SellerViewProps) {
         </TabsList>
 
         {/* Shared Filters - shown for new, mypast, and active tabs */}
-        {(activeTab === "new" || activeTab === "mypast" || activeTab === "active") && (
+        {(activeTab === "mypast" || activeTab === "active") && (
           <div className="mt-4">
-            <OfferFiltersComponent 
-              filters={filters} 
+            <OfferFiltersComponent
+              filters={filters}
               onFiltersChange={setFilters}
               role="seller"
             />
           </div>
         )}
 
-        <TabsContent value="new" className="space-y-4 mt-4">
-          <EscrowActions
-            refreshTrigger={refreshTrigger}
-            filters={filters}
-            role="seller"
-            viewMode="new"
-          />
+        <TabsContent value="new" className="space-y-6 mt-4">
+          <MyPools />
+          <PoolMarket side="seller" refreshTrigger={refreshTrigger} />
         </TabsContent>
 
         <TabsContent value="mypast" className="space-y-4 mt-4">
@@ -99,7 +96,7 @@ export function SellerView({ refreshTrigger = 0 }: SellerViewProps) {
         </TabsContent>
 
         <TabsContent value="create" className="mt-4">
-          <CreateOfferForm 
+          <CreatePoolForm
             onSuccess={handleOfferCreated}
             role="seller"
           />

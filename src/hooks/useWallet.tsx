@@ -1,4 +1,4 @@
-import { createContext, useState, useEffect, useCallback, useContext } from "react";
+import { createContext, useState, useEffect, useCallback, useContext, useRef } from "react";
 import {
   WalletAccount,
   isEckoWalletAvailable,
@@ -34,6 +34,8 @@ interface WalletContextValue {
 
 const WalletContext = createContext<WalletContextValue | null>(null);
 const KIND_KEY = "nx-wallet-kind";
+const RELAY_TIMEOUT_MS = 20000;
+const RELAY_DOWN_MESSAGE = "Could not reach the WalletConnect relay. Check your connection and try again.";
 const readKind = (): WalletKind | null => { try { const v = localStorage.getItem(KIND_KEY); return v === "ecko" || v === "walletconnect" ? v : null; } catch { return null; } };
 const saveKind = (k: WalletKind | null) => { try { if (k) localStorage.setItem(KIND_KEY, k); else localStorage.removeItem(KIND_KEY); } catch { /* ignore */ } };
 
@@ -45,8 +47,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [hasEcko, setHasEcko] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
-  // phone-wallet connection screen: open while waiting; uri once the link is ready
-  const [wcSheet, setWcSheet] = useState<{ uri: string | null; cancel: () => void } | null>(null);
+  // phone-wallet connection screen: open while waiting; uri once the link is ready; error when the relay never answered
+  const [wcSheet, setWcSheet] = useState<{ uri: string | null; cancel: () => void; error?: string; retry?: () => void } | null>(null);
   const phoneWalletsReady = wc.walletConnectReady();
 
   const reset = useCallback(() => {
@@ -122,18 +124,31 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     const cancelled = new Promise<never>((_, reject) => { cancel = () => reject(new Error("cancelled")); });
     cancelled.catch(() => {});
     setWcSheet({ uri: null, cancel });
+    // No link within 20 s means the WalletConnect relay could not be reached (or the client never loaded): stop,
+    // drop the half-made client so Retry starts fresh, and say so on the connection screen.
+    let gotUri = false;
+    let relayDown = false;
+    const timer = setTimeout(() => { if (!gotUri) { relayDown = true; wc.resetWalletConnectClient(); cancel(); } }, RELAY_TIMEOUT_MS);
     try {
-      const r = await wc.connectWalletConnect((uri) => setWcSheet((s) => (s ? { ...s, uri } : s)), cancelled);
+      const r = await wc.connectWalletConnect((uri) => { gotUri = true; setWcSheet((s) => (s ? { ...s, uri } : s)); }, cancelled);
       await adoptPhoneWallet(r.account, r.name);
+      setWcSheet(null);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to connect wallet";
-      // closing the connection screen is not an error
-      if (!/cancel|closed/i.test(msg)) setError(/reject/i.test(msg) ? "The wallet declined the connection." : msg);
+      if (relayDown) {
+        setWcSheet({ uri: null, cancel: () => setWcSheet(null), error: RELAY_DOWN_MESSAGE, retry: () => { void connectPhoneWalletRef.current(); } });
+      } else {
+        setWcSheet(null);
+        // closing the connection screen is not an error
+        if (!/cancel|closed/i.test(msg)) setError(/reject/i.test(msg) ? "The wallet declined the connection." : msg);
+      }
     } finally {
-      setWcSheet(null);
+      clearTimeout(timer);
       setIsConnecting(false);
     }
   }, [adoptPhoneWallet]);
+  const connectPhoneWalletRef = useRef(connectPhoneWallet);
+  connectPhoneWalletRef.current = connectPhoneWallet;
 
   const connect = useCallback(async () => {
     setError(null);

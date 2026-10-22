@@ -36,7 +36,7 @@ const status = () => fetch(`${base}/api/trade-email?wallet=${W}&publicKey=x&sign
 const n = (kind, title = "Your offer was accepted") => ({ wallet: W, offer_id: "offer-1-abcdef", kind, title, body: "Deposit the KDA within 1 hour." });
 
 test("which notifications are emailed", () => {
-  for (const k of ["accepted", "funded", "paid", "completed", "refunded", "closed", "disputed", "due-pay", "expired-release", "proof:4"]) assert.ok(emailable(k), k);
+  for (const k of ["accepted", "funded", "paid", "completed", "refunded", "closed", "disputed", "due-pay", "expired-release", "proof:4", "taken", "cancelled", "split", "expiring-pool-2026"]) assert.ok(emailable(k), k);
   for (const k of ["message:9", "new_offer", ""]) assert.ok(!emailable(k), k);
 });
 

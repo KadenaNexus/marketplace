@@ -11,6 +11,7 @@ import { useNewMessageNotification } from "@/hooks/useNewMessageNotification";
 import { useTradeDeadlineReminders } from "@/hooks/useTradeDeadlineReminders";
 import { NotificationsProvider, useNotifications } from "@/hooks/useNotifications";
 import { PhoneFirst } from "@/components/PhoneFirst";
+import { PreviewBanner } from "@/components/PreviewBanner";
 import { lazy, Suspense } from "react";
 import Index from "./pages/Index";
 
@@ -46,6 +47,7 @@ const App = () => (
         <Toaster />
         <Sonner />
         <TxProgressOverlay />
+        <PreviewBanner />
         <BrowserRouter>
           <WalletProvider>
             <OnlineStatusProvider>
