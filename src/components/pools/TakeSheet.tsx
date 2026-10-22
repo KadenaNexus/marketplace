@@ -8,7 +8,7 @@ import { useRefreshV11 } from "@/hooks/useV11";
 import { useAutoRelease } from "@/hooks/useAutoRelease";
 import { autoPoolNote } from "@/lib/autoReleaseApi";
 import { appChainShortfall, isInsufficientFunds } from "@/lib/kadena";
-import { GAS_V11_SETTLE, GAS_V11_TAKE, buildTakeAndSettleTx, buildTakeTx, gasKda, newTradeId, payAmountFor, tokenBalance, tokenPayFor, tokenPrecision, tradeVault } from "@/lib/v11";
+import { GAS_V11_SETTLE, GAS_V11_TAKE, buildFreeTakeTx, buildTakeAndSettleTx, buildTakeTx, freeTakeFits, gasKda, newTradeId, payAmountFor, readFreeTakes, tokenBalance, tokenPayFor, tokenPrecision, tradeVault, type FreeTakes } from "@/lib/v11";
 import { exactPay, sendV11 } from "@/lib/v11ui";
 import { rememberTradeNetwork, type PoolListing } from "@/lib/poolsApi";
 import { chainLabel, isGiveawayPool, isInstant, kadenaToken, missingReceivingAddress, networkLabel, paymentNetwork, windowLabel } from "@/lib/markets";
@@ -18,7 +18,7 @@ import { TradeEmailGate, useNeedsTradeEmail } from "../TradeEmail";
 import { ProfileSummaryView } from "../ProfileSummary";
 import { formatFiat, cn } from "@/lib/utils";
 import { kdaAmount } from "./PoolCard";
-import { Gift, Loader2, Radar, Zap } from "lucide-react";
+import { Fuel, Gift, Loader2, Radar, Zap } from "lucide-react";
 import { toast } from "sonner";
 
 const round4 = (n: number) => Math.floor(n * 10000) / 10000;
@@ -48,6 +48,9 @@ export function TakeSheet({ pool: p, open, onOpenChange, profileMap = {}, onTake
   const [network, setNetwork] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [precision, setPrecision] = useState<number | null>(null);
+  // free take: the platform's gas station pays the gas for a buyer with no KDA on the pool's chain
+  const [freeTakes, setFreeTakes] = useState<FreeTakes | null>(null);
+  const [needsGas, setNeedsGas] = useState(false);
   const terms = useTermsGate(() => { void submit(); });
 
   const free = !!p && isGiveawayPool(p);
@@ -66,6 +69,14 @@ export function TakeSheet({ pool: p, open, onOpenChange, profileMap = {}, onTake
     setPrecision(null);
     if (instant && p.token) tokenPrecision(p.token, p.chain).then(setPrecision).catch(() => setPrecision(token?.precision ?? 12));
   }, [open, p, minTake, instant, token?.precision]);
+  useEffect(() => {
+    setFreeTakes(null); setNeedsGas(false);
+    if (!open || !p || !account || p.side !== "SELL" || instant || isGiveawayPool(p)) return;
+    let live = true;
+    Promise.all([readFreeTakes(account.account, p.chain), appChainShortfall(account.account, 0, p.chain, gasKda(GAS_V11_TAKE)).catch(() => null)])
+      .then(([f, short]) => { if (live) { setFreeTakes(f); setNeedsGas(!!short); } });
+    return () => { live = false; };
+  }, [open, p, account, instant]);
 
   const n = parseFloat(amount);
   const valid = Number.isFinite(n) && n > 0;
@@ -75,6 +86,8 @@ export function TakeSheet({ pool: p, open, onOpenChange, profileMap = {}, onTake
     try { return tokenPayFor(n, p.price, precision ?? token?.precision ?? 12); } catch { return ""; }
   }, [p, valid, n, instant, precision, token?.precision]);
   const pay = !p || !valid ? 0 : instant ? Number(tokenPay || 0) : payAmountFor(n, p.price);
+  /** This take goes through the gas station: the buyer has no KDA for gas on this chain and the take fits today's free limits. */
+  const freeGas = !!p && needsGas && freeTakeFits(freeTakes, p, valid ? n : 0);
   const noAddress = !!p && missingReceivingAddress(p);
   const problem = !p ? null
     : noAddress ? "The seller has not added a receiving address yet"
@@ -108,8 +121,18 @@ export function TakeSheet({ pool: p, open, onOpenChange, profileMap = {}, onTake
       // across all chains, so say where the KDA is missing before anything is signed.
       const lockKda = p.side === "BUY" && !instant ? n : 0;
       const shortfall = await appChainShortfall(account.account, lockKda, p.chain, gasKda(instant ? GAS_V11_SETTLE : GAS_V11_TAKE)).catch(() => null);
-      if (shortfall) { toast.error(shortfall.title, { description: shortfall.description, duration: 20000 }); return; }
-      if (instant) {
+      // no KDA for gas: a USDT/USDC take within today's free limits goes through the gas station instead
+      const ft = shortfall && p.side === "SELL" && !instant && !free ? await readFreeTakes(account.account, p.chain) : null;
+      const station = ft && freeTakeFits(ft, p, n) ? ft.station : "";
+      if (shortfall && !station) {
+        const why = ft && n > ft.maxAmount ? ` Free takes (gas paid by Kadena Nexus) are for up to ${kdaAmount(ft.maxAmount)} KDA.` : "";
+        toast.error(shortfall.title, { description: shortfall.description + why, duration: 20000 });
+        return;
+      }
+      if (station) {
+        requestKey = await sendV11(`Taking ${kdaAmount(n)} KDA from the pool (gas paid by Kadena Nexus)`, () =>
+          buildFreeTakeTx(tradeId, p.poolId, account.account, account.publicKey, n, station));
+      } else if (instant) {
         const bal = await tokenBalance(p.token, account.account, p.chain);
         if (bal < pay) { toast.error(`Not enough ${p.currency} on chain ${p.chain}`, { description: `This swap needs ${payText} on chain ${p.chain}; your account has ${bal.toLocaleString("en-US", { maximumFractionDigits: token?.precision ?? 12 })} ${p.currency} there.` }); return; }
         requestKey = await sendV11(`Swapping ${payText} for ${kdaAmount(n)} KDA`, () =>
@@ -200,6 +223,22 @@ export function TakeSheet({ pool: p, open, onOpenChange, profileMap = {}, onTake
                   </>
                 )}
               </div>
+
+              {freeGas && freeTakes && (
+                <p className="flex items-start gap-2 rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-sm dark:border-emerald-700 dark:bg-emerald-950/40">
+                  <Fuel className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" aria-hidden="true" />
+                  <span>No KDA on chain {p.chain} for gas? This take is free: Kadena Nexus pays the gas, here and for your I paid on this trade. You still approve it in your wallet.</span>
+                </p>
+              )}
+              {needsGas && !freeGas && (
+                <div className="flex items-start gap-2 rounded-xl border border-amber-400 bg-amber-50 p-3 text-sm text-amber-950 dark:bg-amber-950 dark:text-amber-50">
+                  <Fuel className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                  <span>
+                    Each step costs a tiny gas fee in KDA <b>on chain {p.chain}</b> (under 0.002 KDA). Your wallet may show KDA on another chain: in Linx, send about 0.1 KDA to your own account on chain {p.chain} first.
+                    {freeTakes && valid && n > freeTakes.maxAmount ? ` Or take up to ${kdaAmount(freeTakes.maxAmount)} KDA: Kadena Nexus pays the gas for that.` : ""}
+                  </span>
+                </div>
+              )}
 
               {auto && (
                 <p className="flex items-start gap-2 rounded-xl border border-primary/40 bg-primary/5 p-3 text-sm">

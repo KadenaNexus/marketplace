@@ -37,6 +37,12 @@ export const AUTO_NETWORKS = {
 export const OPEN_STATUSES = ["watching", "matched", "releasing"];
 export const EARLY_MS = 2 * 60 * 1000;        // a transfer may be stamped a little before the take
 export const GRACE_MS = 15 * 60 * 1000;       // and arrive a little after the deadline
+/**
+ * The contract's grace period (GRACE_S in contracts/p2p-escrow-v11.pact, revision 3): after the payment window the
+ * buyer can still tap I paid for 30 minutes and the seller cannot take the KDA back, so a payment made then is still
+ * this trade's.
+ */
+export const CONTRACT_GRACE_S = 1800;
 export const ERC20_CONFIRMATIONS = 12;
 export const RELEASE_TTL = 600;               // seconds a release transaction can land; never resent before that
 const FETCH_TIMEOUT_MS = 10000;
@@ -95,10 +101,10 @@ const sameContract = (network, contract) => {
   return n.kind === "erc20" ? String(contract).toLowerCase() === n.contract.toLowerCase() : String(contract) === n.contract;
 };
 
-/** The deadline that applies now: the payment window while FUNDED, the release window after mark-paid. */
+/** The deadline that applies now: the payment window and its grace period while FUNDED, the release window after mark-paid. */
 export function tradeDeadline(trade, tRelease = 3600) {
   if (trade.state === "PAID" && trade.paidAt) return Date.parse(trade.paidAt) + (tRelease || 3600) * 1000;
-  return Date.parse(trade.fundedAt) + trade.payWindow * 1000;
+  return Date.parse(trade.fundedAt) + (trade.payWindow + CONTRACT_GRACE_S) * 1000;
 }
 
 /** Is a transfer stamped at `timeMs` inside a row's window (funded_at − 2 min to deadline + 15 min)? */
@@ -465,6 +471,42 @@ export function createAutoRelease({
     return "releasing";
   }
 
+  /**
+   * Before the seller takes the KDA back: every incoming transfer of the trade's currency to the seller's address on
+   * each watched network, from the take until now (any trade, auto-release or not). A payment that covers the
+   * trade's amount means the buyer probably paid without tapping I paid, so the site holds the take-back button.
+   * Transfers another trade already matched are left out. { checked: false } when nothing could be looked at.
+   */
+  async function incomingDuring(ref) {
+    const fresh = await readTrade(ref);
+    if (!fresh) return { status: 404, body: { error: "Trade not found" } };
+    const { trade, pool } = fresh, arbiter = fresh.config?.arbiter;
+    if (!isOffchain(trade) || trade.state !== "FUNDED") return { trade, arbiter, body: { checked: false, reason: "Only an unpaid USDT or USDC trade", payments: [] } };
+    if (!config.enabled) return { trade, arbiter, body: { checked: false, reason: config.reason, payments: [] } };
+    const addresses = await currentAddresses(trade, pool);
+    const from = Date.parse(trade.fundedAt) - EARLY_MS;
+    const payments = [], failed = [];
+    for (const [network, address] of Object.entries(addresses)) {
+      let list;
+      try { list = await fetchTransfers(network, address, from); }
+      catch (e) { failed.push(network); log.warn?.(`[auto-release] incoming ${network}: ${e.message}`); continue; }
+      const decimals = AUTO_NETWORKS[network].decimals;
+      const due = BigInt(Math.round(trade.payAmount * 10 ** decimals));
+      for (const tr of list) {
+        if (!sameContract(network, tr.contract) || addressKey(network, tr.to) !== addressKey(network, address)) continue;
+        if (!(tr.timeMs >= from) || tr.timeMs > now()) continue;
+        if (AUTO_NETWORKS[network].kind === "erc20" && !(Number(tr.confirmations) >= 1)) continue;
+        let value; try { value = BigInt(String(tr.value)); } catch { continue; }
+        const other = (await db().query("SELECT 1 FROM auto_release WHERE matched_tx = $1 AND trade_ref <> $2", [tr.txid, trade.tradeId])).rowCount > 0;
+        if (other) continue;
+        const whole = value / 10n ** BigInt(decimals), frac = (value % 10n ** BigInt(decimals)).toString().padStart(decimals, "0").replace(/0+$/, "");
+        payments.push({ network, txid: tr.txid, amount: frac ? `${whole}.${frac}` : `${whole}`, at: new Date(tr.timeMs).toISOString(), covers: value >= due });
+      }
+    }
+    payments.sort((a, b) => a.at.localeCompare(b.at));
+    return { trade, arbiter, body: { checked: Object.keys(addresses).length > failed.length, failed, payments, hold: payments.some((x) => x.covers) } };
+  }
+
   /** Match transfers to the watching rows, grouped by network + address (one request per address). */
   async function matchTransfers(rows) {
     const groups = new Map();
@@ -567,7 +609,7 @@ export function createAutoRelease({
     return { fresh };
   }
 
-  return { config, tick, readTrade, ensureRow, loadRow, view, forTrade, housekeep, releaseStep, fetchTransfers, disqualify, buildRelease };
+  return { config, tick, readTrade, ensureRow, loadRow, view, forTrade, housekeep, releaseStep, fetchTransfers, disqualify, buildRelease, incomingDuring };
 }
 
 /* ---------------- routes and the loop ---------------- */
@@ -608,6 +650,26 @@ export function registerAutoReleaseRoutes(app, { getPool, requireAuth, sendAuthE
     } catch (e) {
       console.error("GET /api/v11/trades/:ref/auto", e.message);
       return res.status(500).json({ error: "Could not load auto-release" });
+    }
+  });
+
+  // Before "Take KDA back": did a payment reach the seller's address during this trade? (the seller and the arbiter)
+  app.get("/api/v11/trades/:ref/incoming", async (req, res) => {
+    const a = requireAuth(req, "query");
+    if (!a.ok) return sendAuthError(res, a);
+    if (req.query.wallet !== a.wallet) return res.status(400).json({ error: "Wallet must match authenticated wallet" });
+    const { id } = parseRef(req.params.ref);
+    if (!id || id.length > 128) return res.status(400).json({ error: "Bad trade id" });
+    if (!getPool()) return res.status(503).json({ error: "Database not ready" });
+    res.set("Cache-Control", "no-store");
+    try {
+      const r = await auto.incomingDuring(req.params.ref);
+      if (r.status) return res.status(r.status).json(r.body);
+      if (a.wallet !== r.trade.seller && a.wallet !== r.arbiter) return res.status(403).json({ error: "Only the seller can see this" });
+      return res.json(r.body);
+    } catch (e) {
+      console.error("GET /api/v11/trades/:ref/incoming", e.message);
+      return res.status(500).json({ error: "Could not check incoming payments" });
     }
   });
 }

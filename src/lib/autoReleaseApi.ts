@@ -55,6 +55,30 @@ export async function getTradeAuto(tradeRef: string, a: Auth): Promise<TradeAuto
   return (await r.json()) as TradeAuto;
 }
 
+export interface IncomingCheck {
+  /** false: nothing could be looked at (not a USDT/USDC trade, not unpaid, or the watcher is off) */
+  checked: boolean;
+  reason?: string | null;
+  /** networks the server could not reach this time */
+  failed?: string[];
+  /** a payment of at least the trade's amount arrived: the take-back button is held */
+  hold?: boolean;
+  payments: { network: string; txid: string; amount: string; at: string; covers: boolean }[];
+}
+/**
+ * GET /api/v11/trades/:ref/incoming (the seller and the arbiter): payments of the trade's currency that reached the
+ * seller's address since the trade started. null when the server cannot tell (old server, error).
+ */
+export async function getIncoming(tradeRef: string, a: Auth): Promise<IncomingCheck | null> {
+  try {
+    const q = new URLSearchParams({ wallet: a.wallet, publicKey: a.publicKey, signedCmd: proof(a.signedCmd) });
+    const r = await fetch(`/api/v11/trades/${encodeURIComponent(tradeRef)}/incoming?${q}`);
+    if (!r.ok) return null;
+    const d = await r.json();
+    return { checked: d?.checked === true, reason: d?.reason ?? null, failed: Array.isArray(d?.failed) ? d.failed : [], hold: d?.hold === true, payments: Array.isArray(d?.payments) ? d.payments : [] };
+  } catch { return null; }
+}
+
 /** The trade is on the automatic path (watching, found, releasing or done). */
 export const isAutoActive = (a: TradeAuto | null | undefined): a is TradeAuto & { amount: string } =>
   !!a?.enabled && !!a.amount && !!a.status && ["watching", "matched", "releasing", "released"].includes(a.status);

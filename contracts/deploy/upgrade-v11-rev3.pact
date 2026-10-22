@@ -4,7 +4,9 @@
 ;; cannot take the KDA back until it ends; (2) an approved-token list for instant swaps (governance-only), filled
 ;; below for the chain this runs on; (3) free takes: a new gas station module free.p2p-escrow-v11-gas pays the gas
 ;; of a buyer's take of a SELL pool (and their mark-paid, cancel or dispute on that trade), with daily limits set
-;; by governance. Free takes stay OFF until set-sponsorship is run (contracts/DEPLOY-v11.md, revision 3).
+;; by governance (and at most 3 per pool per day). The station keeps a daily payment budget (4 per free take).
+;; Free takes stay OFF until set-sponsorship is run (contracts/DEPLOY-v11.md, revision 3). Also: take-and-settle
+;; writes the trade and the pool before calling the token.
 ;; Deploy like revision 2: keyset "gov-keyset" in the data (both governance keys, keys-all), both keys signing
 ;; unrestricted. The same file deploys on chain 1 and chain 2.
 ;; Kadena P2P Marketplace escrow, version 11.
@@ -52,6 +54,11 @@
   ;; After the payment window the buyer has this long to mark paid or open a dispute before the seller can take
   ;; the KDA back, so a buyer who paid but was late to tap "I paid" is not refunded away by a fast seller.
   (defconst GRACE_S:integer 1800)
+  ;; Free takes of one pool per UTC day, so throwaway keys cannot lock a seller's whole pool for free.
+  (defconst FREE_PER_POOL:integer 3)
+  ;; The station pays a free-take trade's later steps only while they are timely: a dispute after "I paid" up to a
+  ;; day past the release window, everything else within the payment window and its grace period.
+  (defconst LATE_DISPUTE_S:integer 86400)
 
   ;; --------------------------------------------------------------- capabilities
 
@@ -462,9 +469,10 @@
   (defun sponsor-take (trade-id:string offer-id:string taker:string amount:decimal)
     (require-capability (INTERNAL))
     (sponsor-take-ok offer-id taker amount)
-    (let* ((day (utc-day)) (dk (+ "day:" day)) (bk (format "buyer:{}:{}" [taker day])))
+    (let* ((day (utc-day)) (dk (+ "day:" day)) (bk (format "buyer:{}:{}" [taker day])) (pk (format "pool:{}:{}" [offer-id day])))
       (write sponsor-counts dk { "count": (+ 1 (sponsor-count dk)) })
       (write sponsor-counts bk { "count": (+ 1 (sponsor-count bk)) })
+      (write sponsor-counts pk { "count": (+ 1 (sponsor-count pk)) })
       (write sponsored-trades trade-id { "sponsored": true })))
 
   ;; Read-only: may the station pay for this take? Used by the station before paying and by sponsor-take.
@@ -478,18 +486,23 @@
       (enforce (<= amount (at "max-amount" sp)) "Above the largest free take")
       (enforce (> (at "today" left) 0) "No free takes left today")
       (enforce (> (at "buyer" left) 0) "No free takes left today for this buyer")
+      (enforce (< (sponsor-count (format "pool:{}:{}" [offer-id (utc-day)])) FREE_PER_POOL) "No free takes left today on this pool")
       true))
 
   ;; Read-only: may the station pay for this buyer step (mark-paid, cancel, open-dispute) on a free-take trade?
   (defun sponsor-step-ok:bool (which:string trade-id:string)
+    (enforce (!= (at "station" (get-sponsorship)) "") "Free takes are off")
     (enforce (is-sponsored-trade trade-id) "Only trades taken for free")
-    (with-read trades trade-id { "state" := state, "funded-at" := funded-at, "pay-window" := window }
+    (with-read trades trade-id { "state" := state, "funded-at" := funded-at, "paid-at" := paid-at, "pay-window" := window }
       (enforce (contains which ["mark-paid" "cancel" "open-dispute"]) "Unknown step")
-      (if (= which "mark-paid")
-        (enforce (and (= state "FUNDED") (<= (now) (add-time funded-at (+ window GRACE_S)))) "Cannot mark paid now")
-        (if (= which "cancel")
-          (enforce (= state "FUNDED") "Cannot cancel now")
-          (enforce (contains state ["FUNDED" "PAID"]) "Cannot dispute now")))
+      (let ((in-grace (<= (now) (add-time funded-at (+ window GRACE_S)))))
+        (if (= which "mark-paid")
+          (enforce (and (= state "FUNDED") in-grace) "Cannot mark paid now")
+          (if (= which "cancel")
+            (enforce (and (= state "FUNDED") in-grace) "Cannot cancel now")
+            (enforce (or (and (= state "FUNDED") in-grace)
+                         (and (= state "PAID") (<= (now) (add-time paid-at (+ (at "t-release" (read config "global")) LATE_DISPUTE_S)))))
+                     "Cannot dispute now"))))
       true))
 
   ;; Take a slice of an offer. SELL: the KDA moves from the pool to the trade's vault, so the
@@ -577,6 +590,14 @@
           (enforce (= pay (floor pay prec)) "Payment has too many decimals for this token")
           (enforce (>= pay due) (format "Payment must be at least {} {}" [due currency]))
           (enforce (<= pay (ceiling (* amount price) prec)) (format "Payment is more than the {} {} due" [due currency]))
+          ;; the trade and the pool's new balance are written before any token code runs, so a token that calls
+          ;; back into this module sees the pool as it will be
+          (insert trades trade-id
+            { "offer": offer-id, "seller": creator, "buyer": taker, "amount": amount
+            , "price": price, "currency": currency, "token": token-name
+            , "pay-amount": pay, "fee": fee, "pay-window": pay-window, "agent": agent
+            , "state": "COMPLETED", "funded-at": (now), "paid-at": (now), "closed-at": (now) })
+          (update offers offer-id { "available": (- available amount), "takes": (+ takes 1) })
           ;; token: buyer -> seller
           (token::transfer taker creator pay)
           ;; KDA: pool -> buyer (and fee)
@@ -591,12 +612,6 @@
                   (coin.transfer pool taker net)
                   (install-capability (coin.TRANSFER pool fee-account fee))
                   (coin.transfer pool fee-account fee)))))
-          (insert trades trade-id
-            { "offer": offer-id, "seller": creator, "buyer": taker, "amount": amount
-            , "price": price, "currency": currency, "token": token-name
-            , "pay-amount": pay, "fee": fee, "pay-window": pay-window, "agent": agent
-            , "state": "COMPLETED", "funded-at": (now), "paid-at": (now), "closed-at": (now) })
-          (update offers offer-id { "available": (- available amount), "takes": (+ takes 1) })
           (with-capability (INTERNAL)
             (bump creator true false false amount)
             (bump taker true false false amount))
@@ -737,8 +752,20 @@
   (defcap GOVERNANCE ()
     (enforce-guard (keyset-ref-guard "free.p2p-escrow-v11-gov")))
 
-  (defconst MAX_GAS_LIMIT:integer 3000)   ; a free take that creates the buyer's account measured about 1,000 gas
-  (defconst MAX_GAS_PRICE:decimal 0.0000001)
+  ;; A transaction that passes GAS_PAYER and then fails still costs the station its whole gas limit, so the limit and
+  ;; price are kept low (2000 × 0.00000001 = 0.00002 KDA at most) and every payment counts against a daily budget.
+  (defconst MAX_GAS_LIMIT:integer 2000)   ; a free take that creates the buyer's account measured about 1,000 gas
+  (defconst MAX_GAS_PRICE:decimal 0.00000001)
+  ;; Transactions the station pays per UTC day: four per free take (the take, I paid, cancel or dispute, a retry).
+  (defconst PAYMENTS_PER_FREE_TAKE:integer 4)
+
+  (defschema count-row count:integer)
+  ;; payments made per UTC day ("YYYY-MM-DD"); written while gas is bought, so failed transactions count too
+  (deftable payments:{count-row})
+  (defun payments-on:integer (day:string) (with-default-read payments day { "count": 0 } { "count" := c } c))
+  (defun payments-left:integer ()
+    @doc "Payments the station can still make today."
+    (- (* PAYMENTS_PER_FREE_TAKE (at "daily" (free.p2p-escrow-v11.get-sponsorship))) (payments-on (free.p2p-escrow-v11.utc-day))))
   (defconst TAKE_CODE:string "(free.p2p-escrow-v11.take-offer (read-msg \"trade\") (read-msg \"offer\") (read-msg \"taker\") (read-decimal \"amount\"))")
   (defun step-code:string (which:string) (format "(free.p2p-escrow-v11.{} (read-msg \"trade\"))" [which]))
 
@@ -777,6 +804,10 @@
             (let ((trade (at "trade" d)))
               (free.p2p-escrow-v11.sponsor-step-ok which trade)
               (enforce-guard (at "guard" (coin.details (at "buyer" (free.p2p-escrow-v11.get-trade trade))))))))))
+    ;; the daily budget: counted now, so a transaction that fails after this still uses one
+    (let ((day (free.p2p-escrow-v11.utc-day)))
+      (enforce (> (payments-left) 0) "The free-take station's budget for today is used up")
+      (write payments day { "count": (+ 1 (payments-on day)) }))
     (compose-capability (ALLOW_GAS)))
 
   (defcap ALLOW_GAS () true)
@@ -792,6 +823,7 @@
     @doc "The principal account that pays for free takes. Fund it with a few KDA."
     (create-principal (create-gas-payer-guard)))
 )
+(create-table free.p2p-escrow-v11-gas.payments)
 
 ;; Tokens approved for instant swaps on this chain (the same list as shared/v11-chains.js).
 (if (= (at "chain-id" (chain-data)) "1")

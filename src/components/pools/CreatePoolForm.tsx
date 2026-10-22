@@ -372,7 +372,7 @@ export function CreatePoolForm({ onSuccess, role = "seller", compact = false }: 
                   <SelectTrigger id="pay-window" className="h-12"><SelectValue /></SelectTrigger>
                   <SelectContent>{PAY_WINDOWS.map((w) => <SelectItem key={w.seconds} value={String(w.seconds)}>{w.label}</SelectItem>)}</SelectContent>
                 </Select>
-                <p className="text-xs text-muted-foreground">How long a buyer has to pay after taking a slice. After that, the seller can take the KDA back.</p>
+                <p className="text-xs text-muted-foreground">How long a buyer has to pay after taking a slice. After that and a 30-minute grace period, you can take the KDA back.</p>
               </div>
             )}
           </>)}

@@ -22,8 +22,20 @@
   (defcap GOVERNANCE ()
     (enforce-guard (keyset-ref-guard "free.p2p-escrow-v11-gov")))
 
-  (defconst MAX_GAS_LIMIT:integer 3000)   ; a free take that creates the buyer's account measured about 1,000 gas
-  (defconst MAX_GAS_PRICE:decimal 0.0000001)
+  ;; A transaction that passes GAS_PAYER and then fails still costs the station its whole gas limit, so the limit and
+  ;; price are kept low (2000 × 0.00000001 = 0.00002 KDA at most) and every payment counts against a daily budget.
+  (defconst MAX_GAS_LIMIT:integer 2000)   ; a free take that creates the buyer's account measured about 1,000 gas
+  (defconst MAX_GAS_PRICE:decimal 0.00000001)
+  ;; Transactions the station pays per UTC day: four per free take (the take, I paid, cancel or dispute, a retry).
+  (defconst PAYMENTS_PER_FREE_TAKE:integer 4)
+
+  (defschema count-row count:integer)
+  ;; payments made per UTC day ("YYYY-MM-DD"); written while gas is bought, so failed transactions count too
+  (deftable payments:{count-row})
+  (defun payments-on:integer (day:string) (with-default-read payments day { "count": 0 } { "count" := c } c))
+  (defun payments-left:integer ()
+    @doc "Payments the station can still make today."
+    (- (* PAYMENTS_PER_FREE_TAKE (at "daily" (free.p2p-escrow-v11.get-sponsorship))) (payments-on (free.p2p-escrow-v11.utc-day))))
   (defconst TAKE_CODE:string "(free.p2p-escrow-v11.take-offer (read-msg \"trade\") (read-msg \"offer\") (read-msg \"taker\") (read-decimal \"amount\"))")
   (defun step-code:string (which:string) (format "(free.p2p-escrow-v11.{} (read-msg \"trade\"))" [which]))
 
@@ -62,6 +74,10 @@
             (let ((trade (at "trade" d)))
               (free.p2p-escrow-v11.sponsor-step-ok which trade)
               (enforce-guard (at "guard" (coin.details (at "buyer" (free.p2p-escrow-v11.get-trade trade))))))))))
+    ;; the daily budget: counted now, so a transaction that fails after this still uses one
+    (let ((day (free.p2p-escrow-v11.utc-day)))
+      (enforce (> (payments-left) 0) "The free-take station's budget for today is used up")
+      (write payments day { "count": (+ 1 (payments-on day)) }))
     (compose-capability (ALLOW_GAS)))
 
   (defcap ALLOW_GAS () true)

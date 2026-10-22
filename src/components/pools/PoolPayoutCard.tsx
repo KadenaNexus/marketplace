@@ -111,10 +111,16 @@ export function PoolPayoutCard({ escrow: e }: { escrow: V11Escrow }) {
         </ul>
       )}
 
+      {buyer && live && (
+        <div className="space-y-1.5 rounded-lg border-2 border-amber-400 bg-amber-50 p-3 text-sm text-amber-950 dark:bg-amber-950 dark:text-amber-50">
+          <p><b>Pay from your own wallet</b> (Linx, Trust Wallet, TronLink…), not from an exchange. Exchanges take a fee and have minimums, so the exact amount would not arrive{agent ? " and the KDA would not be released automatically" : ""}.</p>
+          <p><b>Type the amount in {t.currency}, not in dollars.</b> Some wallets switch to a $ value; the {t.currency} field must show <span className="font-mono font-semibold">{amountText}</span>.</p>
+        </div>
+      )}
       {buyer && (
         <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">
           <li>Send <b className="text-foreground">exactly this amount</b> from a wallet <b className="text-foreground">you control</b>, not from an exchange account.</li>
-          <li>Pay only to the address shown here, never to one sent in chat.</li>
+          <li>Pay only to the address shown here, never to one sent in chat, and never to your own address.</li>
           {!agent && <li>After sending, press I paid and add the transaction hash or a screenshot.</li>}
         </ul>
       )}

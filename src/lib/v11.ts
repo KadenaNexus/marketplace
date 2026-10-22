@@ -298,6 +298,65 @@ export const buildTimeoutRefundTx = (tradeRef: string, seller: string, pubKey: s
 export const buildOpenDisputeTx = (tradeRef: string, caller: string, pubKey: string) => tradeStep("open-dispute", tradeRef, caller, pubKey);
 export const buildResolveTx = (tradeRef: string, arbiter: string, pubKey: string, toBuyer: number) => tradeStep("resolve", tradeRef, arbiter, pubKey, ` ${dec(toBuyer)}`);
 
+/* ---------------- free takes (contract revision 3) ---------------- */
+
+/**
+ * The gas station (contracts/gas-station-v11.pact) pays the gas of a buyer's take of a USDT/USDC SELL pool, and of
+ * their I paid, Cancel or Open dispute on that trade, within daily limits the contract keeps (and at most 3 free takes per pool a day). It only pays for a
+ * transaction whose code is exactly one of these lines, with the arguments in the transaction data; the buyer still
+ * signs (GAS_PAYER and ACCOUNT_AUTH), and a buyer with no account on the chain gets one, guarded by their own key.
+ */
+export const STATION_FQN = "free.p2p-escrow-v11-gas";
+/** Gas limit and price of a free transaction (the station refuses more than 2000 and 0.00000001; a free take measured about 1,000). */
+export const GAS_FREE = 1800;
+export const GAS_PRICE_FREE = 0.00000001;
+const FREE_TAKE_CODE = '(free.p2p-escrow-v11.take-offer (read-msg "trade") (read-msg "offer") (read-msg "taker") (read-decimal "amount"))';
+const freeStepCode = (which: FreeStep) => `(free.p2p-escrow-v11.${which} (read-msg "trade"))`;
+export type FreeStep = "mark-paid" | "cancel" | "open-dispute";
+
+export interface FreeTakes { station: string; maxAmount: number; today: number; buyer: number }
+/** Today's free takes on `chain` for `buyer` (null: off, or the contract has no free takes yet). */
+export async function readFreeTakes(buyer: string, chain: string): Promise<FreeTakes | null> {
+  try {
+    const r = (await local(`(${V11_FQN}.free-takes-left ${q(buyer)})`, chain)) as Record<string, unknown>;
+    const f = { station: String(r.station ?? ""), maxAmount: pactNumber(r["max-amount"]), today: pactNumber(r.today), buyer: pactNumber(r.buyer) };
+    return f.station ? f : null;
+  } catch { return null; }
+}
+/** Was this trade taken for free (so the station also pays the buyer's later steps)? */
+export const isFreeTrade = async (tradeRef: string) => {
+  const { chain, id } = parseRef(tradeRef);
+  try { return (await local(`(${V11_FQN}.is-sponsored-trade ${q(id)})`, chain)) === true; } catch { return false; }
+};
+/** A take the station can pay for: a USDT/USDC SELL pool, within today's limits and the largest free slice. */
+export const freeTakeFits = (f: FreeTakes | null, pool: Pick<Pool, "side" | "token" | "price">, amount: number) =>
+  !!f && f.today > 0 && f.buyer > 0 && pool.side === "SELL" && !pool.token && pool.price > 0 && amount > 0 && amount <= f.maxAmount;
+
+/** The guard a new buyer's account gets: their own key (only for a k: account of that key). */
+const takerGuard = (account: string, pubKey: string) => (account === `k:${pubKey}` ? { keys: [pubKey], pred: "keys-all" } : undefined);
+
+function freeTx(chain: string, code: string, data: Record<string, unknown>, buyer: string, pubKey: string, station: string) {
+  const signer = signerPayloadForAccount(buyer, pubKey);
+  const b = Pact.builder.execution(code);
+  for (const [k, v] of Object.entries(data)) if (v !== undefined) b.addData(k, v as never);
+  if (DEMO_TIME) b.addData("demo-now", new Date().toISOString().replace(/\.\d{3}Z$/, "Z"));
+  return b
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .addSigner(signer, (s) => [(s as any)(`${STATION_FQN}.GAS_PAYER`, buyer, { int: GAS_FREE }, { decimal: dec(GAS_PRICE_FREE) }), (s as any)(AUTH, buyer)])
+    .setMeta({ chainId: chain as ChainId, senderAccount: station, gasLimit: GAS_FREE, gasPrice: GAS_PRICE_FREE, ttl: TX_TTL_S, creationTime: Math.floor(Date.now() / 1000) - TX_CREATION_SKEW_S })
+    .setNetworkId(NETWORK_ID).createTransaction();
+}
+/** Take a slice of a SELL pool with the station paying the gas. */
+export function buildFreeTakeTx(tradeRef: string, poolRef: string, taker: string, pubKey: string, amount: number, station: string) {
+  const { chain, tradeId, poolId } = sameChain(tradeRef, poolRef);
+  return freeTx(chain, FREE_TAKE_CODE, { trade: tradeId, offer: poolId, taker, amount: { decimal: dec(amount) }, "taker-guard": takerGuard(taker, pubKey) }, taker, pubKey, station);
+}
+/** The buyer's I paid, Cancel or Open dispute on a trade taken for free, with the station paying the gas. */
+export function buildFreeStepTx(which: FreeStep, tradeRef: string, buyer: string, pubKey: string, station: string) {
+  const { chain, id } = parseRef(tradeRef);
+  return freeTx(chain, freeStepCode(which), { trade: id }, buyer, pubKey, station);
+}
+
 /* ---------------- legacy shape ---------------- */
 
 /** The payment-method label the legacy UI expects, e.g. ["USDT (TRC20)"] or ["kb-USDC (instant)"]. */
@@ -323,6 +382,13 @@ export function tradeToEscrow(t: Trade, pool?: Pool | null, networks?: string[],
   };
 }
 
+/**
+ * After the payment window the buyer keeps 30 minutes to tap I paid or open a dispute, and the seller can take the
+ * KDA back only after that (GRACE_S in the contract, revision 3).
+ */
+export const GRACE_S = 1800;
+/** Seconds until the seller can take the KDA back (negative = now). */
+export const takeBackLeft = (t: Trade, now = Date.now()) => payWindowLeft(t, now) + GRACE_S;
 /** Seconds left in the buyer's payment window (negative = passed). */
 export const payWindowLeft = (t: Trade, now = Date.now()) => t.fundedAt ? Math.floor((Date.parse(t.fundedAt) + t.payWindow * 1000 - now) / 1000) : 0;
 /** Seconds left for the seller to release after mark-paid (negative = passed). */

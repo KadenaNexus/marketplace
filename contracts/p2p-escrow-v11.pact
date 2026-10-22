@@ -43,6 +43,11 @@
   ;; After the payment window the buyer has this long to mark paid or open a dispute before the seller can take
   ;; the KDA back, so a buyer who paid but was late to tap "I paid" is not refunded away by a fast seller.
   (defconst GRACE_S:integer 1800)
+  ;; Free takes of one pool per UTC day, so throwaway keys cannot lock a seller's whole pool for free.
+  (defconst FREE_PER_POOL:integer 3)
+  ;; The station pays a free-take trade's later steps only while they are timely: a dispute after "I paid" up to a
+  ;; day past the release window, everything else within the payment window and its grace period.
+  (defconst LATE_DISPUTE_S:integer 86400)
 
   ;; --------------------------------------------------------------- capabilities
 
@@ -453,9 +458,10 @@
   (defun sponsor-take (trade-id:string offer-id:string taker:string amount:decimal)
     (require-capability (INTERNAL))
     (sponsor-take-ok offer-id taker amount)
-    (let* ((day (utc-day)) (dk (+ "day:" day)) (bk (format "buyer:{}:{}" [taker day])))
+    (let* ((day (utc-day)) (dk (+ "day:" day)) (bk (format "buyer:{}:{}" [taker day])) (pk (format "pool:{}:{}" [offer-id day])))
       (write sponsor-counts dk { "count": (+ 1 (sponsor-count dk)) })
       (write sponsor-counts bk { "count": (+ 1 (sponsor-count bk)) })
+      (write sponsor-counts pk { "count": (+ 1 (sponsor-count pk)) })
       (write sponsored-trades trade-id { "sponsored": true })))
 
   ;; Read-only: may the station pay for this take? Used by the station before paying and by sponsor-take.
@@ -469,18 +475,23 @@
       (enforce (<= amount (at "max-amount" sp)) "Above the largest free take")
       (enforce (> (at "today" left) 0) "No free takes left today")
       (enforce (> (at "buyer" left) 0) "No free takes left today for this buyer")
+      (enforce (< (sponsor-count (format "pool:{}:{}" [offer-id (utc-day)])) FREE_PER_POOL) "No free takes left today on this pool")
       true))
 
   ;; Read-only: may the station pay for this buyer step (mark-paid, cancel, open-dispute) on a free-take trade?
   (defun sponsor-step-ok:bool (which:string trade-id:string)
+    (enforce (!= (at "station" (get-sponsorship)) "") "Free takes are off")
     (enforce (is-sponsored-trade trade-id) "Only trades taken for free")
-    (with-read trades trade-id { "state" := state, "funded-at" := funded-at, "pay-window" := window }
+    (with-read trades trade-id { "state" := state, "funded-at" := funded-at, "paid-at" := paid-at, "pay-window" := window }
       (enforce (contains which ["mark-paid" "cancel" "open-dispute"]) "Unknown step")
-      (if (= which "mark-paid")
-        (enforce (and (= state "FUNDED") (<= (now) (add-time funded-at (+ window GRACE_S)))) "Cannot mark paid now")
-        (if (= which "cancel")
-          (enforce (= state "FUNDED") "Cannot cancel now")
-          (enforce (contains state ["FUNDED" "PAID"]) "Cannot dispute now")))
+      (let ((in-grace (<= (now) (add-time funded-at (+ window GRACE_S)))))
+        (if (= which "mark-paid")
+          (enforce (and (= state "FUNDED") in-grace) "Cannot mark paid now")
+          (if (= which "cancel")
+            (enforce (and (= state "FUNDED") in-grace) "Cannot cancel now")
+            (enforce (or (and (= state "FUNDED") in-grace)
+                         (and (= state "PAID") (<= (now) (add-time paid-at (+ (at "t-release" (read config "global")) LATE_DISPUTE_S)))))
+                     "Cannot dispute now"))))
       true))
 
   ;; Take a slice of an offer. SELL: the KDA moves from the pool to the trade's vault, so the
@@ -568,6 +579,14 @@
           (enforce (= pay (floor pay prec)) "Payment has too many decimals for this token")
           (enforce (>= pay due) (format "Payment must be at least {} {}" [due currency]))
           (enforce (<= pay (ceiling (* amount price) prec)) (format "Payment is more than the {} {} due" [due currency]))
+          ;; the trade and the pool's new balance are written before any token code runs, so a token that calls
+          ;; back into this module sees the pool as it will be
+          (insert trades trade-id
+            { "offer": offer-id, "seller": creator, "buyer": taker, "amount": amount
+            , "price": price, "currency": currency, "token": token-name
+            , "pay-amount": pay, "fee": fee, "pay-window": pay-window, "agent": agent
+            , "state": "COMPLETED", "funded-at": (now), "paid-at": (now), "closed-at": (now) })
+          (update offers offer-id { "available": (- available amount), "takes": (+ takes 1) })
           ;; token: buyer -> seller
           (token::transfer taker creator pay)
           ;; KDA: pool -> buyer (and fee)
@@ -582,12 +601,6 @@
                   (coin.transfer pool taker net)
                   (install-capability (coin.TRANSFER pool fee-account fee))
                   (coin.transfer pool fee-account fee)))))
-          (insert trades trade-id
-            { "offer": offer-id, "seller": creator, "buyer": taker, "amount": amount
-            , "price": price, "currency": currency, "token": token-name
-            , "pay-amount": pay, "fee": fee, "pay-window": pay-window, "agent": agent
-            , "state": "COMPLETED", "funded-at": (now), "paid-at": (now), "closed-at": (now) })
-          (update offers offer-id { "available": (- available amount), "takes": (+ takes 1) })
           (with-capability (INTERNAL)
             (bump creator true false false amount)
             (bump taker true false false amount))
