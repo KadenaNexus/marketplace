@@ -37,13 +37,13 @@ const amount = Number(amountArg ?? (typeof pool.min === "object" ? pool.min.deci
 
 // the same command as the site's buildFreeTakeTx
 const res = await local('(free.p2p-escrow-v11.take-offer (read-msg "trade") (read-msg "offer") (read-msg "taker") (read-decimal "amount"))', {
-  preflight: true, sender: station, gasLimit: 1800, gasPrice: 0.00000001,
+  preflight: true, sender: station, gasLimit: 2000, gasPrice: 0.00000001,
   data: { trade: `check-${Date.now()}`, offer: poolId, taker, amount: { decimal: dec(amount) }, "taker-guard": { keys: [pub], pred: "keys-all" } },
   signers: [{ pubKey: pub, clist: [
-    { name: "free.p2p-escrow-v11-gas.GAS_PAYER", args: [taker, { int: 1800 }, { decimal: "0.00000001" }] },
+    { name: "free.p2p-escrow-v11-gas.GAS_PAYER", args: [taker, { int: 2000 }, { decimal: "0.00000001" }] },
     { name: "free.p2p-escrow-v11.ACCOUNT_AUTH", args: [taker] },
   ] }],
 });
 const ok = res.result?.status === "success";
-console.log(ok ? `OK: a free take of ${amount} KDA passes the station (gas ${res.gas} of 1800)` : `FAILED: ${res.result?.error?.message ?? JSON.stringify(res).slice(0, 400)}`);
+console.log(ok ? `OK: a free take of ${amount} KDA passes the station (gas ${res.gas} of 2000)` : `FAILED: ${res.result?.error?.message ?? JSON.stringify(res).slice(0, 400)}`);
 process.exit(ok ? 0 : 1);
