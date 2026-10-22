@@ -135,7 +135,7 @@ const COPY: Record<Lang, Copy> = {
         ]
       ],
       "deadlineH": "If a deadline passes",
-      "deadlineP": "Each pool sets how long buyers have to pay, from 15 minutes to 24 hours. A buyer can cancel before paying. If the buyer does not mark it paid in time, the seller can take the KDA back. After the buyer marks it paid, the seller has 1 hour by default to release; if nobody releases in time, either side can open a dispute. These actions are on-chain transactions.",
+      "deadlineP": "Each pool sets how long buyers have to pay, from 15 minutes to 24 hours. A buyer can cancel before paying. If the buyer does not mark it paid in time, they get 30 more minutes; after that the seller can take the KDA back. After the buyer marks it paid, the seller has 1 hour by default to release; if nobody releases in time, either side can open a dispute. These actions are on-chain transactions.",
       "wrongH": "If something goes wrong",
       "wrongP": "Either side can open a dispute from the trade. The arbiter named in the contract reviews the evidence both sides upload and records a decision on-chain: the KDA goes to the buyer, back to the seller, or is split between them.",
       "personH": "If you need a person",

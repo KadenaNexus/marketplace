@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import pg from "pg";
 import express from "express";
 import { base64UrlDecodeArr, genKeyPair, hexToBin, verifySig } from "@kadena/cryptography-utils";
-import { AUTO_NETWORKS, autoReleaseConfig, createAutoRelease, registerAutoReleaseRoutes, transferMatches, addressKey, inWindow } from "./autoRelease.js";
+import { AUTO_NETWORKS, CONTRACT_GRACE_S, tradeDeadline, autoReleaseConfig, createAutoRelease, registerAutoReleaseRoutes, transferMatches, addressKey, inWindow } from "./autoRelease.js";
 import { toPool, toTrade } from "./chain.js";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL || "postgresql://postgres:postgres@localhost:5432/kadena_nexus" });
@@ -290,14 +290,14 @@ test("wrong amount, fake token, wrong recipient, too early, too late: nothing is
     tronTx({ token_info: { symbol: "USDT", address: FAKE_TRON } }),
     tronTx({ to: TRON2 }),
     tronTx({ block_timestamp: T0 - 10 * 60e3 }),
-    tronTx({ block_timestamp: T0 + 1800e3 + 20 * 60e3 }),
+    tronTx({ block_timestamp: T0 + 3600e3 + 20 * 60e3 }),
   ];
-  NOW = T0 + 1800e3 + 10 * 60e3; // inside the grace, so the row is still watched
+  NOW = T0 + 3600e3 + 10 * 60e3; // after the window and the contract's grace, inside our 15 minutes, so the row is still watched
   const r = await auto.tick();
   assert.deepEqual(r.matched, []);
   assert.equal(sent.length, 0);
   assert.equal((await row("arttest-t1")).status, "watching");
-  NOW = T0 + 1800e3 + 16 * 60e3;
+  NOW = T0 + 3600e3 + 16 * 60e3;
   await auto.tick();
   assert.equal((await row("arttest-t1")).status, "expired", "the window passed with no exact payment");
 });
@@ -411,7 +411,7 @@ test("a closed trade's offset is not drawn again on that address for 48 hours; w
   // trade A: funded at T0, no payment, the window and the grace pass: expired, its watch closed
   trades.set("arttest-a", rawTrade());
   NOW = T0 + 60e3; await auto.tick();
-  NOW = T0 + 1800e3 + 16 * 60e3; await auto.tick();
+  NOW = T0 + 3600e3 + 16 * 60e3; await auto.tick();
   const a = await row("arttest-a");
   assert.equal(a.status, "expired");
   assert.equal((await pool.query("SELECT open FROM auto_release_watch WHERE trade_ref = 'arttest-a'")).rows[0].open, false);
@@ -451,17 +451,17 @@ test("a payment that also fits a closed trade's window on the same address is am
   // trade A expires without a payment (the seller has not refunded; the trade is still FUNDED on the chain)
   trades.set("arttest-a", rawTrade());
   NOW = T0 + 60e3; await auto.tick();
-  NOW = T0 + 46 * 60e3; await auto.tick();
+  NOW = T0 + 76 * 60e3; await auto.tick();
   const a = await row("arttest-a");
   assert.equal(a.status, "expired");
   // trade B on the same address, funded now, somehow holding A's amount (a row made before offsets were kept apart)
   trades.set("arttest-b", rawTrade({ buyer: OTHER, "funded-at": { timep: iso(NOW) } }));
   await auto.tick();
   await pin("arttest-b", a.expected_units);
-  assert.equal(inWindow(a, T0 + 45 * 60e3), true, "A's grace still holds that minute");
+  assert.equal(inWindow(a, T0 + 75 * 60e3), true, "A's grace still holds that minute");
   // buyer A pays A's exact amount, late, at a time inside both windows
-  tron = [tronTx({ transaction_id: "tx-late-a", value: a.expected_units, block_timestamp: T0 + 45 * 60e3 })];
-  NOW = T0 + 47 * 60e3;
+  tron = [tronTx({ transaction_id: "tx-late-a", value: a.expected_units, block_timestamp: T0 + 75 * 60e3 })];
+  NOW = T0 + 77 * 60e3;
   const r = await auto.tick();
   assert.deepEqual(r.matched, [], "A's payment is not taken as B's");
   assert.equal(sent.length, 0, "no release was signed");
@@ -479,6 +479,45 @@ test("a payment that also fits a closed trade's window on the same address is am
   await pin("arttest-c", a.expected_units);
   tron = [tronTx({ transaction_id: "tx-c", value: a.expected_units, to: TRON2, block_timestamp: NOW })];
   assert.deepEqual((await auto.tick()).matched, ["arttest-c"]);
+});
+
+test("the payment window's grace period: a payment made after the window but inside the contract's 30 minutes still releases", async () => {
+  assert.equal(tradeDeadline(toTrade("x", rawTrade(), "1")), T0 + (1800 + CONTRACT_GRACE_S) * 1000);
+  await sellDetails();
+  trades.set("arttest-g", rawTrade());
+  await auto.tick(); await pin("arttest-g");
+  tron = [tronTx({ transaction_id: "tx-grace", block_timestamp: T0 + 1800e3 + 20 * 60e3 })];
+  NOW = T0 + 1800e3 + 21 * 60e3;
+  assert.deepEqual((await auto.tick()).matched, ["arttest-g"]);
+});
+
+const getIncoming = (ref, wallet) => fetch(`${base}/api/v11/trades/${encodeURIComponent(ref)}/incoming?wallet=${wallet}&publicKey=x&signedCmd=x`).then(async (r) => ({ status: r.status, body: await r.json() }));
+test("before taking the KDA back: payments that reached the seller's address during the trade, for the seller and the arbiter only", async () => {
+  await sellDetails();
+  trades.set("arttest-i", rawTrade({ agent: "" })); // no auto-release on this trade: the check still looks
+  NOW = T0 + 3600e3 + 60e3;
+  tron = [
+    tronTx({ transaction_id: "tx-before", block_timestamp: T0 - 10 * 60e3 }),          // before the take: not shown
+    tronTx({ transaction_id: "tx-small", value: "100000", block_timestamp: T0 + 5 * 60e3 }), // 0.1 USDT: shown, does not cover 0.533
+    tronTx({ transaction_id: "tx-fake", token_info: { symbol: "USDT", address: FAKE_TRON } }), // not the official token
+  ];
+  eth = [ethTx({ hash: "0xcovers", value: "533000", timeStamp: String((T0 + 50 * 60e3) / 1000) })];
+  let r = await getIncoming("arttest-i", SELLER);
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.payments.map((x) => [x.txid, x.amount, x.covers]), [["tx-small", "0.1", false], ["0xcovers", "0.533", true]]);
+  assert.equal(r.body.hold, true);
+  assert.equal(r.body.checked, true);
+  assert.equal((await getIncoming("arttest-i", ARB)).status, 200);
+  assert.equal((await getIncoming("arttest-i", BUYER)).status, 403, "the buyer does not see the seller's incoming payments");
+  // a transfer another trade already matched is that trade's
+  await pool.query(`INSERT INTO auto_release (trade_ref, chain, pool_ref, agent, currency, pay_units, amount_offset, expected_units, funded_at, deadline, status, matched_tx)
+    VALUES ('arttest-other', '1', 'arttest-pool', $1, 'USDT', '533000', 7, '533007', $2, $2, 'released', '0xcovers')`, [AGENT, new Date(T0)]);
+  r = await getIncoming("arttest-i", SELLER);
+  assert.deepEqual([r.body.payments.map((x) => x.txid), r.body.hold], [["tx-small"], false]);
+  // a paid trade is not checked
+  trades.set("arttest-i", rawTrade({ agent: "", state: "PAID", "paid-at": { timep: iso(T0 + 600e3) } }));
+  r = await getIncoming("arttest-i", SELLER);
+  assert.deepEqual([r.body.checked, r.body.payments], [false, []]);
 });
 
 /* ---------------- paid from an exchange: the transaction ID ---------------- */
@@ -574,7 +613,7 @@ test("paid from an exchange: after the window passed unmatched, a payment made i
   trades.set("arttest-x7", rawTrade());
   await auto.tick();
   tron = [tronTx({ transaction_id: hex("7"), value: "600000", block_timestamp: T0 + 25 * 60e3 })];
-  NOW = T0 + 1800e3 + 16 * 60e3;
+  NOW = tradeDeadline(toTrade("arttest-x7", trades.get("arttest-x7"), "1")) + 16 * 60e3; // the window, its grace and our 15 minutes passed
   await auto.tick();
   assert.equal((await row("arttest-x7")).status, "expired");
   const v = await getAuto("arttest-x7", BUYER);

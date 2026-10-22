@@ -6,7 +6,7 @@
 import type { IUnsignedCommand } from "@kadena/client";
 import { PAY_WINDOW_PASSED_MESSAGE, PLATFORM_ARBITER, getTxExplorerUrl, isPayWindowPassed, pollTransaction, signTransaction, submitTransaction, type Escrow } from "./kadena";
 import { setTxLabel, txFinished } from "./txProgress";
-import { readConfigs, readPools, readTrades, tradeToEscrow, type Pool, type Trade, type V11Config } from "./v11";
+import { readConfigs, readPools, readTrades, takeBackLeft, tradeToEscrow, type Pool, type Trade, type V11Config } from "./v11";
 import { getPoolDetails, getPoolsIndex } from "./poolsApi";
 import { isGiveawayPool, isInstant, kadenaToken, networkLabel } from "./markets";
 
@@ -95,8 +95,16 @@ export function v11NextStep(e: V11Escrow, me: string | undefined, expired: boole
       // the buyer's I paid button goes PAY_MARGIN_S early (block time vs device time), so their text does too
       const buyerClosed = expired || (buyer && typeof remaining === "number" && remaining <= PAY_MARGIN_S);
       if (buyerClosed) {
-        if (seller) return "The payment window closed. You can take your KDA back with Take KDA back. If the buyer did pay, you can still release instead.";
-        if (buyer) return "The payment window closed. Paid but too late to tap I paid? Open a dispute now, otherwise the seller can take the KDA back.";
+        // the contract's grace period: 30 more minutes for the buyer's I paid, and no take-back until it ends
+        const grace = takeBackLeft(t);
+        const mins = `${Math.max(1, Math.ceil(grace / 60))} min`;
+        if (grace > 0) {
+          if (seller) return `The payment window closed. The buyer has a 30-minute grace period to tap I paid; if no payment arrives, you can take your KDA back in ${mins}. If the buyer did pay, release instead.`;
+          if (buyer) return `The payment window closed. Already sent the money? Tap I paid now (${mins} left) or open a dispute. If you haven't paid, don't send it now: cancel instead.`;
+          return `The payment window closed; the buyer's grace period ends in ${mins}.`;
+        }
+        if (seller) return "The payment window and the buyer's grace period have passed. You can take your KDA back with Take KDA back. If the buyer did pay, you can still release instead.";
+        if (buyer) return "The payment window closed. Paid but couldn't tap I paid? Open a dispute now, otherwise the seller can take the KDA back.";
         return "The payment window closed; the seller can take the KDA back.";
       }
       const lastMinutes = buyer && typeof remaining === "number" && remaining <= PAY_WARN_S ? ` ${PAY_LAST_MINUTES_NOTE}` : "";

@@ -168,19 +168,32 @@ export function MarkPaidDialog({ escrow, total, open, onOpenChange, onConfirm }:
  * One question before a step that moves KDA or ends a trade (Cancel, Take KDA back, Close pool): the app's own
  * dialog, in place of the browser's confirm() box, which some phone browsers and in-app views hide or auto-dismiss.
  */
-export function ConfirmDialog({ open, onOpenChange, title, body, confirmLabel, destructive = false, onConfirm }: {
+export function ConfirmDialog({ open, onOpenChange, title, body, confirmLabel, destructive = false, onConfirm, warning, ack }: {
   open: boolean; onOpenChange: (o: boolean) => void; title: string; body: string; confirmLabel: string; destructive?: boolean; onConfirm: () => void;
+  /** shown in an amber box above the buttons */
+  warning?: string;
+  /** a statement the person must tick before the confirm button works */
+  ack?: string;
 }) {
+  const [ticked, setTicked] = useState(false);
+  const close = (o: boolean) => { onOpenChange(o); if (!o) setTicked(false); };
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+    <Dialog open={open} onOpenChange={close}>
+      <DialogContent className="max-h-[92vh] max-w-md overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 font-display text-xl"><AlertTriangle className="h-5 w-5 text-amber-500" />{title}</DialogTitle>
           <DialogDescription>{body}</DialogDescription>
         </DialogHeader>
+        {warning && <div className="rounded-xl border-2 border-amber-400 bg-amber-50 p-3 text-sm text-amber-950 dark:bg-amber-950 dark:text-amber-50">{warning}</div>}
+        {ack && (
+          <label className="flex items-start gap-3 rounded-lg border border-border p-3 text-sm">
+            <input type="checkbox" className="mt-0.5 h-5 w-5 shrink-0 accent-[hsl(var(--primary))]" checked={ticked} onChange={(e) => setTicked(e.target.checked)} />
+            <span>{ack}</span>
+          </label>
+        )}
         <DialogFooter className="flex-col gap-2 sm:flex-col">
-          <Button type="button" variant={destructive ? "destructive" : "default"} className="h-12 w-full" onClick={() => { onOpenChange(false); onConfirm(); }}>{confirmLabel}</Button>
-          <Button type="button" variant="outline" className="h-11 w-full" onClick={() => onOpenChange(false)}>Not now</Button>
+          <Button type="button" variant={destructive ? "destructive" : "default"} className="h-12 w-full" disabled={!!ack && !ticked} onClick={() => { close(false); onConfirm(); }}>{confirmLabel}</Button>
+          <Button type="button" variant="outline" className="h-11 w-full" onClick={() => close(false)}>Not now</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

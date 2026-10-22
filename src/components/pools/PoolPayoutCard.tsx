@@ -111,12 +111,18 @@ export function PoolPayoutCard({ escrow: e }: { escrow: V11Escrow }) {
         </ul>
       )}
 
+      {buyer && live && (
+        <div className="space-y-1.5 rounded-lg border-2 border-amber-400 bg-amber-50 p-3 text-sm text-amber-950 dark:bg-amber-950 dark:text-amber-50">
+          <p><b>From a wallet</b> (Trust Wallet, TronLink…): send exactly this amount. <b>From an exchange</b>: the fee and rounding change the amount, so {agent ? <>use <b>Paying from an exchange</b> in the Auto-release box and give the transaction ID.</> : "add the fee on top so the full amount arrives, and give the transaction ID with I paid."}</p>
+          <p><b>Type the amount in {t.currency}, not in dollars.</b> Some wallets switch to a $ value; the {t.currency} field must show <span className="font-mono font-semibold">{amountText}</span>.</p>
+        </div>
+      )}
       {buyer && (
         <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">
           {agent
             ? <li>From a wallet <b className="text-foreground">you control</b>, send <b className="text-foreground">exactly this amount</b>. Paying from an exchange? Use <b className="text-foreground">Paying from an exchange</b> in the Auto-release box: you give the transaction ID instead.</li>
             : <li><b className="text-foreground">This amount must arrive in full.</b> Paying from an exchange? Add its withdrawal fee on top, and give the transaction ID (TXID) with I paid.</li>}
-          <li>Pay only to the address shown here, never to one sent in chat.</li>
+          <li>Pay only to the address shown here, never to one sent in chat, and never to your own address.</li>
           {!agent && <li>After sending, press I paid and add the transaction hash or a screenshot.</li>}
         </ul>
       )}
