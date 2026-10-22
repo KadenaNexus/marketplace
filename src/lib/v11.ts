@@ -307,8 +307,8 @@ export const buildResolveTx = (tradeRef: string, arbiter: string, pubKey: string
  * signs (GAS_PAYER and ACCOUNT_AUTH), and a buyer with no account on the chain gets one, guarded by their own key.
  */
 export const STATION_FQN = "free.p2p-escrow-v11-gas";
-/** Gas limit and price of a free transaction (the station refuses more than 2000 and 0.00000001; a free take measured about 1,000). */
-export const GAS_FREE = 1800;
+/** Gas limit and price of a free transaction: the station's maximum (2000 at 0.00000001). A free take for a new buyer used 1,589 gas on mainnet (Oct 22). */
+export const GAS_FREE = 2000;
 export const GAS_PRICE_FREE = 0.00000001;
 const FREE_TAKE_CODE = '(free.p2p-escrow-v11.take-offer (read-msg "trade") (read-msg "offer") (read-msg "taker") (read-decimal "amount"))';
 const freeStepCode = (which: FreeStep) => `(free.p2p-escrow-v11.${which} (read-msg "trade"))`;
