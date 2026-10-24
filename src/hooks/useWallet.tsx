@@ -10,6 +10,7 @@ import {
 import { checkSession, clearSession } from "@/lib/session";
 import * as wc from "@/lib/walletconnect";
 import { WalletPicker, WalletApprovalBanner, PhoneWalletSheet } from "@/components/WalletPicker";
+import { phoneWalletBrowser } from "@/components/OpenInLinx";
 
 export type WalletKind = "ecko" | "walletconnect";
 
@@ -107,7 +108,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       const wallet = await connectEckoWallet();
       setAccount(wallet);
       setWalletKind("ecko");
-      setWalletName("Ecko Wallet");
+      setWalletName(phoneWalletBrowser() ? (/linx/i.test(navigator.userAgent) ? "Linx Wallet" : "your wallet") : "Ecko Wallet");
       saveKind("ecko");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to connect wallet");
@@ -152,7 +153,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   const connect = useCallback(async () => {
     setError(null);
-    if (hasEcko && phoneWalletsReady) setPickerOpen(true);
+    // Inside a wallet's own browser (Linx Explore) the injected wallet is the phone wallet: connect to it at
+    // once, without a picker offering an "extension" or a link to paste into the app that is already open.
+    if (hasEcko && phoneWalletBrowser()) await connectEcko();
+    else if (hasEcko && phoneWalletsReady) setPickerOpen(true);
     else if (hasEcko) await connectEcko();
     else if (phoneWalletsReady) await connectPhoneWallet();
     else setError("Ecko wallet not detected. Please install the extension.");

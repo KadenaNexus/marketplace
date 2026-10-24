@@ -109,7 +109,8 @@ function LinxExpectations() {
     <div className="space-y-1.5 rounded-xl bg-muted/60 p-3 text-sm">
       <p className="font-semibold">What to expect in Linx</p>
       <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
-        <li>Now: <b className="text-foreground">2 approvals</b>, Connect and Sign in. Once per phone.</li>
+        <li>Now: <b className="text-foreground">1 approval</b>, Connect. Once per phone.</li>
+        <li>When you tap <b className="text-foreground">Sign in</b> (or your first trade step): 1 approval that moves no coins. It lasts 30 days on this phone.</li>
         <li>Then <b className="text-foreground">1 approval for every trade step</b>: post a pool, take, I paid, release. Switch to Linx, approve, come back.</li>
       </ul>
       <p className="pt-1 text-xs text-muted-foreground">
@@ -195,7 +196,7 @@ export function PhoneWalletSheet({ state }: { state: { uri: string | null; cance
               </li>
               <li className="flex gap-3">
                 <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">3</span>
-                <p className="flex-1">Approve <b>twice</b> in Linx: first <b>Connect</b> (check it says Kadena P2P Marketplace), then <b>Sign in</b>. Come back to this browser after each one. Then you can trade.</p>
+                <p className="flex-1">Approve <b>Connect</b> in Linx (check it says Kadena P2P Marketplace), then come back to this browser.</p>
               </li>
             </ol>
             <div className="space-y-2 border-t border-border pt-4">
@@ -209,7 +210,7 @@ export function PhoneWalletSheet({ state }: { state: { uri: string | null; cance
         ) : (
           <div className="space-y-4">
             {qrBlock}
-            <p className="text-center text-sm">Open <b>Linx</b> on your phone, tap <b>Scan</b> and scan this code. Then approve twice in Linx: <b>Connect</b>, then <b>Sign in</b>.</p>
+            <p className="text-center text-sm">Open <b>Linx</b> on your phone, tap <b>Scan</b> and scan this code. Then approve <b>Connect</b> in Linx.</p>
             <Button variant="outline" className="h-10 w-full gap-2" onClick={copy}>
               {copied ? <><Check className="h-4 w-4" />Copied</> : <><Copy className="h-4 w-4" />Copy link instead</>}
             </Button>

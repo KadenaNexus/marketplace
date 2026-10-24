@@ -27,6 +27,16 @@ export function inWalletBrowser(): boolean {
   return (iosWebView || androidWebView) && !social;
 }
 
+/**
+ * A wallet injected into the page on a phone: that is the wallet app's own browser (Linx Explore), since
+ * phone browsers have no wallet extensions. On a computer an injected wallet is the Ecko extension instead.
+ */
+export function phoneWalletBrowser(): boolean {
+  if (typeof window === "undefined") return false;
+  const injected = !!(window as unknown as { kadena?: { isKadena?: boolean } }).kadena?.isKadena;
+  return injected && (/linx/i.test(ua()) || /iPhone|iPad|iPod|Android/i.test(ua()));
+}
+
 export const LINX_PATH = {
   en: ["Explore", "Web3 Apps", "Kadena", "Kadena P2P Marketplace"],
   ar: ["Explore", "Web3 Apps", "Kadena", "Kadena P2P Marketplace"],
