@@ -127,7 +127,7 @@ export function CreateOfferForm({ onSuccess, role = "seller", compact = false }:
       toast.error("Please connect your wallet first");
       return;
     }
-    if (needsEmail) { setEmailGateOpen(true); return; }
+    if (await needsEmail()) { setEmailGateOpen(true); return; }
 
     if (!offerId || (!price && !free) || !amount) {
       toast.error("Please fill in all required fields");

@@ -6,23 +6,37 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useWallet } from "@/hooks/useWallet";
+import { useSignedIn } from "@/lib/session";
 import { getTradeEmail, setTradeEmail } from "@/lib/tradeEmailApi";
 
 export function useTradeEmail(pollWhilePending = false) {
   const { account, isConnected } = useWallet();
+  const signedIn = useSignedIn(account?.account); // reading it needs a sign-in: never ask the wallet on its own
   return useQuery({
     queryKey: ["trade-email", account?.account],
     queryFn: () => getTradeEmail(account!),
-    enabled: !!account && isConnected,
+    enabled: !!account && isConnected && signedIn,
     staleTime: 60 * 1000,
     refetchInterval: (q) => (pollWhilePending && q.state.data && !q.state.data.on ? 5000 : false),
   });
 }
 
-/** True when the wallet must still add and confirm an email before trading (only when email is set up on the server). */
+/**
+ * Asked when the person taps create or accept: resolves true when the wallet must still add and confirm an email
+ * before trading (only when email is set up on the server). Signs in first if needed, as part of that tap.
+ */
 export function useNeedsTradeEmail() {
-  const { data } = useTradeEmail();
-  return !!data?.available && !data.on;
+  const { account } = useWallet();
+  const queryClient = useQueryClient();
+  return async (): Promise<boolean> => {
+    if (!account) return false;
+    try {
+      const data = await queryClient.fetchQuery({ queryKey: ["trade-email", account.account], queryFn: () => getTradeEmail(account), staleTime: 60 * 1000 });
+      return !!data?.available && !data.on;
+    } catch {
+      return false; // offline or sign-in closed: the server still refuses a trade without a confirmed email
+    }
+  };
 }
 
 /**

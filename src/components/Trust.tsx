@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import { useSignedIn } from "@/lib/session";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
@@ -152,7 +153,9 @@ export function useTermsGate(onAccepted: () => void) {
   const { account } = useWallet();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
-  useQuery({ queryKey: ["terms", account?.account], queryFn: () => getTerms(account!), enabled: !!account, staleTime: 10 * 60 * 1000 });
+  // prefetch only with a saved sign-in; otherwise the terms are checked when the person taps the action
+  const signedIn = useSignedIn(account?.account);
+  useQuery({ queryKey: ["terms", account?.account], queryFn: () => getTerms(account!), enabled: !!account && signedIn, staleTime: 10 * 60 * 1000 });
   const check = async () => {
     if (!account) return false;
     try {

@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { io, Socket } from "socket.io-client";
 import { useWallet } from "./useWallet";
-import { autoSignIn } from "@/lib/session";
+import { autoSignIn, onSessionChange } from "@/lib/session";
 
 /** Normalize signed command (unwrap signedCmd, ensure sigs[0].sig) for server. */
 function normalizeSignedCmd(r: unknown): { cmd?: unknown; hash?: string; sigs?: Array<{ pubKey?: string; sig?: string; signature?: string }> } | null {
@@ -123,7 +123,7 @@ async function identifyWithProof(
 ): Promise<void> {
   try {
     const raw = await autoSignIn(wallet, publicKey) as unknown;
-    if (raw == null) return; // already asked once on this visit; chat or a trade step will sign in when needed
+    if (raw == null) return; // not signed in yet: identified after the person taps Sign in (onSessionChange)
     const signedCmd = normalizeSignedCmd(raw);
     if (!signedCmd) {
       console.error("Identify: failed to normalize signed command");
@@ -194,6 +194,13 @@ export function useOnlineStatus() {
       socket.off("disconnect", handleDisconnect);
     };
   }, []); // Empty deps - initialize once
+
+  // Signed in after the page opened (Sign in button or a trade step): show this wallet as online now
+  useEffect(() => onSessionChange(() => {
+    const socket = getSocket();
+    const acc = accountRef.current;
+    if (socket?.connected && acc?.account && acc?.publicKey) identifyWithProof(socket, acc.account, acc.publicKey);
+  }), []);
 
   // Handle wallet login/logout and identify when wallet connects (with proof)
   useEffect(() => {

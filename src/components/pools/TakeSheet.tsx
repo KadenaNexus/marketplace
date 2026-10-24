@@ -110,7 +110,7 @@ export function TakeSheet({ pool: p, open, onOpenChange, profileMap = {}, onTake
 
   async function submit() {
     if (!p || !account) return;
-    if (needsEmail) { setEmailGateOpen(true); return; }
+    if (await needsEmail()) { setEmailGateOpen(true); return; }
     if (problem) { toast.error(problem.startsWith("New traders") ? `Up to ${NEW_TRADER_MAX_KDA} KDA for now` : "Check the amount", { description: problem }); return; }
     if (!(await terms.check())) return;
     setBusy(true);

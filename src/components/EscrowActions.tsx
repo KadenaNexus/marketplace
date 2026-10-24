@@ -739,7 +739,7 @@ const TX_CONFIRM_MESSAGE = "Transaction in progress… Confirming on the Kadena 
     ? newTraderProblem(selectedEscrow.amount, myCompleted) : null;
   async function handleAccept() {
     if (!account || !selectedEscrow) return;
-    if (needsEmail) { setEmailGateOpen(true); return; }
+    if (await needsEmail()) { setEmailGateOpen(true); return; }
     if (acceptLimit) { toast.error(`Up to ${NEW_TRADER_MAX_KDA} KDA for now`, { description: acceptLimit }); return; }
     if (!(await terms.check())) return;
     executeAction("Accept Offer", () => 

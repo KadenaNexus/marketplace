@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { SignInPrompt } from "@/components/SignIn";
 import { TradeEmailForm } from "./TradeEmail";
 import { TradeCode } from "./TradeCode";
 import { Receipt, AlertTriangle, Bell, BellOff, Check, CheckCheck, Clock, Loader2, Lock, MessageSquare, Plus, Share, Star, Undo2, XCircle } from "lucide-react";
@@ -154,6 +155,7 @@ export function NotificationBell() {
           {chip("all", "All")}{chip("trade", "My trades")}{chip("offer", "New offers")}
         </div>
         <div className="flex flex-1 flex-col gap-2 px-4 py-3">
+          <SignInPrompt what="updates about your own trades" />
           {shown.length === 0 && (
             <p className="py-8 text-center text-sm text-muted-foreground">Nothing yet. Trade updates and new offers will show here.</p>
           )}
