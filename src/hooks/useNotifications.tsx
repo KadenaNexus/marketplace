@@ -80,6 +80,10 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   const signedIn = useSignedIn(wallet); // the feed loads again right after the person signs in
 
   useEffect(() => { setSeen(readSeen(wallet)); known.current = null; }, [wallet]);
+  // Signing in adds this wallet's own trades to the feed. They are history, not news: take them in quietly
+  // instead of a banner for each (the first load after any change of wallet or sign-in never shows banners).
+  useEffect(() => { known.current = null; }, [signedIn]);
+  const openedAt = useRef(Date.now());
 
   useEffect(() => {
     let stop = false;
@@ -94,7 +98,8 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
         setItems(r.items);
         const ids = new Set(r.items.map((i) => i.id));
         if (known.current) {
-          const fresh = r.items.filter((i) => !known.current!.has(i.id)).slice(0, 3);
+          // a banner only for something that happened while the page is open (older items wait in the bell)
+          const fresh = r.items.filter((i) => !known.current!.has(i.id) && Date.parse(i.createdAt) > openedAt.current - 60_000).slice(0, 3);
           for (const i of fresh.reverse()) {
             const show = i.urgent ? toast.warning : toast.info;
             show(i.title, { description: i.body, duration: i.urgent ? 20000 : 8000, action: i.offerId ? { label: "Open", onClick: () => openOffer(i.offerId) } : undefined });
