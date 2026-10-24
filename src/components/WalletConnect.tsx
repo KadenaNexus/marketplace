@@ -4,12 +4,14 @@ import { useV11ChainBalances } from "@/hooks/useAppChainBalance";
 import { Wallet, LogOut, AlertCircle } from "lucide-react";
 import { linxStoreLink } from "./OpenInLinx";
 import { useLang } from "./NexusLanding";
+import { SignInButton, useSignIn } from "./SignIn";
 
 /** `inHeader`: on phones the button says just "Connect" so the header fits on one line. */
 export function WalletConnect({ inHeader = false }: { inHeader?: boolean } = {}) {
   const { account, isConnecting, isConnected, isWalletAvailable, error, connect, disconnect } = useWallet();
   const { data: chainBalances } = useV11ChainBalances(isConnected ? account?.account : undefined);
   const [lang] = useLang();
+  const { canSignIn } = useSignIn(); // on phones the Sign in button takes the address's place until signed in
   const t = lang === "ar"
     ? { short: "ربط", full: "اربط المحفظة", connecting: "جارٍ الربط..." }
     : { short: "Connect", full: "Connect Wallet", connecting: "Connecting..." };
@@ -37,7 +39,7 @@ export function WalletConnect({ inHeader = false }: { inHeader?: boolean } = {})
   if (isConnected && account) {
     return (
       <div className="flex min-w-0 items-center gap-2 sm:gap-3">
-        <div className="flex min-w-0 flex-col items-end">
+        <div className={`${canSignIn ? "hidden sm:flex" : "flex"} min-w-0 flex-col items-end`}>
           <span className="hidden text-xs text-muted-foreground sm:inline">Connected</span>
           <span className="font-mono text-sm text-primary whitespace-nowrap" title={account.account}>
             <span className="hidden sm:inline">{shortenAddress(account.account)}</span>
@@ -49,6 +51,7 @@ export function WalletConnect({ inHeader = false }: { inHeader?: boolean } = {})
             </span>
           )}
         </div>
+        <SignInButton />
         <Button 
           variant="outline" 
           size="sm" 

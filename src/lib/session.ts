@@ -1,6 +1,7 @@
 import { buildProfileAuthTx, signTransaction } from "@/lib/kadena";
 import type { IUnsignedCommand } from "@kadena/client";
 import { walletLog } from "@/lib/walletLog";
+import { useSyncExternalStore } from "react";
 
 /**
  * Sign in once per device (server/session.js).
@@ -36,6 +37,20 @@ export function getSessionToken(wallet: string): string | null {
 
 export function clearSession(wallet: string) {
   try { localStorage.removeItem(key(wallet)); } catch { /* ignore */ }
+  announce();
+}
+
+/** Sign-in changes on this page (and other tabs, through the storage event), so views can follow them. */
+const EVT = "nx-session-change";
+function announce() { try { window.dispatchEvent(new Event(EVT)); } catch { /* no window */ } }
+export function onSessionChange(cb: () => void): () => void {
+  window.addEventListener(EVT, cb);
+  window.addEventListener("storage", cb);
+  return () => { window.removeEventListener(EVT, cb); window.removeEventListener("storage", cb); };
+}
+/** True when this device holds a valid sign-in for the wallet. Re-renders when the person signs in or out. */
+export function useSignedIn(wallet: string | null | undefined): boolean {
+  return useSyncExternalStore(onSessionChange, () => !!wallet && !!getSessionToken(wallet), () => false);
 }
 
 /** Drop a saved token the server no longer accepts (new server secret, expired). */
@@ -83,6 +98,7 @@ export async function authProof(wallet: string, publicKey: string, opts: { fresh
         if (token) {
           try { localStorage.setItem(key(wallet), token); } catch { /* ignore */ }
           walletLog("signed in", "saved for 30 days on this device");
+          announce();
           return token;
         }
       }
@@ -98,16 +114,13 @@ export async function authProof(wallet: string, publicKey: string, opts: { fresh
 }
 
 /**
- * Sign-in the page does on its own (online status): at most one wallet request per page visit.
- * On a phone, every return from the wallet app reconnects the page; without this, a sign-in that did
- * not finish was asked again each time.
+ * The saved sign-in for background work (online status, notifications feed), without ever asking the
+ * wallet: a signature request that appears on its own when the page opens confuses people who cannot read
+ * the transaction. Null until the person signs in (the Sign in button, or a trade step they tap).
  */
-const autoTried = new Set<string>();
-export async function autoSignIn(wallet: string, publicKey: string): Promise<unknown | null> {
+export async function autoSignIn(wallet: string, _publicKey: string): Promise<unknown | null> {
   const t = getSessionToken(wallet);
   if (t) return t;
-  if (pending) return pending;
-  if (autoTried.has(wallet)) return null;
-  autoTried.add(wallet);
-  return authProof(wallet, publicKey);
+  if (pending) return pending; // a sign-in the person started is already on its way
+  return null;
 }

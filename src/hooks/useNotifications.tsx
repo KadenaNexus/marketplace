@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { useWallet } from "@/hooks/useWallet";
 import { FeedItem, Who, fetchFeed, getPushKey, removePushSubscription, savePushSubscription } from "@/lib/notificationsApi";
-import { authProof, autoSignIn, getSessionToken } from "@/lib/session";
+import { authProof, autoSignIn, getSessionToken, useSignedIn } from "@/lib/session";
 
 /**
  * In-page notifications: polls the server feed (this wallet's trade events plus new offers), counts unread
@@ -56,9 +56,8 @@ export function useOpenOffer() {
 }
 
 /**
- * The wallet's proof for the server, without bothering the person: the saved sign-in of this device, else the
- * one sign-in the page asks for on its own per visit (shared with the online status). Null when there is none
- * yet: the feed then shows new offers only until a trade step or a chat signs the wallet in.
+ * The wallet's proof for the server, without bothering the person: the saved sign-in of this device. Null when
+ * there is none yet: the feed then shows new offers only until the person taps Sign in (or a trade step).
  */
 async function quietProof(wallet: string, publicKey: string): Promise<Who | null> {
   const signedCmd = getSessionToken(wallet) ?? (await autoSignIn(wallet, publicKey).catch(() => null));
@@ -78,6 +77,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   const [pushOffers, setPushOffers] = useState(false);
   const known = useRef<Set<number> | null>(null);   // ids already shown, so only new ones get a banner
   const [tick, setTick] = useState(0);
+  const signedIn = useSignedIn(wallet); // the feed loads again right after the person signs in
 
   useEffect(() => { setSeen(readSeen(wallet)); known.current = null; }, [wallet]);
 
@@ -114,7 +114,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     const onTrade = () => { soon.push(setTimeout(load, 3000), setTimeout(load, 9000)); };
     socket?.on("trade-changed", onTrade);
     return () => { stop = true; clearInterval(t); document.removeEventListener("visibilitychange", vis); socket?.off("trade-changed", onTrade); soon.forEach(clearTimeout); };
-  }, [wallet, publicKey, tick, openOffer]);
+  }, [wallet, publicKey, tick, openOffer, signedIn]);
 
   // what this device can do about phone notifications
   const checkPush = useCallback(async () => {

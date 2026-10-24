@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useWallet } from "@/hooks/useWallet";
-import { authProof } from "@/lib/session";
+import { authProof, useSignedIn } from "@/lib/session";
 import type { Escrow } from "@/lib/kadena";
 import { addProof, getProofs, type Proof } from "@/lib/proofApi";
 import { offerMethods } from "./PayoutCard";
@@ -24,13 +24,14 @@ export function useProofs(escrow: Escrow | null | undefined) {
   const { account, isConnected } = useWallet();
   const me = account?.account;
   const involved = !!escrow && !!me && escrow.state !== "CREATED" && (me === escrow.seller || me === escrow.buyer || me === escrow.arbiter);
+  const signedIn = useSignedIn(me);
   return useQuery({
     queryKey: ["proofs", escrow?.offerId, me, escrow?.state],
     queryFn: async () => {
       const signedCmd = await authProof(account!.account, account!.publicKey);
       return getProofs(escrow!.offerId, { wallet: account!.account, publicKey: account!.publicKey, signedCmd });
     },
-    enabled: involved && isConnected,
+    enabled: involved && isConnected && signedIn,
     staleTime: 10000,
   });
 }

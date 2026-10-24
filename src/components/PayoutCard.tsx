@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { SignInPrompt } from "@/components/SignIn";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Copy, Landmark, Loader2, Lock, Pencil } from "lucide-react";
 import { toast } from "sonner";
@@ -6,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useWallet } from "@/hooks/useWallet";
-import { authProof } from "@/lib/session";
+import { authProof, useSignedIn } from "@/lib/session";
 import type { Escrow } from "@/lib/kadena";
 import { getPayout, hasNetwork, isTokenMethod, networkLabel, putPayout, stableProblem, type PayoutItem } from "@/lib/payoutApi";
 import { PayoutInput, type PayoutDraft } from "./PayoutInput";
@@ -19,6 +20,7 @@ export const offerMethods = (e: Escrow): string[] => {
 export function usePayout(escrow: Escrow | null | undefined) {
   const { account, isConnected } = useWallet();
   const me = account?.account;
+  const signedIn = useSignedIn(me);
   const involved = !!escrow && !!me && (me === escrow.seller || me === escrow.buyer || me === escrow.creator || me === escrow.arbiter);
   return useQuery({
     queryKey: ["payout", escrow?.offerId, me, escrow?.state],
@@ -26,7 +28,7 @@ export function usePayout(escrow: Escrow | null | undefined) {
       const signedCmd = await authProof(account!.account, account!.publicKey);
       return getPayout(escrow!.offerId, { wallet: account!.account, publicKey: account!.publicKey, signedCmd });
     },
-    enabled: involved && isConnected,
+    enabled: involved && isConnected && signedIn, // never asks the wallet on its own: see SignInPrompt
     staleTime: 15000,
   });
 }
@@ -53,6 +55,7 @@ function CopyButton({ text }: { text: string }) {
 export function PayoutCard({ escrow, total }: { escrow: Escrow; total: string }) {
   const { account } = useWallet();
   const me = account?.account;
+  const signedIn = useSignedIn(me);
   const { data, isLoading } = usePayout(escrow);
   const queryClient = useQueryClient();
   const methods = offerMethods(escrow);
@@ -84,6 +87,7 @@ export function PayoutCard({ escrow, total }: { escrow: Escrow; total: string })
   if (isPayer && escrow.state === "CREATED") {
     return <p className="rounded-xl border border-dashed border-border p-3 text-sm text-muted-foreground"><Landmark className="mr-1.5 inline h-4 w-4" />When someone accepts, you'll see here where to send the payment.</p>;
   }
+  if (!signedIn) return <SignInPrompt what="the payment details" />;
   if (isLoading) return <p className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Loading payment details…</p>;
   const details = data?.details ?? [];
 

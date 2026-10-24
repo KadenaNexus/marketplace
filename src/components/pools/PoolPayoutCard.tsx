@@ -1,8 +1,9 @@
 import { useState } from "react";
+import { SignInPrompt } from "@/components/SignIn";
 import { useQuery } from "@tanstack/react-query";
 import { Check, Copy, Landmark, Loader2 } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
-import { authProof } from "@/lib/session";
+import { authProof, useSignedIn } from "@/lib/session";
 import { getPoolPayout, tradeNetwork } from "@/lib/poolsApi";
 import { isGiveawayPool, isInstant, networkLabel, paymentNetwork } from "@/lib/markets";
 import { exactPay, type V11Escrow } from "@/lib/v11ui";
@@ -35,6 +36,7 @@ export function PoolPayoutCard({ escrow: e }: { escrow: V11Escrow }) {
   const t = e.trade;
   const involved = !!me && (me === t.seller || me === t.buyer || me === e.arbiter);
   const active = ["FUNDED", "PAID", "DISPUTED"].includes(t.state);
+  const signedIn = useSignedIn(me);
   const { data: payout, isLoading } = useQuery({
     queryKey: ["pool-payout", t.poolId, t.tradeId, me],
     queryFn: async () => {
@@ -47,13 +49,14 @@ export function PoolPayoutCard({ escrow: e }: { escrow: V11Escrow }) {
         await wait(PAYOUT_RETRY_MS);
       }
     },
-    enabled: involved && isConnected && !isInstant(t) && !isGiveawayPool(t),
+    enabled: involved && isConnected && signedIn && !isInstant(t) && !isGiveawayPool(t),
     staleTime: 60 * 1000,
     retry: 1,
   });
   // auto-release: the buyer sends the exact amount with the identifying digits (AutoReleaseCard explains them)
   const { data: auto } = useTradeAuto(e);
   if (!me || !involved || isInstant(t) || isGiveawayPool(t)) return null;
+  if (!signedIn) return <SignInPrompt what="the payment details" />;
   if (isLoading) return <p className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Loading payment details…</p>;
 
   const networks = e.networks?.length ? e.networks : Object.keys(payout ?? {});

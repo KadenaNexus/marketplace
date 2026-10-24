@@ -155,7 +155,7 @@ export function CreatePoolForm({ onSuccess, role = "seller", compact = false }: 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!account) return toast.error("Please connect your wallet first");
-    if (needsEmail) { setEmailGateOpen(true); return; }
+    if (await needsEmail()) { setEmailGateOpen(true); return; }
     if (problems.length) return toast.error("Check the form", { description: problems[0] });
     if (limitProblem) return toast.error(`Up to ${NEW_TRADER_MAX_KDA} KDA per trade for now`, { description: limitProblem });
     if (!(await terms.check())) return;

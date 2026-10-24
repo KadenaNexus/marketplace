@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { SignInPrompt } from "@/components/SignIn";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, ChevronRight, MessageCircle } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
@@ -7,7 +8,7 @@ import { ProfileSummaryView } from "./ProfileSummary";
 import type { ProfileSummary } from "@/lib/profileApi";
 import type { Escrow } from "@/lib/kadena";
 import { useWallet } from "@/hooks/useWallet";
-import { authProof } from "@/lib/session";
+import { authProof, useSignedIn } from "@/lib/session";
 import { getOfferThreads } from "@/lib/messageApi";
 
 /**
@@ -25,6 +26,7 @@ export function OfferChat({ escrow, profileMap }: { escrow: Escrow; profileMap: 
   const counterparty = isParty ? parties.find((w) => w !== me) ?? null : null;
   const isCreator = !!me && escrow.creator === me;
   const listForCreator = isCreator && !counterparty;
+  const signedIn = useSignedIn(me);
 
   const { data: threads = [], isLoading } = useQuery({
     queryKey: ["offer-threads", escrow.offerId, me],
@@ -32,7 +34,7 @@ export function OfferChat({ escrow, profileMap }: { escrow: Escrow; profileMap: 
       const signedCmd = await authProof(account!.account, account!.publicKey);
       return getOfferThreads({ offerId: escrow.offerId, wallet: account!.account, publicKey: account!.publicKey, signedCmd });
     },
-    enabled: listForCreator && isConnected && !!account,
+    enabled: listForCreator && isConnected && !!account && signedIn,
     refetchInterval: 10000,
   });
 
@@ -63,7 +65,9 @@ export function OfferChat({ escrow, profileMap }: { escrow: Escrow; profileMap: 
   return (
     <div className="space-y-3">
       <p className="text-sm text-muted-foreground">People who saw your offer can message you here before they accept.</p>
-      {isLoading ? (
+      {!signedIn ? (
+        <SignInPrompt what="messages about this offer" />
+      ) : isLoading ? (
         <p className="py-6 text-center text-sm text-muted-foreground">Loading messages…</p>
       ) : threads.length === 0 ? (
         <div className="py-8 text-center text-muted-foreground">
