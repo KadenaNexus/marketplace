@@ -12,6 +12,7 @@
  * :ref is a pool or trade reference: "pool-…" / "trade-…" on chain 1, "2:pool-…" on chain 2 (chain.js).
  */
 import { readPool, readTrade, toRef, parseRef } from "./chain.js";
+import { escrowNote, marketNote, marketPriceFor } from "../shared/share-notes.js";
 
 const REF = /^(?:(\d{1,2}):)?((?:pool|trade)-\d{6,16}-[a-z0-9]{1,16})$/i;
 const OG_IMAGE = "https://kadena.ws/og/og-marketplace.jpg";
@@ -31,8 +32,11 @@ export function cleanShareRef(raw) {
   return toRef(m[1] || "1", m[2].toLowerCase());
 }
 
-/** Title and description for a pool (as read from the chain, plus the server's networks). */
-export function describePool(p, { networks = [], username = "" } = {}) {
+/**
+ * Title and description for a pool (as read from the chain, plus the server's networks). `marketPrice`: KDA's market
+ * price in the pool's currency now, when known; the card then says how the fixed price compares, dated.
+ */
+export function describePool(p, { networks = [], username = "", marketPrice = null, when = new Date() } = {}) {
   const giveaway = isGiveaway(p);
   const instant = !!p.token;
   const by = username ? ` by @${username}` : "";
@@ -41,9 +45,10 @@ export function describePool(p, { networks = [], username = "" } = {}) {
   const verb = p.side === "SELL" ? "Selling" : "Buying";
   const nets = networks.length ? ` on ${networks.map((n) => n.split(":")[1]).join(" or ")}` : "";
   const how = instant ? " · instant swap" : p.agent ? " · auto-release" : "";
+  const note = marketNote(Number(p.price), marketPrice, when);
   return {
     title: `${verb} ${kda(p.available)} KDA for ${p.currency}${by}`,
-    description: `${price(p.price)} ${p.currency} per KDA${nets} · ${kda(p.min)}–${kda(p.max)} KDA per trade${how} · KDA held in escrow on the ${SITE}.`,
+    description: `${price(p.price)} ${p.currency} per KDA${note ? ` (${note})` : ""}${nets} · ${kda(p.min)}–${kda(p.max)} KDA per trade${how} · ${escrowNote(p.side)}.`,
   };
 }
 
@@ -88,7 +93,7 @@ export function sharePage({ ref, title, description, publicUrl }) {
 </html>`;
 }
 
-export function registerShareRoutes(app, { getPool, readPoolFn = readPool, readTradeFn = readTrade, publicUrl = process.env.ALERTS_PUBLIC_URL || "https://marketplace.kadena.ws" } = {}) {
+export function registerShareRoutes(app, { getPool, getMarket = async () => null, readPoolFn = readPool, readTradeFn = readTrade, publicUrl = process.env.ALERTS_PUBLIC_URL || "https://marketplace.kadena.ws" } = {}) {
   const page = async (req, res) => {
     const ref = cleanShareRef(req.params.ref);
     const send = (t) => {
@@ -111,7 +116,8 @@ export function registerShareRoutes(app, { getPool, readPoolFn = readPool, readT
           networks = d.rows[0]?.networks || [];
           username = u.rows[0]?.username || "";
         }
-        return send(describePool(p, { networks, username }));
+        const market = await Promise.race([getMarket().catch(() => null), new Promise((r) => setTimeout(() => r(null), 3000))]);
+        return send(describePool(p, { networks, username, marketPrice: marketPriceFor(market?.prices, p.currency) }));
       }
       const t = await readTradeFn(ref);
       if (!t) return send({ title: "Trade not found", description: `This trade is not on the ${SITE}.` });

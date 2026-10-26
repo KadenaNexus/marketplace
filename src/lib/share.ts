@@ -6,6 +6,7 @@
  * route does the redirect (no preview card, same result).
  */
 import { parseRef, toRef } from "../../shared/v11-chains.js";
+import { escrowNote, marketNote } from "../../shared/share-notes.js";
 
 /** A pool or trade id as the contract makes them, with an optional "<chain>:" in front. */
 const REF = /^(?:(\d{1,2}):)?((?:pool|trade)-\d{6,16}-[a-z0-9]{1,16})$/i;
@@ -54,14 +55,19 @@ const price = (n: number) => n.toLocaleString("en-US", { maximumSignificantDigit
 type PoolLike = { side: "SELL" | "BUY"; available: number; min: number; max: number; price: number; currency: string; token: string; state: string };
 type TradeLike = { amount: number; payAmount: number; currency: string; token: string; price: number; state: string };
 
-/** What a shared pool says (the link goes after it). */
-export function poolShareText(p: PoolLike): { title: string; text: string } {
+/**
+ * What a shared pool says (the link goes after it). `marketPrice` is the KDA market price in the pool's currency at
+ * the time of sharing, when known: the message then says how the fixed price compared on that day.
+ */
+export function poolShareText(p: PoolLike, marketPrice?: number | null, when = new Date()): { title: string; text: string } {
   const giveaway = !p.token && !(p.price > 0);
   if (p.state !== "OPEN") return { title: `This ${giveaway ? "giveaway" : "offer"} is closed`, text: "Kadena P2P Marketplace (in Linx Wallet):" };
   if (giveaway) return { title: "Free KDA giveaway", text: `Free KDA giveaway: ${kda(p.available)} KDA left, ${p.min === p.max ? `${kda(p.min)} KDA each` : `${kda(p.min)}–${kda(p.max)} KDA per claim`}. Claim it on Kadena P2P Marketplace (in Linx Wallet):` };
   const verb = p.side === "SELL" ? "Selling" : "Buying";
   const title = `${verb} ${kda(p.available)} KDA for ${p.currency}`;
-  return { title, text: `${title} at ${price(p.price)} ${p.currency} per KDA (${kda(p.min)}–${kda(p.max)} KDA per trade)${p.token ? ", instant swap" : ""}. KDA held in escrow on Kadena P2P Marketplace (in Linx Wallet):` };
+  const note = marketNote(p.price, marketPrice, when);
+  const head = `${title} at ${price(p.price)} ${p.currency} per KDA${note ? ` (${note})` : ""}, ${kda(p.min)}–${kda(p.max)} KDA per trade${p.token ? ", instant swap" : ""}.`;
+  return { title, text: `${head} ${escrowNote(p.side)}. Kadena P2P Marketplace (in Linx Wallet):` };
 }
 
 /** What a shared trade says. */
