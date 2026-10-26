@@ -10,6 +10,7 @@
  */
 import { fetchChainOffers } from "./alerts.js";
 import { configFor, fetchChain, poolsById, tradeAsLegacyEscrow } from "./chain.js";
+import { TRUSTED_MIN_TRADES, TRUSTED_WALLETS } from "../shared/trusted-wallets.js";
 
 export const TERMS_VERSION = "2026-10-14"; // BRO added as a way to pay
 
@@ -123,7 +124,8 @@ export function registerTrustRoutes(app, { getPool, requireAuth, sendAuthError, 
     try {
       const n = completedCounts(await chainOffers());
       res.set("Cache-Control", "public, max-age=30");
-      return res.json(Object.fromEntries(ws.map((w) => [w, n.get(w) || 0])));
+      // trusted wallets (shared/trusted-wallets.js) are never "new traders"
+      return res.json(Object.fromEntries(ws.map((w) => [w, TRUSTED_WALLETS.has(w) ? Math.max(n.get(w) || 0, TRUSTED_MIN_TRADES) : n.get(w) || 0])));
     } catch {
       return res.status(503).json({ error: "Could not read the chain right now" });
     }
