@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Check, ClipboardPaste, Copy, Link2, Loader2, Share2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -6,10 +6,13 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { isPoolRef, poolShareText, refFromLink, shareTargets, shareUrl, tradeShareText } from "@/lib/share";
 import { readPool, readTrade } from "@/lib/v11";
+import { useMarket, type Market } from "@/lib/market";
+import { marketPriceFor } from "../../shared/share-notes.js";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
-export interface ShareItem { ref: string; title: string; text: string }
+/** `pool`: the pool itself, so the message can say how its price compares with the market when it is shared. */
+export interface ShareItem { ref: string; title: string; text: string; pool?: Parameters<typeof poolShareText>[0] }
 const SHARE_EVENT = "nexus-share";
 
 /** Open the share sheet for a pool or trade from anywhere (a button, a toast action). */
@@ -36,10 +39,16 @@ async function copyText(text: string): Promise<boolean> {
 export function ShareHost() {
   const [item, setItem] = useState<ShareItem | null>(null);
   const [copied, setCopied] = useState(false);
+  // kept fresh in the background, so the share sheet opens at once (phones only allow it straight after the tap)
+  const { data: market } = useMarket();
+  const marketRef = useRef<Market | null | undefined>(market);
+  marketRef.current = market;
   useEffect(() => {
     const on = async (ev: Event) => {
-      const it = (ev as CustomEvent<ShareItem>).detail;
-      if (!it?.ref) return;
+      const raw = (ev as CustomEvent<ShareItem>).detail;
+      if (!raw?.ref) return;
+      const m = raw.pool ? marketPriceFor(marketRef.current?.prices, raw.pool.currency) : null;
+      const it = raw.pool && m ? { ...raw, ...poolShareText(raw.pool, m) } : raw;
       const url = shareUrl(it.ref);
       const nav = navigator as Navigator & { share?: (d: ShareData) => Promise<void> };
       const phone = window.matchMedia?.("(pointer: coarse)").matches ?? false;
@@ -99,7 +108,7 @@ export function ShareButton({ item, label = "Share", iconOnly = false, className
 }
 
 /** Share item for a pool (what the card shows). */
-export const poolShareItem = (p: Parameters<typeof poolShareText>[0] & { poolId: string }): ShareItem => ({ ref: p.poolId, ...poolShareText(p) });
+export const poolShareItem = (p: Parameters<typeof poolShareText>[0] & { poolId: string }): ShareItem => ({ ref: p.poolId, ...poolShareText(p), pool: p });
 /** Share item for a trade. */
 export const tradeShareItem = (t: Parameters<typeof tradeShareText>[0] & { tradeId: string }): ShareItem => ({ ref: t.tradeId, ...tradeShareText(t) });
 

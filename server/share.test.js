@@ -33,8 +33,14 @@ test("references: pool and trade ids, with a chain in front; anything else is re
 test("what a card says: sell, buy, giveaway, instant, closed, a trade", () => {
   assert.deepEqual(describePool(P(), { networks: ["USDT:TRC20"], username: "saudi_kda" }), {
     title: "Selling 500 KDA for USDT by @saudi_kda",
-    description: "0.0104 USDT per KDA on TRC20 · 5–100 KDA per trade · auto-release · KDA held in escrow on the Kadena P2P Marketplace.",
+    description: "0.0104 USDT per KDA on TRC20 · 5–100 KDA per trade · auto-release · The seller's KDA is already held in escrow.",
   });
+  // a BUY pool locks nothing: the seller's own KDA is what goes into escrow, until they are paid
+  assert.match(describePool(P({ side: "BUY" })).description, /Sellers' KDA is held in escrow until the buyer pays\.$/);
+  // the price compared with the market, dated (the pool's price is fixed; the market moves)
+  const when = new Date("2026-10-26T15:00:00Z");
+  assert.match(describePool(P(), { marketPrice: 0.0104, when }).description, /^0\.0104 USDT per KDA \(market price on Oct 26\)/);
+  assert.match(describePool(P(), { marketPrice: 0.0130, when }).description, /\(20\.0% below market on Oct 26\)/);
   assert.match(describePool(P({ side: "BUY", available: 50000, agent: "" })).title, /^Buying 50,000 KDA for USDT$/);
   assert.match(describePool(P({ price: 0, currency: "FREE", min: 1, max: 1 })).description, /1 KDA each/);
   assert.match(describePool(P({ token: "n_e595.kb-USDC", currency: "kb-USDC" })).description, /instant swap/);
@@ -80,4 +86,17 @@ test("proof of ownership from headers fills the query; the query still wins and 
   assert.deepEqual(r, { wallet: "k:other", publicKey: "p", signedCmd: "s" }, "an explicit query is not overridden");
   r = JSON.parse((await get("/echo")).text);
   assert.deepEqual(r, {});
+});
+
+test("share notes: market comparison, USD price for USDT and USDC, escrow by side", async () => {
+  const { marketNote, marketPriceFor, escrowNote } = await import("../shared/share-notes.js");
+  const when = new Date("2026-10-26T15:00:00Z");
+  assert.equal(marketNote(0.009633, 0.00964, when), "market price on Oct 26");
+  assert.equal(marketNote(0.0106, 0.01, when), "6.0% above market on Oct 26");
+  assert.equal(marketNote(0.01, null, when), "");
+  assert.equal(marketPriceFor({ USD: 0.0096 }, "USDT"), 0.0096);
+  assert.equal(marketPriceFor({ USD: 0.0096, "kb-USDC": 0.00961 }, "kb-USDC"), 0.00961);
+  assert.equal(marketPriceFor({ USD: 0.0096 }, "BRO"), null);
+  assert.match(escrowNote("BUY"), /^Sellers' KDA/);
+  assert.match(escrowNote("SELL"), /^The seller's KDA/);
 });

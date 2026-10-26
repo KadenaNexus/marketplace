@@ -10,7 +10,7 @@
 
 import "dotenv/config";
 import { registerAlertRoutes, startAlertWatcher } from "./alerts.js";
-import { registerMarketRoutes } from "./market.js";
+import { createMarket, registerMarketRoutes } from "./market.js";
 import { registerTrustRoutes, recheckCompletedOffers, ratingSummaries } from "./trust.js";
 import { registerOfferModerationRoutes, startPoolExpiryWatcher, expiryDays } from "./offerModeration.js";
 import { registerCompletedFeedRoutes, completedItem } from "./completedFeed.js";
@@ -330,7 +330,8 @@ const onTradeStepSettled = ({ offerId, ok }) => {
   notifyTradeChangeSoon();
 };
 registerTradeTxRoutes(app, () => pool, { onSettled: (x) => onTradeStepSettled(x), requireAuth: (...a) => requireAuth(...a), sendAuthError: (...a) => sendAuthError(...a) });
-registerMarketRoutes(app);
+const getMarket = createMarket();
+registerMarketRoutes(app, getMarket);
 // one cached read of the v11 chain (pools, trades, config) shared by the routes that list from it
 const chainCache = createChainCache({ fetchOffers: fetchChain, freshMs: 15 * 1000 });
 registerCompletedFeedRoutes(app, () => pool, { chain: chainCache });
@@ -347,7 +348,7 @@ registerOfferModerationRoutes(app, { getPool: () => pool, requireAuth: (...a) =>
 registerPayoutRoutes(app, { getPool: () => pool, requireAuth: (...a) => requireAuth(...a), sendAuthError: (...a) => sendAuthError(...a) });
 // escrow v11 pools: the market list and the per-pool payment details (server/pools.js)
 registerPoolRoutes(app, { getPool: () => pool, requireAuth: (...a) => requireAuth(...a), sendAuthError: (...a) => sendAuthError(...a), chain: chainCache });
-registerShareRoutes(app, { getPool: () => pool });
+registerShareRoutes(app, { getPool: () => pool, getMarket });
 // auto-release of USDT/USDC trades by the platform's release agent (off unless AUTO_RELEASE_SECRET is set)
 const autoRelease = createAutoRelease({ getPool: () => pool, chain: chainCache, onChange: (offerId, status) => { io.emit("trade-changed", { offerId }); if (status === "released") notifyTradeChangeSoon(); } });
 registerAutoReleaseRoutes(app, { getPool: () => pool, requireAuth: (...a) => requireAuth(...a), sendAuthError: (...a) => sendAuthError(...a), auto: autoRelease });
