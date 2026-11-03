@@ -56,7 +56,7 @@ const COPY: Record<Lang, Copy> = {
     "switchTo": "العربية",
     "switchAria": "Switch to Arabic",
     "hero": {
-      "h1": "Trade KDA person to person, with the coins held in escrow",
+      "h1": "Buy and sell KDA peer to peer, with the coins held in escrow",
       "p": "Made for your phone with Linx Wallet. A seller's KDA is locked in a Pact contract the moment they post a pool, so when you take part of it the trade starts at once. Pay in USDT or USDC and the seller releases the KDA once your payment arrives. Pay in BRO, FLUX, kb-USDC, kb-ETH or kb-USDT and the swap is instant. An arbiter settles disputes.",
       "try": "Watch a trade (2 min)",
       "note": "No account, no ID check and no platform fee. You confirm an email for trade notices and pay only Kadena network gas."
